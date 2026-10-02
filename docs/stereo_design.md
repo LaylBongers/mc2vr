@@ -335,7 +335,52 @@ pos copy +0x7ac, or a game-side camera object; or (b) something in the
 patch→consume chain is broken in a way the run cannot distinguish from (a)
 — run 5 had no way to prove a patch ever reached the GPU.
 
-### S1f — run 6 (positive control + last sources; IMPLEMENTED 2026-10-02, pending run)
+### S1f — run 6 (positive control + last sources; run 6 done → results below)
+
+
+### S1f run results (2026-10-02, run 6 — full gameplay; NO nudges; DECISIVE)
+
+1. All eight windows A–H ran during gameplay (A 2 targets, B 18, C 32 ring
+   records, D 40, E 31, F 160 matrix targets, G 3 ctx/live-sub pos matches,
+   H 53 pos7ac targets) — NO nudge.
+2. **GPU proof ZERO** ("S1 vspatched:" never fired): during matrix windows
+   A/E/F not one patched matrix appeared in any GPU upload — while UNPATCHED
+   entry m[0] uploads DO occur (vsmatch e0.m0T/e1.m0T; satellite views 70–74
+   in runs 4–5). Patches are applied at the pre-VM hook, before the consumer
+   runs, so a consume-time read would see them: their total absence means
+   **the VM consumer does not read the walked views' matrices at all**.
+3. **The main camera is LOCATED on the GPU** (exfil dynamic-register
+   analysis): c21 = the camera world position (dynamic), c23–c26 = the
+   world-to-view matrix (dynamic x7 — changes every frame; near-identity
+   rotation with the camera position in the translation slot). This is the
+   visible draw camera.
+4. **Static RE found the camera chain** (annotated in Ghidra):
+   `ViewEntry.camData` (entry+0x7ec — copied from the game view object's
+   +0x8c at activation, FUN_00488e40) points at the UPSTREAM camera objects;
+   FUN_0048f9d0 (per-view camera update, called from FUN_0082c390) converts
+   the entry's QUATERNION (+0x7d4..+0x7e0) + pos7c4 into the nine matrices
+   via FUN_0048a7b0/FUN_0048a8f0 — the entry is DERIVED state; FUN_0048a8f0
+   also reads a global camera chain (`*(DAT_00e79dfc+0x104)`, FOV-ish
+   floats at +0x17c/+0x180/+0x184).
+5. Synthesis: the view entries (and staging/ring records) are per-frame
+   DERIVED copies; the VM consumer reads the camera from the upstream
+   chain, which no patch window touched — explaining all negative results
+   across runs 4–6 coherently.
+
+### S1g — run 7 (the upstream chain; IMPLEMENTED 2026-10-02, pending run)
+
+- **Window I (stage 8)**: patches the entry QUATERNION x (+0x7d4, delta
+  +0.1 — the per-frame matrix source per FUN_0048f9d0; never patched; a hit
+  shows as a camera tilt/spin rather than a shift).
+- **Window J (stage 9)**: scans each live view's UPSTREAM camData object
+  (entry+0x7ec, deduped, 0x200 bytes) for camera-pos-matching floats and
+  patches them — the chain the VM evidently reads.
+- **Exfil**: dumps the camData objects (0x100 per snapshotted view,
+  "S1 excam:") and the global-chain inner object ("S1 exglob:") per exfil
+  frame; the relationship search scans them — a dist=0 or exact hit vs the
+  c21–c26 GPU camera locates the upstream camera fields, which become the
+  S2/S3 per-eye injection point.
+
 
 - **Per-window GPU proof (the "is the experiment wired" check)**: during
   matrix windows A/E/F the carrier snapshots each target's full 16-float

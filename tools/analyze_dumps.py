@@ -174,6 +174,8 @@ def parse_s1(path):
 S1_EXENTRY = re.compile(r"S1 exentry: i(\d+) m(\d)=([0-9a-f]{128})")
 S1_EXMAT = re.compile(r"S1 exmat: reg=c(\d+) m=([0-9a-f]{128})")
 S1_EXSUB = re.compile(r"S1 exsub(\d) \+0x([0-9a-f]{3,}): ([0-9a-f]+)")
+S1_EXCAM = re.compile(r"S1 excam i(\d+) \+0x([0-9a-f]{3,}): ([0-9a-f]+)")
+S1_EXGLOB = re.compile(r"S1 exglob \+0x([0-9a-f]{3,}): ([0-9a-f]+)")
 S1_SCAN_ELEM_HDR = re.compile(r"S1 elem @scan(\d+): world element \(ViewEntry=(\w+)\)")
 S1_SCAN_ELEM = re.compile(r"S1 elem @scan \+0x([0-9a-f]+): ([0-9a-f]+)")
 
@@ -195,6 +197,18 @@ def parse_exfils(path):
         if m:
             s, off, b = int(m.group(1)), int(m.group(2), 16), bytes.fromhex(m.group(3))
             cur_subs.setdefault(s, bytearray())[off : off + len(b)] = b
+            continue
+        m = S1_EXCAM.search(line)
+        if m:
+            # camData objects: keyed as pseudo-subs 10+view for the search
+            key = 10 + int(m.group(1))
+            off, b = int(m.group(2), 16), bytes.fromhex(m.group(3))
+            cur_subs.setdefault(key, bytearray())[off : off + len(b)] = b
+            continue
+        m = S1_EXGLOB.search(line)
+        if m:
+            off, b = int(m.group(1), 16), bytes.fromhex(m.group(2))
+            cur_subs.setdefault(9, bytearray())[off : off + len(b)] = b
             continue
         if "S1 exfil: frame=" in line:
             if cur_entries or cur_mats or cur_subs:
@@ -245,12 +259,19 @@ def report_exfil(path):
                     continue  # all-zero template matrices match everything
                 candidates.append((f"i{idx}.m{k}", mat))
                 candidates.append((f"i{idx}.m{k}T", _transpose(mat)))
+        def _subname(s):
+            if s == 9:
+                return "globcam"
+            if s >= 10:
+                return f"camData(i{s - 10})"
+            return f"sub{s}"
+
         for s, buf in sorted(subs.items()):
             for off in range(0, max(1, len(buf) - 63), 4):
                 win = bytes(buf[off : off + 64])
                 if len(win) < 64 or not _nonzero(win):
                     continue
-                candidates.append((f"sub{s}+0x{off:03x}", win))
+                candidates.append((f"{_subname(s)}+0x{off:03x}", win))
         # Cross-search: which sub windows equal an entry matrix?
         for s, buf in sorted(subs.items()):
             for idx, d in sorted(entries.items()):
@@ -260,7 +281,7 @@ def report_exfil(path):
                     for off in range(0, max(1, len(buf) - 63), 4):
                         win = bytes(buf[off : off + 64])
                         if len(win) == 64 and win == mat:
-                            print(f"  sub{s}+0x{off:03x} == i{idx}.m{k} EXACT")
+                            print(f"  {s}+0x{off:03x} == i{idx}.m{k} EXACT")
         for reg, mat in mats:
             best = (1e30, None)
             for name, cand in candidates:

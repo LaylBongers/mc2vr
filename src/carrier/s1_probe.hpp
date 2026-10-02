@@ -28,6 +28,17 @@
 //        GPU matrices are derived, so exact-match classification can only ever
 //        attribute a subset; the exfil lets the analyzer search the
 //        relationships offline.
+//   S1g (run 7, this): run 6 was decisive — the GPU proof fired zero times
+//        (no patched matrix ever reached the GPU) while unpatched entry m[0]
+//        uploads do occur, so the VM consumer does NOT read the walked views'
+//        camera data at all; the main camera was located on the GPU (c21
+//        position + c23-c26 view matrix, dynamic per frame); static RE found
+//        the upstream chain: ViewEntry.camData (entry+0x7ec) -> upstream
+//        camera objects, FUN_0048f9d0 converts the entry quaternion
+//        (+0x7d4) + pos7c4 into the matrices (entries are DERIVED state).
+//        S1g adds window I (entry quaternion patch) and window J (camData
+//        object pos-match patch), and exfils the camData objects + the
+//        global camera chain for offline layout RE.
 // New MidHooks live here; the M3 handlers (render_dump.cpp) and the device
 // VmtHook (device.cpp) feed this module via the note_*/on_* taps. Handlers
 // run on the main thread; report_window() runs on the queue poller thread.

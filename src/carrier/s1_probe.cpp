@@ -69,6 +69,17 @@ constexpr uintptr_t VIEW_TABLE_END = VIEW_TABLE + (size_t)VIEW_IDX_MAX * VIEW_ST
 // before S1f (window H).
 constexpr uint32_t VIEW_POS_OFF = 0x7c4;
 constexpr uint32_t VIEW_POS2_OFF = 0x7ac;
+// Entry camera orientation (quaternion x,y,z at +0x7d4, w at +0x7e0 — the
+// per-frame matrix source per FUN_0048f9d0) and the UPSTREAM camera object
+// pointer (copied from the game view object's +0x8c at activation —
+// FUN_0088e40/S1f static RE). The VM consumer reads the camera from this
+// upstream chain, not the entry copies (run-6 evidence).
+constexpr uint32_t VIEW_QUAT_OFF = 0x7d4;
+constexpr uint32_t VIEW_CAMDATA_OFF = 0x7ec;
+constexpr uint32_t CAMDATA_SCAN = 0x200;
+// Global camera-chain head read by FUN_0048a8f0: *(DAT_00e79dfc + 0x104) is
+// the inner object with floats at +0x17c/+0x180/*100 at +0x184.
+constexpr uintptr_t CAM_GLOBAL_CHAIN = 0x00e79dfc;
 
 // Frame-ctx layout (SubmitWorldPackets this+...): 0x680 block at +0xd2950
 // (S0), per-view camera staging slots at +0xc2110 (stride 0x30; content per
@@ -138,6 +149,9 @@ constexpr uint32_t EXFIL_SUB_COUNT = 2;     // at block +0xEC
 // nudges are separately visible. Run-2 result: windows A/B (head view) had
 // no nudge; S1c re-runs them on all views plus the three remaining channels.
 constexpr float PATCH_DELTA = 4.0f;
+constexpr float PATCH_QUAT_DELTA = 0.1f; // window I: quaternion component
+                                         // (a big nudge denormalizes the quat
+                                         // into a wild spin — visible anyway)
 constexpr uint32_t PATCH_WINDOW = 5;
 constexpr uint32_t PATCH_GAP = 60;
 constexpr uint32_t PATCH_MAX_TARGETS = 160; // stage F needs 7/view x ~20 views
@@ -364,13 +378,14 @@ bool type_flags_mismatch_logged = false;
 
 enum class PatchState { Idle, Window, Gap, Done };
 PatchState g_pstate = PatchState::Idle;
-int g_pstage = 0; // 0=A m[1][3], 1=B staging pos, 2=C ring record pos,
-                  // 3=D entry pos7c4[0], 4=E m[0][12], 5=F m[2..m[8][12],
-                  // 6=G ctx-block/live-subobject pos matches, 7=H pos7ac[0]
-const char *const PATCH_NAMES[8] = {
+int g_pstage = 0; // A m[1][3], B staging pos, C ring record pos, D pos7c4,
+                  // E m[0][12], F m[2..m[8][12], G ctx/live-sub pos matches,
+                  // H pos7ac[0], I quat7d4[0], J camData-object pos matches
+const char *const PATCH_NAMES[10] = {
     "A entry m[1][3]", "B staging-slot pos[0]", "C camera-ring record pos[0]",
     "D entry pos7c4[0]", "E entry m[0][12]", "F entry m[2..m[8][12]",
     "G ctx/live-sub pos matches", "H entry pos7ac[0]",
+    "I entry quat7d4[0]", "J camData-object pos matches",
 };
 
 uint8_t *g_pt_addr[PATCH_MAX_TARGETS];
@@ -466,6 +481,7 @@ struct ExEntrySnap {
     uint8_t m1[64];
     uint8_t has_all;
     uint8_t mall[VIEW_MATRIX_COUNT * VIEW_MATRIX_STRIDE];
+    const uint8_t *camdata; // upstream camera object (entry+0x7ec)
 };
 ExEntrySnap g_ex_entries[EXFIL_VIEWS];
 uint32_t g_ex_entry_n = 0;
@@ -785,6 +801,60 @@ bool window_c_scan()
     return true;
 }
 
+float patch_delta_for_stage()
+{
+    return g_pstage == 8 ? PATCH_QUAT_DELTA : PATCH_DELTA;
+}
+
+void g_scan_range(const uint8_t *base, uint32_t size); // defined below
+
+// Window J: scan each live walked view's UPSTREAM camData object (entry+0x7ec)
+// for floats matching any live view's camera position component — the
+// upstream chain the VM consumer evidently reads (run-6: no entry-side patch
+// ever reached the GPU).
+bool window_j_scan()
+{
+    g_pt_n = 0;
+    g_pos_tgt_n = 0;
+    const uint8_t *seen[FRAME_LIST_MAX];
+    uint32_t seen_n = 0;
+    for (uint32_t i = 0; i < g_list_n && g_pos_tgt_n + 3 <= PATCH_POS_TARGETS; i++) {
+        const uint32_t idx = g_list[i].idx;
+        if (idx >= VIEW_IDX_MAX) {
+            continue;
+        }
+        const uint8_t *entry = (const uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
+        if (!view_is_live(entry)) {
+            continue;
+        }
+        const float *pos = (const float *)(entry + VIEW_POS_OFF);
+        if (pos[0] == 0.0f && pos[1] == 0.0f && pos[2] == 0.0f) {
+            continue;
+        }
+        g_pos_tgts[g_pos_tgt_n++] = pos[0];
+        g_pos_tgts[g_pos_tgt_n++] = pos[1];
+        g_pos_tgts[g_pos_tgt_n++] = pos[2];
+        const uint8_t *cam = *(const uint8_t *const *)(entry + VIEW_CAMDATA_OFF);
+        if (!cam || (uintptr_t)cam < 0x00100000 || (uintptr_t)cam >= 0x80000000) {
+            continue;
+        }
+        bool dup = false;
+        for (uint32_t s = 0; s < seen_n; s++) {
+            dup = dup || (seen[s] == cam);
+        }
+        if (dup || seen_n >= FRAME_LIST_MAX) {
+            continue;
+        }
+        seen[seen_n++] = cam;
+        g_scan_range(cam, CAMDATA_SCAN);
+    }
+    if (g_pt_n == 0) {
+        return false;
+    }
+    g_patch_any_live = true;
+    return true;
+}
+
 // Window G: scan a byte range for floats equal (within PATCH_POS_EPS) to any
 // live walked view's camera position component — the surgical way to find
 // wherever the current camera coordinates live inside the ctx block and the
@@ -870,6 +940,9 @@ bool build_patch_targets(uint64_t frame)
     if (g_pstage == 6) {
         return window_g_scan(); // G targets ctx-block/live-subobject pos floats
     }
+    if (g_pstage == 9) {
+        return window_j_scan(); // J targets the upstream camData objects
+    }
     for (uint32_t i = 0; i < g_list_n && g_pt_n < PATCH_MAX_TARGETS; i++) {
         const uint32_t idx = g_list[i].idx;
         if (idx >= VIEW_IDX_MAX) {
@@ -902,6 +975,13 @@ bool build_patch_targets(uint64_t frame)
                 continue;
             }
             addr = (uint8_t *)(entry + VIEW_POS2_OFF);
+            break;
+        case 8: // I: entry quat7d4[0] — the orientation the per-frame matrix
+                // build converts (FUN_0048f9d0); never patched before
+            if (!live) {
+                continue;
+            }
+            addr = (uint8_t *)(entry + VIEW_QUAT_OFF);
             break;
         case 4: // E: entry m[0][12]
             if (!live) {
@@ -950,11 +1030,12 @@ bool build_patch_targets(uint64_t frame)
 void patch_restore_targets()
 {
     for (uint32_t i = 0; i < g_pt_n; i++) {
-        if (g_pstage == 2 || g_pstage == 6) {
-            // Ring records / ctx-subobject floats keep getting rewritten:
-            // only restore a slot that still holds OUR patch (else it was
-            // reused for fresh data).
-            if (*(const float *)g_pt_addr[i] == g_pt_saved[i] + PATCH_DELTA) {
+        if (g_pstage == 2 || g_pstage == 6 || g_pstage == 9) {
+            // Ring records / ctx-subobject / camData floats keep getting
+            // rewritten: only restore a slot that still holds OUR patch
+            // (else it was reused for fresh data).
+            if (*(const float *)g_pt_addr[i] ==
+                g_pt_saved[i] + patch_delta_for_stage()) {
                 *(float *)g_pt_addr[i] = g_pt_saved[i];
             }
         } else {
@@ -969,7 +1050,7 @@ void patch_apply_targets()
         // Re-read the current value each frame (the game rewrites these
         // fields between frames) and patch relative to it.
         g_pt_saved[i] = *(const float *)g_pt_addr[i];
-        *(float *)g_pt_addr[i] = g_pt_saved[i] + PATCH_DELTA;
+        *(float *)g_pt_addr[i] = g_pt_saved[i] + patch_delta_for_stage();
     }
     // GPU proof set (stages A/E/F): the exact patched matrices, read back
     // after patching. Any GPU upload equal to one of these proves the
@@ -1078,9 +1159,9 @@ void run_patch(uint64_t frame)
 
     case PatchState::Window:
         patch_restore_targets();
-        if (g_pstage == 2 || g_pstage == 6) {
-            // Re-scan each frame: the ring records / ctx pos floats move as
-            // the walk republishes.
+        if (g_pstage == 2 || g_pstage == 6 || g_pstage == 9) {
+            // Re-scan each frame: the ring records / ctx / camData floats
+            // move as the walk republishes.
             if (!build_patch_targets(frame)) {
                 MC2VR_LOG("S1 patch %s: no targets this frame; ending window",
                           PATCH_NAMES[g_pstage]);
@@ -1109,9 +1190,9 @@ void run_patch(uint64_t frame)
             return;
         }
         g_pstage++;
-        if (g_pstage > 7) {
+        if (g_pstage > 9) {
             g_pstate = PatchState::Done;
-            MC2VR_LOG("S1 patch: all windows A-H complete — residency_seen=%u",
+            MC2VR_LOG("S1 patch: all windows A-J complete — residency_seen=%u",
                       g_residency_seen ? 1u : 0u);
             return;
         }
@@ -1129,7 +1210,7 @@ void run_patch(uint64_t frame)
         if (++g_pstage_tries > PATCH_STAGE_TRIES) {
             g_pstage_tries = 0;
             g_pstage++;
-            if (g_pstage > 7) {
+            if (g_pstage > 9) {
                 g_pstate = PatchState::Done;
                 MC2VR_LOG("S1 patch: all stages starved — windows skipped");
                 return;
@@ -1248,6 +1329,47 @@ void exfil_emit()
             MC2VR_LOG("S1 excache: c%u=%s", r, chex);
         }
     }
+    // S1g: the upstream camData objects (entry+0x7ec) for the snapshotted
+    // views — layout evidence for the camera chain the VM evidently reads.
+    for (uint32_t i = 0; i < g_ex_entry_n; i++) {
+        const uint8_t *cam = g_ex_entries[i].camdata;
+        if (!cam || (uintptr_t)cam < 0x00100000 || (uintptr_t)cam >= 0x80000000) {
+            continue;
+        }
+        for (uint32_t off = 0; off < 0x100; off += 32) {
+            const uint32_t n = 0x100 - off < 32 ? 0x100 - off : 32;
+            char chex[96];
+            char *w = chex;
+            for (uint32_t j = 0; j < n; j++) {
+                *w++ = "0123456789abcdef"[cam[off + j] >> 4];
+                *w++ = "0123456789abcdef"[cam[off + j] & 0xf];
+            }
+            *w = '\0';
+            MC2VR_LOG("S1 excam i%u +0x%03x: %s", g_ex_entries[i].idx, off, chex);
+        }
+    }
+    // S1g: the global camera chain FUN_0048a8f0 reads:
+    // *(*(CAM_GLOBAL_CHAIN) + 0x104) — dump 0x100 bytes for layout RE.
+    {
+        const uintptr_t obj = *(const uintptr_t *)CAM_GLOBAL_CHAIN;
+        if (obj >= 0x0010000 && obj < 0x80000000) {
+            const uint8_t *inner = *(const uint8_t *const *)(obj + 0x104);
+            if (inner && (uintptr_t)inner >= 0x00100000 &&
+                (uintptr_t)inner < 0x80000000) {
+                for (uint32_t off = 0; off < 0x100; off += 32) {
+                    const uint32_t n = 0x100 - off < 32 ? 0x100 - off : 32;
+                    char ghex[96];
+                    char *w = ghex;
+                    for (uint32_t j = 0; j < n; j++) {
+                        *w++ = "0123456789abcdef"[inner[off + j] >> 4];
+                        *w++ = "0123456789abcdef"[inner[off + j] & 0xf];
+                    }
+                    *w = '\0';
+                    MC2VR_LOG("S1 exglob +0x%03x: %s", off, ghex);
+                }
+            }
+        }
+    }
     // S1e: the ctx-block primary-subobject copies (what the VM consumer
     // receives inside the 0x680 element) — offline candidates for the
     // derived main-camera source.
@@ -1321,6 +1443,8 @@ void exfil_maybe(uint64_t frame)
             } else {
                 snap.has_all = 0;
             }
+            snap.camdata =
+                *(const uint8_t *const *)(entry + VIEW_CAMDATA_OFF);
             if (g_ex_entry_n == 0) {
                 g_ex_fov[0] = *(const uint32_t *)(entry + 0x2ec);
                 g_ex_fov[1] = *(const uint32_t *)(entry + 0x2f4);
