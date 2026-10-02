@@ -71,7 +71,8 @@ def words(d, key="data"):
 S1_ECHO = re.compile(
     r"S1 (RESIDENCY|patch|raw:|vsmat:|vs:|vsreg:|vlist:|bracket: frame|"
     r"bracket: frames|xform: calls|xform\(SetTransform|vp: calls|"
-    r"vlist: frames|elem: |elemscan|vsmatch:|vspatched:|crec: dumping|: frame-ctx|"
+    r"vlist: frames|elem: |elemscan|vsmatch:|vsclock:|vsclean:|vspatched|crec: dumping|"
+    r": frame-ctx|"
     r": RenderFrame entry|: WARNING)"
 )
 # S1b: "S1 elem @consPos+<elem> +0x<off>: hex" (3 x 32B lines per element).
@@ -380,6 +381,69 @@ def report_excache(path):
               f"first=[{', '.join(f'{v:.4g}' for v in t)}]")
 
 
+# S1h: burst correlation — consecutive frames of the GPU camera registers
+# vs every live view's position. Identifies which view (if any) tracks the
+# GPU camera; also checks the r23-r25 translation vs -r21.
+S1_BURST = re.compile(
+    r"S1 burst: frame=(\d+)((?: r(\d+)=([0-9a-f,]+))+) \| pos:((?: i(\d+):\(([^)]+)\))+)")
+
+
+def report_burst(path):
+    frames = []
+    for line in open(path, encoding="utf-8", errors="replace"):
+        m = S1_BURST.search(line)
+        if not m:
+            continue
+        regs = {}
+        for rm in re.finditer(r"r(\d+)=([0-9a-f,]+)", m.group(2)):
+            regs[int(rm.group(1))] = [
+                struct.unpack("<f", struct.pack("<I", int(h, 16)))[0]
+                for h in rm.group(2).split(",")]
+        views = {}
+        for vm in re.finditer(r"i(\d+):\(([^)]+)\)", m.group(5)):
+            views[int(vm.group(1))] = tuple(float(x) for x in vm.group(2).split(","))
+        frames.append({"frame": int(m.group(1)), "regs": regs, "views": views})
+    if not frames:
+        return
+    print(f"\n#### burst correlation ({len(frames)} consecutive frames) ####")
+    cam = [f["regs"].get(21) for f in frames]
+    cam = [c for c in cam if c]
+    if cam:
+        print(f"  r21 (camera pos?) first/last: "
+              f"{tuple(round(v, 2) for v in cam[0][:3])} -> "
+              f"{tuple(round(v, 2) for v in cam[-1][:3])}")
+    # Which logged view position tracks r21 (or the negated r23-25 translation)?
+    all_views = sorted({v for f in frames for v in f["views"]})
+    best = (1e30, None)
+    for v in all_views:
+        dists = []
+        for f in frames:
+            c = f["regs"].get(21)
+            p = f["views"].get(v)
+            if not c or not p:
+                continue
+            dists.append(sum(abs(c[i] - p[i]) for i in range(3)) / 3.0)
+        if len(dists) >= 5:
+            avg = sum(dists) / len(dists)
+            print(f"  view i{v}: mean|r21 - pos7c4| = {avg:.2g} over {len(dists)} frames")
+            if avg < best[0]:
+                best = (avg, v)
+    if best[1] is not None:
+        print(f"  BEST-TRACKING VIEW: i{best[1]} (mean dist {best[0]:.2g})"
+              + ("  <- TRACKS the GPU camera" if best[0] < 50 else
+                 "  (too far to be the same camera)"))
+    # r23-r25 translation vs negated r21
+    t = []
+    for f in frames[:3]:
+        r21 = f["regs"].get(21)
+        rows = [f["regs"].get(r) for r in (23, 24, 25)]
+        if r21 and all(rows):
+            t.append(tuple(rows[i][3] for i in range(3)))
+    if t:
+        print(f"  r23/24/25 [.w] = {tuple(round(x, 1) for x in t[0])} "
+              f"vs -r21.xyz = {tuple(round(-v, 1) for v in cam[0][:3]) if cam else '?'}")
+
+
 def report_s1(path):
     elems, old_elems, naive, xforms, vsmats, echoes = parse_s1(path)
     print("\n################ S1 evidence ################")
@@ -433,6 +497,7 @@ def report_s1(path):
     report_scan_elems(path)
     report_crecs(path)
     report_excache(path)
+    report_burst(path)
     report_exfil(path)
 
 

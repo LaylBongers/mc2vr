@@ -39,6 +39,16 @@
 //        S1g adds window I (entry quaternion patch) and window J (camData
 //        object pos-match patch), and exfils the camData objects + the
 //        global camera chain for offline layout RE.
+//   S1h (run 8, this): run 7 — no nudge; J starved (camData = parameters,
+//        not pose); frame hitches at window cadence = patches landing in
+//        game-consumed state but not the draw camera; no exact exfil hits.
+//        S1h adds the walk-entry MidHook (SubmitWorldPackets entry
+//        0x0048e620): window K patches ALL camera fields of live views
+//        BEFORE the walk's copies; the vsclock control patches a view
+//        proven to upload its m[0] and times the snapshot (vspatched-ctrl
+//        = consume-time read; vsclean = snapshot predates the walk); a
+//        24-frame burst correlates the c21-c26 GPU camera registers with
+//        every live view's position.
 // New MidHooks live here; the M3 handlers (render_dump.cpp) and the device
 // VmtHook (device.cpp) feed this module via the note_*/on_* taps. Handlers
 // run on the main thread; report_window() runs on the queue poller thread.

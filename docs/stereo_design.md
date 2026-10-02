@@ -367,7 +367,52 @@ patch→consume chain is broken in a way the run cannot distinguish from (a)
    chain, which no patch window touched — explaining all negative results
    across runs 4–6 coherently.
 
-### S1g — run 7 (the upstream chain; IMPLEMENTED 2026-10-02, pending run)
+### S1g — run 7 (the upstream chain; run 7 done → results below)
+
+
+### S1g run results (2026-10-02, run 7 — full gameplay; NO nudges, frame HITCHES at window cadence)
+
+1. Windows A–I ran (I: 63 quaternion targets); **J starved** — the camData
+   objects contain NO floats matching the views' pos7c4 values: camData is a
+   camera-PARAMETERS object (fov/near/LOD), not the pose holder.
+2. The user observed ~1s-cadence frame hitches during the window period —
+   and the FrameTick data agrees (dt 26–32ms avg with 1.2–4s spikes during
+   the windows, vs 16.7ms clean before). The same spike pattern exists in
+   runs 5–6 around the window periods (unnoticed then). Interpretation: the
+   patches DO land in game-consumed state (streaming/culling read the view
+   positions) — the freeze/re-apply thrash makes those systems re-evaluate —
+   but not in the draw camera.
+3. Exfil (camData 0x100 × views, globcam 0x100, 9 matrices, live subs): NO
+   exact hits anywhere, and the c21–c26 GPU camera matches nothing dumped.
+4. Conclusion after seven runs: the draw camera is not read from any view
+   entry field, staging, ring record, ctx copy, camData, or the global-chain
+   object — either its source is snapshotted BEFORE the pre-VM patch point
+   (timing hypothesis) or it is entirely external to the view system.
+
+### S1h — run 8 (timing control + correlation; IMPLEMENTED 2026-10-02, pending run)
+
+- **Window K (replacing J)**: a walk-entry MidHook (SubmitWorldPackets entry
+  0x0048e620, first instruction) patches ALL candidate camera fields of
+  every live type-2 view — m[0][12], m[1][12], pos7c4[0], pos7ac[0] (+4) and
+  quat7d4[0] (+0.1) — BEFORE the walk makes ANY copy (staging slot, ring
+  records, elements, portal registration). If the consumer reads view data
+  at ANY point after walk entry, K must nudge. No save/restore needed: the
+  game's camera update rewrites all these fields between frames (self-
+  cleaning). If K is also negative, the draw camera is conclusively
+  external to the view system.
+- **vsmatch-triggered control**: when a view's m[0]/m[6] is first observed
+  uploading EXACTLY ("S1 vsclock:"), that view's matching matrix gets +4 at
+  the NEXT walk entries. Then: `vspatched-ctrl` (the PATCHED value uploads)
+  = consume-time read — the whole pre-VM patch approach was sound and the
+  camera simply lives elsewhere; `vsclean` (the view's matrix STILL uploads
+  clean while its patch is active) = the consumer's snapshot predates the
+  walk — every post-walk patch window was doomed by timing alone.
+- **Burst correlation**: 24 consecutive world-view frames log the c21/c23/
+  c24/c25 register cache plus every live view's pos7c4; the analyzer reports
+  which view (if any) TRACKS the GPU camera position (mean |r21 − pos7c4|),
+  plus the r23–r25 translation vs −r21 relationship. This identifies the
+  main-camera view (if it is one) without depending on any patch landing.
+
 
 - **Window I (stage 8)**: patches the entry QUATERNION x (+0x7d4, delta
   +0.1 — the per-frame matrix source per FUN_0048f9d0; never patched; a hit

@@ -174,6 +174,7 @@ constexpr uint32_t VS_PRIOR_REGS = 32;
 
 SafetyHookMid g_pre_vm_mid;
 SafetyHookMid g_renderframe_mid;
+SafetyHookMid g_walk_entry_mid;
 
 // ---- S1.1 consumer bracket ---------------------------------------------------
 // queue+0x10 runtime decode (run 2): low16 = ring POSITION (mod cap,
@@ -380,13 +381,32 @@ enum class PatchState { Idle, Window, Gap, Done };
 PatchState g_pstate = PatchState::Idle;
 int g_pstage = 0; // A m[1][3], B staging pos, C ring record pos, D pos7c4,
                   // E m[0][12], F m[2..m[8][12], G ctx/live-sub pos matches,
-                  // H pos7ac[0], I quat7d4[0], J camData-object pos matches
+                  // H pos7ac[0], I quat7d4[0], K PRE-WALK all-fields patch
+                  // (J camData pos-matches removed: run 7 proved camData holds
+                  // parameters, not pose — it starved 600 tries)
 const char *const PATCH_NAMES[10] = {
     "A entry m[1][3]", "B staging-slot pos[0]", "C camera-ring record pos[0]",
     "D entry pos7c4[0]", "E entry m[0][12]", "F entry m[2..m[8][12]",
     "G ctx/live-sub pos matches", "H entry pos7ac[0]",
-    "I entry quat7d4[0]", "J camData-object pos matches",
+    "I entry quat7d4[0]", "K pre-walk all-fields",
 };
+
+// S1h vsmatch-triggered control: patch a view PROVEN to upload its m[0]
+// (first exact GPU match) at walk entry, then check whether the next uploads
+// carry the patch or stay clean — directly times the consumer's snapshot.
+int32_t g_ctrl_view = -1;
+uint32_t g_ctrl_k = 0;
+uint32_t g_ctrl_left = 0;
+uint32_t g_ctrl_logs = 0;
+float g_ctrl_exp[16] = {};
+
+// S1h burst correlation: 24 consecutive world-view frames logging the
+// c21-c26 register cache + every live view's pos7c4 — offline correlation
+// identifies which view (if any) tracks the GPU camera.
+constexpr uint32_t BURST_START_FRAME = 40;
+constexpr uint32_t BURST_FRAMES = 24;
+uint32_t g_burst_started = 0;
+uint32_t g_burst_left = 0;
 
 uint8_t *g_pt_addr[PATCH_MAX_TARGETS];
 float g_pt_saved[PATCH_MAX_TARGETS];
@@ -409,6 +429,7 @@ float g_pos_tgts[PATCH_POS_TARGETS];
 uint32_t g_pos_tgt_n = 0;
 uint32_t g_pleft = 0;
 uint32_t g_pgap = 0;
+uint32_t g_k_left = 0; // window K counter (decremented at walk entries)
 uint32_t g_pstage_tries = 0;
 bool g_patch_any_live = false;
 bool g_crec_dumped = false;
@@ -808,52 +829,7 @@ float patch_delta_for_stage()
 
 void g_scan_range(const uint8_t *base, uint32_t size); // defined below
 
-// Window J: scan each live walked view's UPSTREAM camData object (entry+0x7ec)
-// for floats matching any live view's camera position component — the
-// upstream chain the VM consumer evidently reads (run-6: no entry-side patch
-// ever reached the GPU).
-bool window_j_scan()
-{
-    g_pt_n = 0;
-    g_pos_tgt_n = 0;
-    const uint8_t *seen[FRAME_LIST_MAX];
-    uint32_t seen_n = 0;
-    for (uint32_t i = 0; i < g_list_n && g_pos_tgt_n + 3 <= PATCH_POS_TARGETS; i++) {
-        const uint32_t idx = g_list[i].idx;
-        if (idx >= VIEW_IDX_MAX) {
-            continue;
-        }
-        const uint8_t *entry = (const uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
-        if (!view_is_live(entry)) {
-            continue;
-        }
-        const float *pos = (const float *)(entry + VIEW_POS_OFF);
-        if (pos[0] == 0.0f && pos[1] == 0.0f && pos[2] == 0.0f) {
-            continue;
-        }
-        g_pos_tgts[g_pos_tgt_n++] = pos[0];
-        g_pos_tgts[g_pos_tgt_n++] = pos[1];
-        g_pos_tgts[g_pos_tgt_n++] = pos[2];
-        const uint8_t *cam = *(const uint8_t *const *)(entry + VIEW_CAMDATA_OFF);
-        if (!cam || (uintptr_t)cam < 0x00100000 || (uintptr_t)cam >= 0x80000000) {
-            continue;
-        }
-        bool dup = false;
-        for (uint32_t s = 0; s < seen_n; s++) {
-            dup = dup || (seen[s] == cam);
-        }
-        if (dup || seen_n >= FRAME_LIST_MAX) {
-            continue;
-        }
-        seen[seen_n++] = cam;
-        g_scan_range(cam, CAMDATA_SCAN);
-    }
-    if (g_pt_n == 0) {
-        return false;
-    }
-    g_patch_any_live = true;
-    return true;
-}
+
 
 // Window G: scan a byte range for floats equal (within PATCH_POS_EPS) to any
 // live walked view's camera position component — the surgical way to find
@@ -940,9 +916,7 @@ bool build_patch_targets(uint64_t frame)
     if (g_pstage == 6) {
         return window_g_scan(); // G targets ctx-block/live-subobject pos floats
     }
-    if (g_pstage == 9) {
-        return window_j_scan(); // J targets the upstream camData objects
-    }
+
     for (uint32_t i = 0; i < g_list_n && g_pt_n < PATCH_MAX_TARGETS; i++) {
         const uint32_t idx = g_list[i].idx;
         if (idx >= VIEW_IDX_MAX) {
@@ -1030,10 +1004,10 @@ bool build_patch_targets(uint64_t frame)
 void patch_restore_targets()
 {
     for (uint32_t i = 0; i < g_pt_n; i++) {
-        if (g_pstage == 2 || g_pstage == 6 || g_pstage == 9) {
-            // Ring records / ctx-subobject / camData floats keep getting
-            // rewritten: only restore a slot that still holds OUR patch
-            // (else it was reused for fresh data).
+        if (g_pstage == 2 || g_pstage == 6) {
+            // Ring records / ctx-subobject floats keep getting rewritten:
+            // only restore a slot that still holds OUR patch (else it was
+            // reused for fresh data).
             if (*(const float *)g_pt_addr[i] ==
                 g_pt_saved[i] + patch_delta_for_stage()) {
                 *(float *)g_pt_addr[i] = g_pt_saved[i];
@@ -1116,7 +1090,8 @@ void patch_start_window(uint64_t frame)
         MC2VR_LOG("S1 patch %s: %u targets (anyLive=%u; first:%s) pos += %g for "
                   "%u frames — expected visual: nudge #%d",
                   PATCH_NAMES[g_pstage], g_pt_n, g_patch_any_live ? 1u : 0u,
-                  tgt, (double)PATCH_DELTA, (unsigned)PATCH_WINDOW, g_pstage + 1);
+                  tgt, (double)patch_delta_for_stage(), (unsigned)PATCH_WINDOW,
+                  g_pstage + 1);
     }
     (void)frame;
 }
@@ -1158,10 +1133,20 @@ void run_patch(uint64_t frame)
         return;
 
     case PatchState::Window:
+        if (g_pstage == 9) { // K: applied at walk entries; count down here
+            if (g_k_left != UINT32_MAX && g_k_left == 0) {
+                MC2VR_LOG("S1 patch K pre-walk ended — nudge observed? (yes -> "
+                          "the consumer DOES read view data, snapshot between "
+                          "walk entry and our old pre-VM point; no -> the draw "
+                          "camera is conclusively external to the view system)");
+                g_pstate = PatchState::Done;
+            }
+            return;
+        }
         patch_restore_targets();
-        if (g_pstage == 2 || g_pstage == 6 || g_pstage == 9) {
-            // Re-scan each frame: the ring records / ctx / camData floats
-            // move as the walk republishes.
+        if (g_pstage == 2 || g_pstage == 6) {
+            // Re-scan each frame: the ring records / ctx pos floats move as
+            // the walk republishes.
             if (!build_patch_targets(frame)) {
                 MC2VR_LOG("S1 patch %s: no targets this frame; ending window",
                           PATCH_NAMES[g_pstage]);
@@ -1192,7 +1177,7 @@ void run_patch(uint64_t frame)
         g_pstage++;
         if (g_pstage > 9) {
             g_pstate = PatchState::Done;
-            MC2VR_LOG("S1 patch: all windows A-J complete — residency_seen=%u",
+            MC2VR_LOG("S1 patch: all windows A-K complete — residency_seen=%u",
                       g_residency_seen ? 1u : 0u);
             return;
         }
@@ -1206,6 +1191,14 @@ void run_patch(uint64_t frame)
         // runs on the real camera, not a menu background (run-3 lesson).
         if (g_list_frame != frame || g_list_total < PATCH_GAMEPLAY_MIN_VIEWS) {
             return; // menu/cutscene/load phase — wait, no retry cost
+        }
+        if (g_pstage == 9) { // K needs no target build: walk entries patch
+            g_pstate = PatchState::Window;
+            g_pleft = PATCH_WINDOW;
+            g_k_left = UINT32_MAX; // armed; set at the next walk entry
+            MC2VR_LOG("S1 patch K pre-walk: opens at the next walk entry — "
+                      "patches all live views' m0/m1/pos/quat BEFORE the walk");
+            return;
         }
         if (++g_pstage_tries > PATCH_STAGE_TRIES) {
             g_pstage_tries = 0;
@@ -1489,6 +1482,17 @@ void vs_count_result(const MatrixMatch &mm, uint32_t reg_base, uint64_t frame)
     }
     check_residency(mm);
 
+    // S1h control discrimination: a CLEAN m[0] upload of the control view
+    // while its walk-entry patch is active proves the consumer's snapshot
+    // predates the walk (the patch is applied before every copy the walk
+    // makes).
+    if (g_ctrl_left > 0 && g_ctrl_view >= 0 && mm.kind == MatrixMatch::Kind::Entry &&
+        !mm.transposed && mm.idx == g_ctrl_view && mm.k == 0) {
+        MC2VR_LOG("S1 vsclean: view i%u m0 uploads CLEAN while its walk-entry "
+                  "patch is ACTIVE — consumer snapshot predates the walk-entry "
+                  "patch point", g_ctrl_view);
+    }
+
     if (mm.kind != MatrixMatch::Kind::None) {
         // Match-tag one-shot logging per unique (reg, tag).
         char tag[40];
@@ -1509,6 +1513,15 @@ void vs_count_result(const MatrixMatch &mm, uint32_t reg_base, uint64_t frame)
             g_match_log_n++;
             MC2VR_LOG("S1 vsmatch: frame=%llu reg=c%u tag=%s",
                       (unsigned long long)frame, reg_base, tag);
+        }
+        // S1h: arm the control on the FIRST m[0]/m[6] exact upload.
+        if (g_ctrl_view < 0 && mm.kind == MatrixMatch::Kind::Entry && !mm.transposed &&
+            (mm.k == 0 || mm.k == 6)) {
+            g_ctrl_view = mm.idx;
+            g_ctrl_k = mm.k;
+            g_ctrl_left = 0;
+            MC2VR_LOG("S1 vsclock: view i%u m%u observed on GPU (reg=c%u) — "
+                      "arming walk-entry control patch", mm.idx, mm.k, reg_base);
         }
     }
 }
@@ -1569,6 +1582,12 @@ void vs_candidate(const float *m16, uint32_t reg_base, uint64_t frame, bool deta
     if (g_pstate == PatchState::Window && (g_pstage == 0 || g_pstage == 4 || g_pstage == 5)) {
         check_patched_gpu(m16, reg_base, frame); // S1f GPU proof
     }
+    if (g_ctrl_left > 0 && memcmp(m16, g_ctrl_exp, 64) == 0) {
+        MC2VR_LOG("S1 vspatched-ctrl: reg=c%u matches the control view's "
+                  "PATCHED m[0] — consume-time read confirmed", reg_base);
+        g_ctrl_left = 0;
+        g_ctrl_view = -1;
+    }
 
     if (detail && g_vs_detail < VS_DETAIL_BURST) {
         g_vs_detail++;
@@ -1578,6 +1597,85 @@ void vs_candidate(const float *m16, uint32_t reg_base, uint64_t frame, bool deta
         hex64(m16, hex, sizeof(hex));
         MC2VR_LOG("S1 vsmat: frame=%llu reg=c%u tag=%s m=%s",
                   (unsigned long long)frame, reg_base, tag, hex);
+    }
+}
+
+// ---- S1h: walk-entry patch point (SubmitWorldPackets entry, 0x0048e620) -------
+// Window K patches EVERY candidate camera field of every live type-2 view
+// BEFORE the walk's copies are made (staging slot, ring records, elements).
+// If the consumer reads view data at ANY point after walk entry — walk-time
+// snapshots included — this must nudge. No save/restore: the game's camera
+// update rewrites pos7c4/quat per frame and FUN_0048f9d0 rebuilds the
+// matrices from them, so every field self-cleans before the next walk.
+void apply_pre_walk_patches()
+{
+    uint32_t targets = 0;
+    int32_t idx = *(volatile int32_t *)MC2_VIEW_LIST_HEAD;
+    for (uint32_t hops = 0; idx >= 0 && (uint32_t)idx < VIEW_IDX_MAX &&
+                             hops < VIEW_LIST_MAX_HOPS;
+         hops++) {
+        uint8_t *entry = (uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
+        if (view_is_live(entry)) {
+            *(float *)(entry + VIEW_M0_OFF + 12 * 4) += PATCH_DELTA;
+            *(float *)(entry + VIEW_M1_OFF + 12 * 4) += PATCH_DELTA;
+            *(float *)(entry + VIEW_POS_OFF) += PATCH_DELTA;
+            *(float *)(entry + VIEW_POS2_OFF) += PATCH_DELTA;
+            *(float *)(entry + VIEW_QUAT_OFF) += PATCH_QUAT_DELTA;
+            targets += 5;
+        }
+        idx = *(volatile int32_t *)(entry + VIEW_LINK_OFF);
+    }
+    if (targets > 0 && g_ctrl_logs < 6) {
+        g_ctrl_logs++;
+        MC2VR_LOG("S1 patch K pre-walk: %u field writes across live views "
+                  "(m0/m1 trans, pos7c4/pos7ac, quat) — BEFORE all walk copies",
+                  targets);
+    }
+}
+
+// The control: patch the PROVEN-uploading view's m[0][12] at walk entry.
+void apply_ctrl_patch()
+{
+    if (g_ctrl_view < 0 || g_ctrl_view >= (int32_t)VIEW_IDX_MAX) {
+        return;
+    }
+    uint8_t *entry = (uint8_t *)(VIEW_TABLE + (size_t)g_ctrl_view * VIEW_STRIDE);
+    if (!view_is_live(entry)) {
+        return;
+    }
+    if (g_ctrl_left == 0) {
+        MC2VR_LOG("S1 vsclock control: patching view i%u m%u[12] at walk entry "
+                  "for %u frames — watch: vspatched (consume-time read) vs "
+                  "vsclean (snapshot predates the walk)",
+                  g_ctrl_view, g_ctrl_k, (unsigned)PATCH_WINDOW);
+    }
+    const uint32_t moff = VIEW_MATRIX_OFF + g_ctrl_k * VIEW_MATRIX_STRIDE;
+    *(float *)(entry + moff + 12 * 4) += PATCH_DELTA;
+    memcpy(g_ctrl_exp, entry + moff, 64); // the patched matrix, post-patch
+    g_ctrl_left++;
+    if (g_ctrl_left > PATCH_WINDOW) {
+        g_ctrl_left = 0; // control complete
+        g_ctrl_view = -1;
+    }
+}
+
+// Walk-entry MidHook: 0x0048e620, first instruction (before the walk, before
+// every walk-time copy). thiscall (ECX = frame ctx) — MidHook reads context
+// without convention risk.
+void walk_entry_midhook(safetyhook::Context &)
+{
+    if (g_pstate == PatchState::Window && g_pstage == 9 && g_k_left == UINT32_MAX) {
+        // Window K just opened at the previous pre-VM: arm the counter here,
+        // at the first walk of the window.
+        g_k_left = PATCH_WINDOW;
+    }
+    if (g_pstate == PatchState::Window && g_pstage == 9 &&
+        g_k_left != UINT32_MAX && g_k_left > 0) {
+        apply_pre_walk_patches();
+        g_k_left--;
+    }
+    if (g_ctrl_view >= 0 && g_ctrl_left <= PATCH_WINDOW) {
+        apply_ctrl_patch();
     }
 }
 
@@ -1607,6 +1705,48 @@ void pre_vm_midhook(safetyhook::Context &)
     if (g_elem_dumps < ELEM_DUMP_FRAMES && s.views > 0) {
         g_elem_dumps++;
         scan_ring_world_elements(ca, cb);
+    }
+
+    // S1h burst: consecutive-frame correlation of the GPU camera registers
+    // vs every live view's position (the register cache holds the previous
+    // frame's final values — one-frame lag, fine for correlation).
+    if (s.views > 0 && g_burst_left == 0 && !g_burst_started &&
+        g_exfil_view_counter >= BURST_START_FRAME) {
+        g_burst_started = 1;
+        g_burst_left = BURST_FRAMES;
+    }
+    if (g_burst_left > 0 && s.views > 0) {
+        g_burst_left--;
+        char line[720];
+        int n = _snprintf(line, sizeof(line), "frame=%llu", (unsigned long long)frame);
+        static const uint32_t burst_regs[4] = {21, 23, 24, 25};
+        for (uint32_t p = 0; p < 4 && n < (int)sizeof(line) - 48; p++) {
+            const uint32_t reg = burst_regs[p];
+            if (!g_vs_valid[reg]) {
+                continue;
+            }
+            const uint32_t *raw = (const uint32_t *)g_vs_rows[reg];
+            n += _snprintf(line + n, sizeof(line) - n, " r%u=%08x,%08x,%08x,%08x",
+                           reg, raw[0], raw[1], raw[2], raw[3]);
+        }
+        n += _snprintf(line + n, sizeof(line) - n, " | pos:");
+        uint32_t shown = 0;
+        for (uint32_t i = 0; i < g_list_n && shown < 12 && n < (int)sizeof(line) - 40; i++) {
+            const uint32_t idx = g_list[i].idx;
+            if (idx >= VIEW_IDX_MAX) {
+                continue;
+            }
+            const uint8_t *entry = (const uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
+            if (!view_is_live(entry)) {
+                continue;
+            }
+            const float *pos = (const float *)(entry + VIEW_POS_OFF);
+            n += _snprintf(line + n, sizeof(line) - n, " i%u:(%g,%g,%g)", idx,
+                           (double)pos[0], (double)pos[1], (double)pos[2]);
+            shown++;
+        }
+        line[sizeof(line) - 1] = '\0';
+        MC2VR_LOG("S1 burst: %s", line);
     }
 
     exfil_maybe(frame);   // S1c: emit previous exfil block / select new frame
@@ -1942,6 +2082,19 @@ void install()
         g_pre_vm_mid = std::move(*pre);
         MC2VR_LOG("S1: installed pre-VM MidHook @ %p (pipeline call of VM stub 0x0050f660)",
                   (void *)MC2_PIPELINE_VMSTUB_CALL);
+    }
+
+    // S1h: walk-entry patch point (window K + the control).
+    auto we = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_SUBMITWORLD_ENTRY),
+                                    walk_entry_midhook);
+    if (!we) {
+        MC2VR_LOG("S1: FATAL — walk-entry MidHook install failed @ %p (error %u)",
+                  (void *)MC2_SUBMITWORLD_ENTRY, (unsigned)we.error().type);
+    } else {
+        g_walk_entry_mid = std::move(*we);
+        MC2VR_LOG("S1: installed walk-entry MidHook @ %p (SubmitWorldPackets "
+                  "entry — window K pre-walk patches + control)",
+                  (void *)MC2_SUBMITWORLD_ENTRY);
     }
 
     auto rf = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_RENDERSHELL_RENDERFRAME),

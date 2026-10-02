@@ -87,6 +87,11 @@
 // 0x004c99fe -> 0x006b93e0, 0x004ca003 -> 0x006f9490.
 #define MC2_PIPELINE_VMSTUB_CALL ((uintptr_t)0x004c99f9u)
 
+// SubmitWorldPackets ENTRY (producer walk start — S1h window K pre-walk patch
+// point; thiscall, ECX = frame ctx; MidHook at the first instruction, prologue
+// push ebp; mov ebp,esp; and esp,-8 — clean).
+#define MC2_SUBMITWORLD_ENTRY ((uintptr_t)0x0048e620u)
+
 // RenderShell_RenderFrame entry (consumer half of the render path; reached
 // via RenderShell vtable slot03 = RenderFrameTimed 0x0085abd0). Prologue is
 // push ebp; mov ebp,esp; and esp,-16; sub esp,0x114 (13 bytes) — a MidHook
