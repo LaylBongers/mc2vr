@@ -268,7 +268,61 @@ spec (all behavior-preserving):
    lists (15–85 views/frame, distinct up to 96, head 15 in the wide phase),
    bracket steady.
 
-### S1d — run 4 (audit fixes; IMPLEMENTED 2026-10-02, pending run)
+### S1d — run 4 (audit fixes; run 4 done → results below)
+
+
+### S1d run results (2026-10-02, run 4 — new game, full gameplay session; NO nudges)
+
+All instrumentation channels finally worked (60fps steady, windows gated on
+gameplay, exfil emitted, 0 FATALs), and the run 4 evidence is decisive:
+
+1. **Windows A (m[1]), B (staging), D (pos7c4), E (m[0]) all ran during
+   gameplay on 18–21 live walked views (views 15/16/17/49/50 area) — NO nudge
+   in any of them.** None of those per-view fields feeds the visible draw
+   camera.
+2. **The camera-record ring layout is CRACKED** (the "S1 crec:" dump):
+   records are 0x28-stride `{2 pos-ish floats +0x00/+0x04, quaternion
+   +0x08..+0x14, ViewEntry* at +0x18, flags +0x1c, 2 floats +0x20/+0x24}`,
+   sitting consecutively per walked view (views 15–21 seen), with world
+   positions ≈2960–3130. The S0 plate comment's layout put the entry ptr at
+   +0x20 — wrong, which is why window C starved. Window C is now fixed
+   (+0x18) and is the TOP remaining suspect: walk-time pos+quat snapshots are
+   the classic consume-time camera source.
+3. **Register-priority classification produced real tags**: m[0] AND m[6]
+   of views 70/71/72/74 reach the GPU byte-exact at c8/c9/c12 (multiple
+   shader constant bases; c12=e0.m0T/e1.m0T appear in the early phase).
+   Views 70–74 are the satellite/impostor tile cameras (high indices from
+   the wide-view phases) — their draws use the entry matrices verbatim.
+   **The main camera's matrices NEVER appear exactly** → its draws use
+   derived data from somewhere else.
+4. **Exfil relationship search (12 frames)**: the per-frame GPU constants are
+   mostly global-constant soup (fog/light/view params — not matrices); c8
+   carries a STATIC world position (−1470, −18.6, 2804) across gameplay
+   (a level-wide constant, not the live camera). The M3 "FOV sin/cos" field
+   offsets (+0x2ec/+0x2f4/+0x188) decode as garbage for the exfil head views
+   (sin=−1, cos=0, near=−3) — those offsets don't generalize, so projection
+   products could not be constructed offline yet.
+5. Remaining main-camera candidates, in order: the **camera-record ring**
+   (window C, fixed), the **other entry matrices m[2]..m[8]** (m[6] is real
+   for satellite views; never patched), and the **ctx-block primary-
+   subobject copies** (2 × 0x164 at block +0xEC — never dumped).
+
+### S1e — run 5 (remaining channels; IMPLEMENTED 2026-10-02, pending run)
+
+- **Window C fixed** (ViewEntry* at +0x18) — the top suspect finally testable.
+- **Window F added** (stage 5): patches the translation x of m[2]..m[8] on
+  all live walked views — the never-patched matrices (m[6] is proven real
+  for satellite draws).
+- **Exfil extended**: the first 3 walked views snapshot ALL NINE matrices;
+  the ctx-block primary-subobject copies (2 × 0x164 at +0xEC) are dumped per
+  exfil frame ("S1 exsub:"); high-register GPU matrices are only collected
+  when their translation looks like a world position (|tx| > 5 — camera-basis
+  signature), so the 48-matrix budget is not wasted on global-constant soup;
+  exfov carries pos7c4.
+- analyze_dumps.py: all-9-matrix attribution, sub-vs-GPU and sub-vs-entry
+  window searches (an exact sub==entry hit would locate the camera copy
+  inside the subobject).
+
 
 - Exfil snapshot+emit fix, gameplay-gated windows A–E with per-stage budgets,
   "S1 crec:" ring-record dumps on window-C failure (offline layout analysis

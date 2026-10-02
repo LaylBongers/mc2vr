@@ -84,7 +84,12 @@ constexpr uint32_t CTX_STAGING_OFF = 0xc2110;
 constexpr uint32_t STAGING_STRIDE = 0x30;
 constexpr uint32_t CTX_RING_OFF = 0xcb110;
 constexpr uint32_t RING_REC_STRIDE = 0x28;
-constexpr uint32_t RING_REC_ENTRYPTR_OFF = 0x20;
+// Run-4 "S1 crec:" evidence: record = {pos-ish 2 floats +0x00/+0x04,
+// quaternion +0x08..+0x14, ViewEntry* at +0x18, flags +0x1c, 2 floats
+// +0x20/+0x24}; records for consecutive walked views sit consecutively.
+// (The S0 plate comment's {pos3,serial,rot16,entry*} layout put the ptr at
+// +0x20 — wrong; window C starved on it.)
+constexpr uint32_t RING_REC_ENTRYPTR_OFF = 0x18;
 
 constexpr uint32_t D3DTS_VIEW = 2;
 constexpr uint32_t D3DTS_PROJECTION = 3;
@@ -115,12 +120,15 @@ constexpr uint32_t VS_MEMO_SLOTS = 512;      // content-hash memo (direct-mapped
 constexpr uint32_t VS_DETAIL_BURST = 8;     // one-shot vsmat detail lines
 constexpr uint32_t VS_MATCH_LOG_MAX = 32;    // one-shot vsmatch (reg,tag) lines
 
-// S1c evidence exfil (offline derivation analysis of the GPU matrices).
+// S1c/S1e evidence exfil (offline derivation analysis of the GPU matrices).
 constexpr uint32_t EXFIL_FRAMES = 12;        // total exfil frames
 constexpr uint32_t EXFIL_EARLY = 4;         // first N world-view frames
 constexpr uint32_t EXFIL_STRIDE = 200;       // then every Nth world-view frame
-constexpr uint32_t EXFIL_MATS = 24;          // unique GPU matrices per frame
+constexpr uint32_t EXFIL_MATS = 48;          // unique GPU matrices per frame
 constexpr uint32_t EXFIL_VIEWS = 6;         // walked views with m0/m1 hex
+constexpr uint32_t EXFIL_FULL_VIEWS = 3;     // first walked views with ALL 9
+constexpr uint32_t EXFIL_SUB_SIZE = 0x164;  // ctx-block subobject copies
+constexpr uint32_t EXFIL_SUB_COUNT = 2;     // at block +0xEC
 
 // S1c residency patch windows: five candidate camera channels, patched one
 // window at a time on ALL walked views, 5 frames each, ~1s apart so the
@@ -129,7 +137,7 @@ constexpr uint32_t EXFIL_VIEWS = 6;         // walked views with m0/m1 hex
 constexpr float PATCH_DELTA = 4.0f;
 constexpr uint32_t PATCH_WINDOW = 5;
 constexpr uint32_t PATCH_GAP = 60;
-constexpr uint32_t PATCH_MAX_TARGETS = 64;
+constexpr uint32_t PATCH_MAX_TARGETS = 160; // stage F needs 7/view x ~20 views
 constexpr uint32_t PATCH_MAX_RECORDS = 128;
 // Run-3 lessons: gameplay submits 15-85 world views, menu/cutscene
 // backgrounds 1-2 — gate window starts on gameplay-like frames so the
@@ -351,10 +359,10 @@ bool type_flags_mismatch_logged = false;
 enum class PatchState { Idle, Window, Gap, Done };
 PatchState g_pstate = PatchState::Idle;
 int g_pstage = 0; // 0=A m[1][3], 1=B staging pos, 2=C ring record pos,
-                  // 3=D entry pos7c4[0], 4=E m[0][12]
-const char *const PATCH_NAMES[5] = {
+                  // 3=D entry pos7c4[0], 4=E m[0][12], 5=F m[2..m[8][12]
+const char *const PATCH_NAMES[6] = {
     "A entry m[1][3]", "B staging-slot pos[0]", "C camera-ring record pos[0]",
-    "D entry pos7c4[0]", "E entry m[0][12]",
+    "D entry pos7c4[0]", "E entry m[0][12]", "F entry m[2..m[8][12]",
 };
 
 uint8_t *g_pt_addr[PATCH_MAX_TARGETS];
@@ -433,10 +441,12 @@ struct ExEntrySnap {
     uint32_t idx;
     uint8_t m0[64];
     uint8_t m1[64];
+    uint8_t has_all;
+    uint8_t mall[VIEW_MATRIX_COUNT * VIEW_MATRIX_STRIDE];
 };
 ExEntrySnap g_ex_entries[EXFIL_VIEWS];
 uint32_t g_ex_entry_n = 0;
-uint32_t g_ex_fov[3] = {};
+uint32_t g_ex_fov[6] = {};
 uint32_t g_ex_pending = 0;
 uint64_t g_ex_frame = 0;
 uint32_t g_ex_views_total = 0;
@@ -796,6 +806,28 @@ bool build_patch_targets(uint64_t frame)
             }
             addr = (uint8_t *)(entry + VIEW_M0_OFF + 12 * 4);
             break;
+        case 5: { // F: entry m[2..m[8][12] — the never-patched matrices
+            // (run-4 evidence: satellite views' m[0]/m[6] reach the GPU
+            // exact; the main camera uses derived data — maybe from one of
+            // the other seven). One target per matrix; the loop below takes
+            // ONE addr, so stage F pushes its 7 targets directly.
+            if (!live) {
+                continue;
+            }
+            for (uint32_t k = 2; k < VIEW_MATRIX_COUNT && g_pt_n < PATCH_MAX_TARGETS;
+                 k++) {
+                uint8_t *a = (uint8_t *)(entry + VIEW_MATRIX_OFF +
+                                         k * VIEW_MATRIX_STRIDE + 12 * 4);
+                g_pt_addr[g_pt_n] = a;
+                g_pt_saved[g_pt_n] = *(const float *)a;
+                g_pt_idx[g_pt_n] = idx;
+                if (live) {
+                    g_patch_any_live = true;
+                }
+                g_pt_n++;
+            }
+            continue;
+        }
         default:
             return false;
         }
@@ -928,9 +960,9 @@ void run_patch(uint64_t frame)
             return;
         }
         g_pstage++;
-        if (g_pstage > 4) {
+        if (g_pstage > 5) {
             g_pstate = PatchState::Done;
-            MC2VR_LOG("S1 patch: all windows A-E complete — residency_seen=%u",
+            MC2VR_LOG("S1 patch: all windows A-F complete — residency_seen=%u",
                       g_residency_seen ? 1u : 0u);
             return;
         }
@@ -948,7 +980,7 @@ void run_patch(uint64_t frame)
         if (++g_pstage_tries > PATCH_STAGE_TRIES) {
             g_pstage_tries = 0;
             g_pstage++;
-            if (g_pstage > 4) {
+            if (g_pstage > 5) {
                 g_pstate = PatchState::Done;
                 MC2VR_LOG("S1 patch: all stages starved — windows skipped");
                 return;
@@ -977,6 +1009,15 @@ bool exfil_collect(const float *m16, uint32_t reg_base)
     if (g_exmat_n >= EXFIL_MATS) {
         return false;
     }
+    // S1e: the first 48 uniques were mostly global-constant soup (run 4).
+    // Collect low registers always; elsewhere only matrices whose
+    // translation looks like a world position (camera-basis signature).
+    if (reg_base >= 32) {
+        const float tx = m16[12];
+        if (!(tx > 5.0f || tx < -5.0f)) {
+            return false;
+        }
+    }
     const uint32_t h = hash64((const uint8_t *)m16);
     for (uint32_t i = 0; i < g_exmat_n; i++) {
         if (g_exmats[i].hash == h) {
@@ -1002,9 +1043,41 @@ void exfil_emit()
         MC2VR_LOG("S1 exentry: i%u m0=%s", g_ex_entries[i].idx, hex);
         hex64(g_ex_entries[i].m1, hex, sizeof(hex));
         MC2VR_LOG("S1 exentry: i%u m1=%s", g_ex_entries[i].idx, hex);
+        if (g_ex_entries[i].has_all) {
+            for (uint32_t k = 2; k < VIEW_MATRIX_COUNT; k++) {
+                hex64(g_ex_entries[i].mall + k * VIEW_MATRIX_STRIDE, hex, sizeof(hex));
+                MC2VR_LOG("S1 exentry: i%u m%u=%s", g_ex_entries[i].idx, k, hex);
+            }
+        }
         if (i == 0) {
-            MC2VR_LOG("S1 exfov: i%u fovSinCos(+0x2ec/2f4)=%08x/%08x near(+0x188)=%08x",
-                      g_ex_entries[i].idx, g_ex_fov[0], g_ex_fov[1], g_ex_fov[2]);
+            MC2VR_LOG("S1 exfov: i%u fov(+0x2ec/2f4)=%08x/%08x near(+0x188)=%08x "
+                      "pos7c4=(%g,%g,%g)",
+                      g_ex_entries[i].idx, g_ex_fov[0], g_ex_fov[1], g_ex_fov[2],
+                      (double)*(const float *)&g_ex_fov[3],
+                      (double)*(const float *)&g_ex_fov[4],
+                      (double)*(const float *)&g_ex_fov[5]);
+        }
+    }
+    // S1e: the ctx-block primary-subobject copies (what the VM consumer
+    // receives inside the 0x680 element) — offline candidates for the
+    // derived main-camera source.
+    if (g_ctx_valid) {
+        const uint8_t *block = (const uint8_t *)(g_frame_ctx + CTX_BLOCK_OFF);
+        const uint8_t *subs = block + 0xEC;
+        for (uint32_t s = 0; s < EXFIL_SUB_COUNT; s++) {
+            const uint8_t *p = subs + s * EXFIL_SUB_SIZE;
+            for (uint32_t off = 0; off < EXFIL_SUB_SIZE; off += 32) {
+                const uint32_t n =
+                    EXFIL_SUB_SIZE - off < 32 ? EXFIL_SUB_SIZE - off : 32;
+                char shex[96];
+                char *w = shex;
+                for (uint32_t j = 0; j < n; j++) {
+                    *w++ = "0123456789abcdef"[p[off + j] >> 4];
+                    *w++ = "0123456789abcdef"[p[off + j] & 0xf];
+                }
+                *w = '\0';
+                MC2VR_LOG("S1 exsub%u +0x%03x: %s", s, off, shex);
+            }
         }
     }
     for (uint32_t i = 0; i < g_exmat_n; i++) {
@@ -1047,10 +1120,24 @@ void exfil_maybe(uint64_t frame)
             snap.idx = idx;
             memcpy(snap.m0, entry + VIEW_M0_OFF, 64);
             memcpy(snap.m1, entry + VIEW_M1_OFF, 64);
+            // S1e: the first few walked views snapshot ALL nine matrices —
+            // run 4 showed m[6] (not just m[0]) reaching the GPU exact, so
+            // the offline search needs every matrix.
+            if (i < EXFIL_FULL_VIEWS) {
+                memcpy(snap.mall,
+                       entry + VIEW_MATRIX_OFF,
+                       VIEW_MATRIX_COUNT * VIEW_MATRIX_STRIDE);
+                snap.has_all = 1;
+            } else {
+                snap.has_all = 0;
+            }
             if (g_ex_entry_n == 0) {
                 g_ex_fov[0] = *(const uint32_t *)(entry + 0x2ec);
                 g_ex_fov[1] = *(const uint32_t *)(entry + 0x2f4);
                 g_ex_fov[2] = *(const uint32_t *)(entry + 0x188);
+                g_ex_fov[3] = *(const uint32_t *)(entry + VIEW_POS_OFF);
+                g_ex_fov[4] = *(const uint32_t *)(entry + VIEW_POS_OFF + 4);
+                g_ex_fov[5] = *(const uint32_t *)(entry + VIEW_POS_OFF + 8);
             }
             g_ex_entry_n++;
         }

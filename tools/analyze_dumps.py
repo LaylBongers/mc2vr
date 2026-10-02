@@ -171,15 +171,16 @@ def parse_s1(path):
 
 # S1c: exfil blocks (GPU matrices vs walked-view entry matrices) and the
 # scan-based world-element dumps.
-S1_EXENTRY = re.compile(r"S1 exentry: i(\d+) m([01])=([0-9a-f]{128})")
+S1_EXENTRY = re.compile(r"S1 exentry: i(\d+) m(\d)=([0-9a-f]{128})")
 S1_EXMAT = re.compile(r"S1 exmat: reg=c(\d+) m=([0-9a-f]{128})")
+S1_EXSUB = re.compile(r"S1 exsub(\d) \+0x([0-9a-f]{3,}): ([0-9a-f]+)")
 S1_SCAN_ELEM_HDR = re.compile(r"S1 elem @scan(\d+): world element \(ViewEntry=(\w+)\)")
 S1_SCAN_ELEM = re.compile(r"S1 elem @scan \+0x([0-9a-f]+): ([0-9a-f]+)")
 
 
 def parse_exfils(path):
     """Per exfil frame: {idx: {0: m0bytes, 1: m1bytes}} + [(reg, matrix)]."""
-    exfils, cur_entries, cur_mats = [], {}, []
+    exfils, cur_entries, cur_mats, cur_subs = [], {}, [], []
     for line in open(path, encoding="utf-8", errors="replace"):
         m = S1_EXENTRY.search(line)
         if m:
@@ -190,12 +191,17 @@ def parse_exfils(path):
         if m:
             cur_mats.append((int(m.group(1)), bytes.fromhex(m.group(2))))
             continue
+        m = S1_EXSUB.search(line)
+        if m:
+            s, off, b = int(m.group(1)), int(m.group(2), 16), bytes.fromhex(m.group(3))
+            cur_subs.setdefault(s, bytearray())[off : off + len(b)] = b
+            continue
         if "S1 exfil: frame=" in line:
-            if cur_entries or cur_mats:
-                exfils.append((cur_entries, cur_mats))
-            cur_entries, cur_mats = {}, []
-    if cur_entries or cur_mats:
-        exfils.append((cur_entries, cur_mats))
+            if cur_entries or cur_mats or cur_subs:
+                exfils.append((cur_entries, cur_mats, cur_subs))
+            cur_entries, cur_mats, cur_subs = {}, [], {}
+    if cur_entries or cur_mats or cur_subs:
+        exfils.append((cur_entries, cur_mats, cur_subs))
     return exfils
 
 
@@ -220,23 +226,47 @@ def report_exfil(path):
     if not exfils:
         return
     print(f"\n################ exfil relationship search ({len(exfils)} frames) ############")
-    for entries, mats in exfils:
-        if not mats:
+    for entries, mats, subs in exfils:
+        if not mats and not subs:
             continue
-        print(f"\n--- exfil frame: {len(entries)} views, {len(mats)} GPU matrices ---")
+        print(f"\n--- exfil frame: {len(entries)} views, {len(mats)} GPU matrices, "
+              f"{len(subs)} sub dumps ---")
+        # Candidate set: every snapshotted matrix (all nine for full views)
+        # plus transposes, and sliding 16-float windows of the subobject
+        # copies (the VM consumer receives them inside the 0x680 element —
+        # a derived main-camera source would match a sub window).
+        candidates = []
+        for idx, d in sorted(entries.items()):
+            for k, mat in sorted(d.items()):
+                if mat is None:
+                    continue
+                candidates.append((f"i{idx}.m{k}", mat))
+                candidates.append((f"i{idx}.m{k}T", _transpose(mat)))
+        for s, buf in sorted(subs.items()):
+            for off in range(0, max(1, len(buf) - 63), 4):
+                win = bytes(buf[off : off + 64])
+                if len(win) < 64:
+                    break
+                candidates.append((f"sub{s}+0x{off:03x}", win))
+        # Cross-search: which sub windows equal an entry matrix?
+        for s, buf in sorted(subs.items()):
+            for idx, d in sorted(entries.items()):
+                for k, mat in d.items():
+                    if mat is None:
+                        continue
+                    for off in range(0, max(1, len(buf) - 63), 4):
+                        win = bytes(buf[off : off + 64])
+                        if len(win) == 64 and win == mat:
+                            print(f"  sub{s}+0x{off:03x} == i{idx}.m{k} EXACT")
         for reg, mat in mats:
             best = (1e30, None)
-            for idx, d in sorted(entries.items()):
-                for name, cand in (("m0", d.get(0)), ("m1", d.get(1))):
-                    for variant, m in ((name, cand),
-                                       (name + "T", _transpose(cand) if cand else None)):
-                        if m is None:
-                            continue
-                        dist = _mat_dist(mat, m)
-                        if dist < best[0]:
-                            best = (dist, f"i{idx}.{variant}")
+            for name, cand in candidates:
+                dist = _mat_dist(mat, cand)
+                if dist < best[0]:
+                    best = (dist, name)
             f = struct.unpack("<16f", mat)
-            print(f"  c{reg}: best={best[1]} dist={best[0]:.5g} "
+            tag = " ==" if best[0] == 0 else ""
+            print(f"  c{reg}: best={best[1]} dist={best[0]:.5g}{tag} "
                   f"t=[{', '.join(f'{v:.3g}' for v in f[12:15])}]")
 
 
