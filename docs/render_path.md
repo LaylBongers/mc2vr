@@ -29,8 +29,12 @@ InGameShellState_FramePipeline (producer side, no D3D):
   streams consumed below)
 RenderShell_RenderFrame (0x00855690, entered via vtable slot03 = RenderFrameTimed 0x0085abd0)
   RenderShell_InitDrawRecordTables (0x00853ee0, called from LtiRenderer-side FUN_007494e0)
-  zeroes/allocates the PgPrimitivePgPrimitive tables + pools; RenderFrame (=(= PgPrimitive::SubmitToGPU) then
-  walks the 0x58 PgPrimitive  PgPrimitive records  (head g_PrimitiveHeadg_PrimitiveHead, base g_PrimitiveBaseg_PrimitiveBase) — VM-filled —
+  zeroes/allocates the PgPrimitivePgPrimitivePgPrimitivePgPrimitivePgPrimitivePgPrimitive tables + pools; RenderFrame (=(=(=(=(=(= PgPrimitive::SubmitToGPU) then
+  walks the 0x58 PgPrimitive  PgPrimitive  PgPrimitive  PgPrimitive  PgPrimitive  PgPrimitive records      (head g_PrimitiveHeadg_PrimitiveHeadg_PrimitiveHeadg_PrimitiveHeadg_PrimitiveHeadg_PrimitiveHead, base g_PrimitiveBaseg_PrimitiveBaseg_PrimitiveBaseg_PrimitiveBaseg_PrimitiveBaseg_PrimitiveBase) — VM-filled —
+  
+  
+  
+  
   
   applying per-record state:
   +0xC2 (0x00855752): virtual dispatch on g_RenderShell (0x017ceaf0, holds BASE LtiRenderer_vtbl 0x00bd38e8)
@@ -45,7 +49,7 @@ RenderShell_RenderFrame (0x00855690, entered via vtable slot03 = RenderFrameTime
 - `g_RenderShell` holds the **base** `LtiRenderer_vtbl` at frame time; the derived `RenderShell_vtbl` (0x00be84c0) overrides (incl. slot 15 `Flush`) never run. Type as `LtiRenderer`/`LtiRenderer_vtbl` (done in Ghidra).
 - Calls per frame: Present/BeginScene/EndScene exactly 1:1 with `GameShell_FrameTick` count. `Reset` (slot 16) only on present-param change (resolution etc.), carries the new `D3DPRESENT_PARAMETERS`.
 - Present args always all-NULL. Menu present params: 2560x1440, fullscreen, DISCARD, 60 Hz, interval DEFAULT, `hDeviceWindow=0x100b6`.
-- The old "Begin/EndScene + Present live below this in SecuROM-encrypted thunks" note is FALSIFIED — they live in plaintext LtiRenderer_* functions; the producer/camera/draw-data chain (`SubmitWorldPackets` loop body, element staging, `RenderFrame` record walk) is also fully plaintext. What IS VM-protected (S0): the packet interpreter between the ring and the draw-records.
+- The old "Begin/EndScene + Present live below this in SecuROM-encrypted thunks" note is FALSIFIED — they live in plaintext LtiRenderer_* functions; the producer/camera/draw-data chain (`SubmitWorldPackets` loop body, element staging, `RenderFrame` record walk) is also fully plaintext. What IS VM-protected (S0): the packet interpreter between the ring and the draw-records. GENERALIZED (2026-10-02): entering the SecuROM range is not proof of opacity — some entries are call gates with plaintext continuations (see `pandemic_engine.md` § SecuROM/VM boundary).
 
 ## D3D9 device vtable offsets
 
@@ -55,7 +59,6 @@ Header layout validated by the anchor: game applies render state via `+0xe4` = s
 
 Navigate from the named symbols (all plate-commented). Only the non-obvious rules:
 - Dx9 state wrapper: every D3D call in the render path goes through `g_LtiRenderer->dx9State` (`+0x5bc`; global `0x01175288` typed `LtiRenderer *`). Slot map = `Dx9StateWrapper_vtbl` struct members + `g_LtiRenderer` plate. Rules: wrapper vtable = IDirect3DDevice9 order minus ONE method in device slots 70..81 (wrapper slot n == device slot n+1 for n >= 81); dirty-tracking caches are caller-side in the `Dx9_*` functions — hook the wrapper layer, never the raw device (raw hooks desync `g_RenderStateCache` and the texture/sampler/RT caches).
-- Primitive list: 0x58 records = **`PgPrimitive`** instances (struct `/RenderPath`; engine class per debug strings `PgPrimitive::Reset/Sort()/AssignKeys()/Sort(list)/SubmitToGPU`, source `PgPrimitiveWin32.cpp`; `RenderShell_RenderFrame` *is* `PgPrimitive::SubmitToGPU`) — list base/head `g_PrimitiveBase`/`g_PrimitiveHead` (`0x0116977c`/`0x01169780`, plate + full field map on the base); 6-byte sort key + ushort next-link table at `0x01153700` (`g_PrimitiveSortKeys`/`g_PrimitiveNext`, plates there). `PgPrimitive_SortList` (`0x00854c10`) radix-sorts them with NO plaintext callers — the VM'd record builder also orders the list; `PgPrimitive_Reset` (`0x00854070`) resets the producer-side pool. Per-record apply order: plate on `RenderShell_RenderFrame`. Dirty-check cache block `0x01169788` (layout plate there). View types: plate on `RenderShell_SetViewType`.
 - Precache: plates on `RenderShell_PrecacheLoadStep`/`RenderShell_PrecacheFinish`; `g_SuppressPresent` suppresses Present during precache frames.
 - `Lti_LazyNameHash` (`0x008244a0`, 139 callers): per-site FNV-1a "Class::Method" IDs cached in `.bss`, read only by VM'd code — inert telemetry, NOT feature/device checks.
 - `LtiRenderer_EndSubmit` StretchRects RT0 → backbuffer (`LtiRenderer+0x3ea4`) whenever they differ — existing RT→backbuffer seam for the S4 compositor (also noted in `docs/stereo_design.md`).

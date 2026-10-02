@@ -17,7 +17,17 @@ Mechanism rules: `docs/launcher_plan.md`. Runtime frame chain:
 - **S1 answer**: the draw camera is external to the view system; the consumer
   reads it from VM-internal state; per-eye injection happens at the GPU
   boundary (SetVertexShaderConstantF uploads). Producer-side camera channels
-  are proven negative — do not re-litigate (s1_camera_hunt.md).
+  are proven negative — do not re-litigate (s1_camera_hunt.md). Post-S1 RE
+  (2026-10-02) made this structural: the entire plaintext consumer path — the
+  `PgPrimitive` record walk — carries only table indices (material/technique/
+  env/light-env/view-scale/screen) and draw params, no camera data at all; the
+  camera crosses plaintext code only as interpreter-issued D3D constant uploads.
+- Post-S1 classification of the constant traffic (see `pandemic_engine.md` +
+  `g_MaterialTable`/`g_PrimitiveBase` plates): the position/matrix rows that
+  carry the camera but move only effects (c51 shadow/LOD cascades, w≠1.0
+  near-identity families) are **`PgMaterial` texture-projection (texgen)
+  transforms** — shadow/reflection/sky materials project FROM the camera.
+  They are not the view; the view transform remains the target.
 - The camera on the GPU: position row `c21` (exact camera position; bases
   slide per shader phase) + view-matrix rows `c23–c26` (near-identity
   rotation, camera position in the translation). Rewriting w==1.0
@@ -84,6 +94,12 @@ exhausted (runs 4–15); the GPU-boundary rewrite is proven (runs 16–17).
    Identification input: the verification run's owin register families
    (s1_camera_hunt.md §handoff) + the existing register cache/dynamics
    analysis. Memoize per shader base (bases are phase-stable).
+   Structural prior (post-S1 RE): all plaintext record-walk upload sites
+   (`g_LightEnvTable`/`g_EnvTable40` blocks, `g_ScreenConstsVS`,
+   per-primitive `vsConstData`, `PgMaterial` `vsConsts80`/`vsConst170`) are
+   classified non-camera — caller-attribution of the upload separates them
+   from the interpreter-path camera rows; expect base slides when the
+   active technique/pass/material population shifts.
 2. **S2b — per-eye rewrite**: in `on_set_vs_constant`
    (`src/carrier/s1_probe.cpp`), during the eye pass, rewrite the
    identified rows in the upload buffer: `pos ± right·IPD/2`, and the
@@ -157,9 +173,20 @@ SetTransform/SetViewport slots, vsclock/vspose controls.
 
 ## Open questions
 
+- **Material texgen stays mono for eye 2** (post-S1 RE): `PgMaterial`
+  texture-projection transforms (shadow cascades, water/sky reflections,
+  blob shadows) are derived CPU-side by VM'd code from the mono camera and
+  uploaded via SetPixelShaderConstantF (matViewMat, wrapper slot 109 / device
+  110) + material VS consts. The S2 channel rewrites VS camera rows only, so
+  eye 2's projected shadows/reflections keep mono projection (skew grows
+  toward the periphery; geometry itself is correct). Accept initially; a
+  later SetPixelShaderConstantF VmtHook could transform identified
+  camera-derived material rows by the eye delta (affine transforms, but the
+  full derivation is VM'd so correctness is not guaranteed).
 - Camera-row identification robustness (S2a): register bases slide per
   shader phase; identification must track them. Input: owin register
-  families + dynamics analysis.
+  families + dynamics analysis. Post-S1 RE: slides correlate with
+  technique/pass/material population changes.
 - `g_RenderQueue2` consumption timing relative to Present (compositor
   needs the 2D stream's frame timing) — extend the S1 bracket with
   queue2 counters when S4 starts.

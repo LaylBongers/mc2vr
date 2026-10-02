@@ -42,19 +42,36 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
 - Per-draw state is dirty-check cached with `0xffff/0xff` sentinel invalidation; caches are
   caller-side (Dx9_* layer), not inside the device wrapper.
 
-## SecuROM/VM boundary rule
+## SecuROM/VM boundary — two mechanisms, do not conflate
 
-- Selected producers are VM-virtualized (packet interpreter stub `0x0050f660` fills primitives,
-  packets, state tables). Their **inputs and consumers are plaintext** — type/name the consumers,
-  hook neighbors, never the VM region. A VM-filled structure that "looks like" scene data must be
-  verified via its ctor/string trail before naming (`g_CameraTable` was really the material table).
+1. **SecuROM call gates** — NOT opaque. A plaintext stub JMPs into injected gate code, which
+   continues at a PLAINTEXT body (usually adjacent to the stub). Fully recoverable statically;
+   recover the convention from the two plaintext ends. Never analyze or hook the gate itself.
+   Proven example: `Dx9_SetPixelShaderConstantF` `0x0084f150` → gate `0x004f56e6` → core
+   `0x0084f15a` (full calling convention recovered; Ghidra follows the flow through the gate).
+   Same pattern as the earlier falsification of "Begin/EndScene live in SecuROM-encrypted thunks"
+   (they were plaintext `LtiRenderer_*` functions).
+2. **VM-virtualized functions** — genuinely opaque: flow dissolves into bytecode dispatch with no
+   plaintext successor. Examples: the packet interpreter (stub `0x0050f660`, fills the `PgPrimitive`
+   records, `PgMaterial` rows, technique/pass tables, command streams) and its hidden callees,
+   the `GetD3DDevice` thunk `0x0047f2f0`, the pose-getter `0x0048bf00`.
+
+Rules of thumb:
+- **Follow-the-flow test** before writing a call off: Ghidra resolves a successor (especially a
+  plaintext continuation adjacent to the stub) = gate; stub into bytecode with no readable
+  successor = virtualized.
+- **Code opacity ≠ data opacity**: even for virtualized producers, their inputs (staged elements)
+  and outputs (typed record/table structures) are plaintext data — type/name the consumers, hook
+  plaintext neighbors, never the gate/VM region.
+- A VM-filled structure that "looks like" scene data must be verified via its ctor/string trail
+  before naming (`g_CameraTable` was really the material table).
 
 ## Code patterns to expect when reading the decompilation
 
 - Custom register-arg conventions: `this` in ESI/ECX (ctors leak as `unaff_*`), packed EAX pairs
   (`in_EAX = {startReg, count}` in the Dx9 constant helpers), `unaff_EDI` record pointers.
-- 10-byte thunk chains (jmp wrapper → SecuROM call gate → real body); pool allocators
-  `FUN_0084ae70(size, n)` / `FUN_0084d9d0`.
+- 10-byte thunk chains (jmp wrapper → SecuROM call gate → real body — see § SecuROM/VM boundary);
+  pool allocators `FUN_0084ae70(size, n)` / `FUN_0084d9d0`.
 - Global-ctor-built `.bss` statics: instance memory is zero in the file image (no static vtables) —
   find ctors by xref to the `.bss` address.
 - Watch int* pointer arithmetic in reads: `*(ushort *)(p + 0x10)` on `int *p` is +0x40 bytes, not

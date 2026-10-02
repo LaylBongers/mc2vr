@@ -93,3 +93,27 @@ the evidence lives in this doc + Ghidra. What the carrier keeps:
 - Do not re-litigate the producer side (runs 4–15 above). The page-guard
   write-watch on an entry/staging slot remains possible but would land in
   the VM — no patchable target.
+
+## Post-S1 addendum (2026-10-02, material/primitive RE)
+
+The follow-up RE of the consumer side retroactively explains three S1 observations
+(no re-hunt needed — all confirmatory):
+
+- The "camera-looking" plaintext table (`g_CameraTable`) was **`g_MaterialTable`**
+  — named `PgMaterial`s, never cameras (ctor/string trail; plate at `0x00ff36f4`,
+  `pandemic_engine.md`). S1's "entry is not the draw camera source" negatives are
+  therefore structural: the entire plaintext record walk (`PgPrimitive`,
+  0x58 — plate on `g_PrimitiveBase` `0x0116977c`) carries only table indices and
+  draw params, no camera data.
+- The world-position rows that visibly moved effects (c51 shadow/LOD cascades,
+  c28/c221 family) and the near-identity w≠1.0 matrix families are `PgMaterial`
+  texture-projection (texgen) transforms — shadow/reflection/sky materials
+  project from the camera, which is why they carry its position but never drive
+  the view.
+- "Main camera matrices never appear exactly (derived)" is expected: nothing in
+  the plaintext path passes matrices through unchanged; exact matches (satellite
+  m[0]/m[6]) are pass-through special cases, the main camera rows are derived by
+  the VM'd interpreter.
+
+S2 consequences recorded in `stereo_design.md` (S2a call-site prior, eye-2
+material-texgen limitation + possible SetPixelShaderConstantF hook).
