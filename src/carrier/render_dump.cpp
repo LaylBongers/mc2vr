@@ -52,7 +52,7 @@ uint64_t g_agg_frame = UINT64_MAX;
 uint32_t g_vpf_cur = 0;
 uint32_t g_vpf_min = 0;
 uint32_t g_vpf_max = 0;
-uint32_t g_table_count = 0;       // DAT_00d29e60, sampled per frame
+uint32_t g_view_list_head = 0;    // DAT_00d29e60 = ACTIVE-VIEW LIST HEAD INDEX (S0: not a count; link = ViewEntry+0x4, negative = end)
 uint32_t g_dumps_done = 0;
 uint32_t g_dumped_idx[ENTRY_DUMP_MAX] = {};
 
@@ -144,7 +144,7 @@ void view_midhook(safetyhook::Context &ctx)
         }
         g_agg_frame = frame;
         g_vpf_cur = 0;
-        g_table_count = *(const uint32_t *)0x00d29e60u; // view-table entry count
+        g_view_list_head = *(const uint32_t *)0x00d29e60u; // active-view list head index (S0-corrected; M3 called this tableCount)
     }
     g_vpf_cur++;
     if (g_vpf_cur > g_vpf_max) {
@@ -225,9 +225,9 @@ void report_window()
 {
     // Views line.
     MC2VR_LOG("M3 views: submits=%llu frames-with-views=%llu views/frame min=%u max=%u "
-              "tableCount=%u distinct=%u",
+              "listHead=%u distinct=%u",
               (unsigned long long)g_view_submits, (unsigned long long)g_view_frames,
-              g_vpf_min, g_vpf_max, g_table_count, g_view_distinct);
+              g_vpf_min, g_vpf_max, g_view_list_head, g_view_distinct);
     if (g_view_distinct > 0) {
         char list[640];
         int n = 0;
