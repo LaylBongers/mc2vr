@@ -29,6 +29,9 @@ fi
 DEPLOY_DIR="$GAME_DIR/mc2vr"
 mkdir -p "$DEPLOY_DIR"
 cp -u "$LAUNCHER_BIN" "$CARRIER_BIN" "$DEPLOY_DIR/"
+# Config: deploy only if absent — edits to the deployed mc2vr.conf persist
+# across launches (gpu_boundary_rewrite=off|on|pulse; see conf/mc2vr.conf).
+cp -n "$MC2VR_ROOT/conf/mc2vr.conf" "$DEPLOY_DIR/mc2vr.conf" 2>/dev/null || true
 
 cd "$GAME_DIR"
 exec "$PROTON_PATH/proton" run "$DEPLOY_DIR/mc2vr_launcher.exe" "$@"

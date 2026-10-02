@@ -9,9 +9,82 @@
 #include "log.hpp"
 #include "probes.hpp"
 #include "render_dump.hpp"
+#include "s1_probe.hpp"
 #include "sha256.h"
 
+#include <cstdio>
+#include <cstring>
+
 namespace mc2vr {
+
+// S1i run 16: read <deploy dir>/mc2vr.conf (next to this DLL). Simple
+// key=value lines, '#' comments, whitespace-tolerant. Unknown keys are
+// logged and ignored; unknown values leave the default (off).
+static void load_conf()
+{
+    HMODULE self = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          (LPCWSTR)&load_conf, &self) == 0 ||
+        self == nullptr) {
+        MC2VR_LOG("conf: cannot locate own module — defaults apply");
+        return;
+    }
+    wchar_t wpath[MAX_PATH];
+    if (GetModuleFileNameW(self, wpath, MAX_PATH) == 0) {
+        MC2VR_LOG("conf: GetModuleFileNameW failed — defaults apply");
+        return;
+    }
+    wchar_t *slash = wcsrchr(wpath, L'\\');
+    if (slash == nullptr) {
+        return;
+    }
+    wcscpy(slash + 1, L"mc2vr.conf");
+
+    FILE *f = _wfopen(wpath, L"rb");
+    if (f == nullptr) {
+        MC2VR_LOG("conf: no mc2vr.conf next to the DLL — defaults apply "
+                  "(gpu_boundary_rewrite=off)");
+        return;
+    }
+    char line[512];
+    while (fgets(line, sizeof(line), f) != nullptr) {
+        char *hash = strchr(line, '#');
+        if (hash != nullptr) {
+            *hash = '\0';
+        }
+        char *eq = strchr(line, '=');
+        if (eq == nullptr) {
+            continue;
+        }
+        *eq = '\0';
+        char *key = line;
+        char *value = eq + 1;
+        // trim
+        while (*key == ' ' || *key == '\t') key++;
+        while (*value == ' ' || *value == '\t') value++;
+        char *end = key + strlen(key);
+        while (end > key && (end[-1] == ' ' || end[-1] == '\t' ||
+                             end[-1] == '\r' || end[-1] == '\n')) {
+            *--end = '\0';
+        }
+        end = value + strlen(value);
+        while (end > value && (end[-1] == ' ' || end[-1] == '\t' ||
+                               end[-1] == '\r' || end[-1] == '\n')) {
+            *--end = '\0';
+        }
+        if (strcmp(key, "gpu_boundary_rewrite") == 0) {
+            if (!s1::set_ambient_rewrite(value)) {
+                MC2VR_LOG("conf: gpu_boundary_rewrite=%s not recognized "
+                          "(use off|on|pulse) — defaulting to off", value);
+                s1::set_ambient_rewrite("off");
+            }
+        } else {
+            MC2VR_LOG("conf: unknown key '%s' ignored", key);
+        }
+    }
+    fclose(f);
+}
 
 static bool verify_image_base()
 {
@@ -94,6 +167,11 @@ void init()
     log_init();
 
     MC2VR_LOG("=== mc2vr carrier attached (pid=%lu) ===", GetCurrentProcessId());
+
+    // Config (mc2vr.conf next to the DLL) — before any hook so the mode is
+    // settled first (the ambient GPU-boundary rewrite disables the patch
+    // window machine at its source).
+    load_conf();
 
     // Gate: no hooks unless this is exactly the RE'd binary at the expected
     // base. Log everything either way — the log is the M0 deliverable.
