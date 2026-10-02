@@ -16,8 +16,8 @@ Per-address facts (names, prototypes, loop addresses, vtable layouts, globals, s
 - Reuse existing timing: `g_FrameDeltaSec` (raw QPC dt) and `g_Dt` (managed, post-framerate-policy dt) are already computed per frame — don't re-derive.
 - Frame pacing for VR should bypass/neutralize the adaptive framerate path (`g_FrameratePolicy` / `AdaptiveFramerate_Govern`, ini `[framerate]` presets) so the HMD drives the cadence.
 - Input injection has no dedicated input-update call: input flows through the state stack (`GameStateStack_Update`) and buffers cleared on the idle-reset path.
-- Hook statically by VA, never via the SecuROM wrapper pointers — they are runtime-only.
-- Attaching a debugger: break at `WinMain` or `GameShell_Run`, not at the PE entry (SecuROM stub — see `initial_analysis.md`).
+- Hook statically by VA, never via the SecuROM wrapper pointers — they are runtime-only. Launcher-style inline patching (external process + hooking lib writing trampolines) is viable as-is: image base is fixed (no ASLR, relocs stripped — see `initial_analysis.md`), so Ghidra VAs are literal runtime addresses. Patch `.text` callers, never the encrypted regions.
+- Attaching a debugger: break at `WinMain` or `GameShell_Run`, not at the PE entry (SecuROM stub — see `initial_analysis.md`). Same timing rule for a launcher: if patching a suspended process before the SecuROM stub runs misbehaves, defer patching until after the stub (e.g., first `GameShell_FrameTick`).
 
 ## Open items
 
