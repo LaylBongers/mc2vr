@@ -54,6 +54,15 @@ and state caching correctly — duplicating at the source inherits all of it, pe
 Map the per-view loop body (`0x0048e9ea` → loop back-edge, plus the packet-emit sites) to
 answer the two questions the design depends on:
 
+**Navigation (from the M3 session — don't re-derive):** the function decompiles to 598
+lines; lines ~90–250 are frame-context setup (already mapped, see the plate comment) — the
+per-view emit body lies BELOW that and is unread so far. Disassembly anchors: loop head
+`0x48e9d0–0x48e9ea` (type check + entry lea), the type-2/4 body runs from `0x48e9fc` toward
+the skip target `0x48f00f`, frame-context setup `0x48f025–0x48f04b`, primary-subobject copy
+loop `0x48f09e–0x48f169`, function tail to `0x48f502`. `analyze-vtable`/`find-constant-uses`
+(try `0x810`, `0x3a0`) and `find-cross-references` from `g_RenderQueue` fields locate the
+emit sites fastest. Parse carrier dumps with `tools/analyze_dumps.py`.
+
 1. **Packet data residency**: do the emitted packets carry inline copies of the camera
    data (matrices/FOV/viewport), or pointers back into `ViewEntry`/the frame context?
    - Pointers → patching `ViewEntry` between eye passes suffices.

@@ -22,3 +22,14 @@ Renaming functions: `set-function-prototype` also rejects `__thiscall` and chang
 
 - Plate on the vtable: install chain (which ctor), slot count, no-RTTI note.
 - EOL per interesting slot: semantics, callers, default target.
+
+## ReVa tool-call gotchas (arg names differ between tools)
+
+- `get-decompilation`: `functionNameOrAddress` (not `addressOrSymbol`); supports `offset`/`maxLines` against `totalLines`.
+- `find-cross-references`: `location` (not `addressOrSymbol`).
+- `create-label`: `addressOrSymbol` + `labelName` (+ `setAsPrimary: true` to rename a function entry without touching its prototype — preferred over `set-function-prototype`, which can mangle register-arg decompilation).
+- `read-memory`: `length` param (16 bytes if omitted) — fetch chunks, then disassemble on the host: `objdump -D -b binary -m i386 -M intel --adjust-vma=<va>`.
+- `apply-data-type`: `dataTypeString` (not `typeName`).
+- `search-decompilation` over the whole program refuses when >1000 functions — use the cross-ref / constant-use tools instead.
+- Reference-site `fromAddress` from xref tools = start of the referencing instruction; align host disassembly there.
+- Ghidra VAs vs carrier-log caller offsets: the log prints `module+0xoffset` — add `0x00400000` before querying Ghidra (M2 audit initially queried the raw offset and got "not in any memory block").
