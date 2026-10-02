@@ -1,4 +1,4 @@
-# Initial Analysis — Mercenaries2.exe
+# Initial Analysis
 
 ## Target
 

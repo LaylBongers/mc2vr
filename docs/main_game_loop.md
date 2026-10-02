@@ -1,4 +1,4 @@
-# Main Game Loop — Mercenaries2.exe
+# Main Game Loop
 
 Per-address facts (names, prototypes, loop addresses, vtable layouts, globals, startup chain) are stored in the Ghidra project as labels, plate comments, and the `Analysis/GameLoop` bookmark at `0x0063184c` — this file intentionally does not repeat them. SecuROM/OEP context: see `initial_analysis.md`.
 
