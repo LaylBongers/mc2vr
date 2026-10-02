@@ -201,7 +201,78 @@ spec (all behavior-preserving):
 7. **Stability**: 0 FATALs, no Reset, all hooks survived sustained ~200
    views/frame — the mechanism set is robust at load.
 
-### S1b — follow-up run (camera-channel re-instrumentation; IMPLEMENTED 2026-10-02, pending run)
+### S1b — follow-up run (camera-channel re-instrumentation; run 2 done → results below)
+
+
+### S1b run results (2026-10-02, run 2 — new game boat start, then a save load)
+
+1. **World element VERIFIED (S1.1 element layout now closed)**: the dump at the
+   pre-VM site found the `{0x30, 0x810, 0x680}` element one slot ahead of the
+   consumer position — staging slot `0x01644550` (= ctx+0xc2110+0*0x30),
+   `ViewEntry* 0x012865e0`, ctx block `0x01654d90`, all pointers exact. Ring
+   position = `queue+0x10` low16 % cap, confirmed.
+2. **Counter decode CLOSED**: `+0x10` low16 = ring POSITION (mod 4096;
+   +624/frame boat scene, +213/frame menu); high16 = VM SCRATCH (mutated
+   transiently mid-frame; spikes 278–506 at RenderFrame entry); `+0x14` ≈ 0–2
+   always. Per-point bracket deltas are therefore noise — the S1.1 evidence is
+   "the header dword changes between pre-VM and RenderFrame entry in ~100% of
+   frames" = the `0x0050f660` call does queue work at pipeline time (answer
+   unchanged). The "S1 raw:" series captures the values for the record.
+3. **S1.2: the GPU matrices are DERIVED** — no exact matches vs any entry
+   matrix except one 4x transposed match on c12 (tag not logged — fixed in
+   S1c). Exact-match classification can only attribute copies, so S1c adds a
+   bounded matrix exfil + offline relationship search in analyze_dumps.py.
+4. **S1.3: windows A (m[1]) and B (staging slot) NEGATIVE on a live view**:
+   the boat intro renders exactly ONE world view (head 0, live camera
+   (−1729, −33, 2064), n=1 for ~1500 frames) — both patches ran on it and
+   produced NO nudge and no residency match → neither entry m[1] nor the
+   staging-slot pos feeds the draw camera for that scene. Remaining
+   candidates: the walk-time camera-record ring (ctx+0xcb110), entry
+   pos7c4, entry m[0], or a derived-from-something-else path. Caveat: the
+   save-load section was never patched (windows are one-shot per process).
+5. **REGRESSION (user-visible)**: the per-group classification cost (~13k
+   groups/frame x ~800 memcmps) dropped the game to ~30fps average with
+   multi-second spikes. S1c memoizes by content hash and budgets per-frame
+   work.
+6. Stability: 0 FATALs, no Reset; ~620 elements/frame flow through the ring
+   in the boat scene (the world element is one of them).
+
+### S1c — follow-up run (camera-channel discrimination; IMPLEMENTED 2026-10-02, pending run)
+
+- **Performance fix** for the run-2 regression: content-hash memoization of
+  classification results (512-entry direct-mapped, full 64-byte verify),
+  per-frame budgets (≤256 NEW classifications; the expensive ctx/subobject
+  region scans only for the first 64 of those), memo/skip counters in the
+  window report.
+- **Match-tag logging**: every distinct (register, tag) matrix match logged
+  one-shot ("S1 vsmatch:") — run 2's only real match never got a tag.
+- **Patch windows A–E, on ALL walked views** (not just the head — removes the
+  "maybe the head wasn't the visible camera" ambiguity), 5 frames each,
+  ~1s apart so up to five nudges are individually countable:
+  A entry m[1][3] — re-run of the run-2 channel, now all views;
+  B camera staging slot pos[0] (ctx+0xc2110+idx*0x30) — re-run, all views;
+  C camera-record RING records pos[0] (ctx+0xcb110, 0x28-stride
+  {pos3, serial, rot16, ViewEntry* at +0x20, lodByte}; per-frame re-scan with
+  restore-with-verify — the ring keeps advancing) — the walk-time snapshot
+  the VM consumer most plausibly reads;
+  D entry pos7c4[0] — the raw camera position copy;
+  E entry m[0][12] — the viewToWorld translation (the consumer might invert
+  it on-GPU).
+- **Full-ring element SCAN** (replaces the position-window dumps): scan the
+  whole ring for {0x30,0x810,0x680} world elements directly — deterministic,
+  no position arithmetic.
+- **Matrix exfil** for the offline derivation search (the GPU matrices are
+  derived — exact-match can never attribute them): first 4 world-view frames
+  + every 200th up to 12 total; per frame the walked views' m[0]/m[1] hex +
+  head FOV/near dwords + ≤24 unique GPU matrices with their registers;
+  analyze_dumps.py then reports, per GPU matrix, the closest entry matrix
+  (m0/m1 + transposed) by mean |diff| — a small non-zero distance reveals
+  the derivation (projection product, conjugation, rebuilt view matrix).
+- Expected evidence: up to five ~5-frame nudges ~1s apart after the first
+  world-view frame (count them); "S1 vsmatch:" tags; world elements from
+  the scan; and the exfil blocks for offline analysis if all five windows
+  come back negative.
+
 
 - **SetVertexShaderConstantF (device slot 94, per d3d9.h order that matches
   every runtime-pinned slot) VmtHook** — the S1.2 replacement channel. Every

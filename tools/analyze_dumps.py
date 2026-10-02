@@ -71,7 +71,8 @@ def words(d, key="data"):
 S1_ECHO = re.compile(
     r"S1 (RESIDENCY|patch|raw:|vsmat:|vs:|vsreg:|vlist:|bracket: frame|"
     r"bracket: frames|xform: calls|xform\(SetTransform|vp: calls|"
-    r"vlist: frames|elem: |: frame-ctx|: RenderFrame entry|: WARNING)"
+    r"vlist: frames|elem: |elemscan|vsmatch:|: frame-ctx|: RenderFrame entry|"
+    r": WARNING)"
 )
 # S1b: "S1 elem @consPos+<elem> +0x<off>: hex" (3 x 32B lines per element).
 S1_ELEM_CONSPOS = re.compile(r"S1 elem @consPos\+(\d+) \+0x([0-9a-f]+): ([0-9a-f]+)")
@@ -168,6 +169,99 @@ def parse_s1(path):
     return elems, old_elems, naive, xforms, vsmats, echoes
 
 
+# S1c: exfil blocks (GPU matrices vs walked-view entry matrices) and the
+# scan-based world-element dumps.
+S1_EXENTRY = re.compile(r"S1 exentry: i(\d+) m([01])=([0-9a-f]{128})")
+S1_EXMAT = re.compile(r"S1 exmat: reg=c(\d+) m=([0-9a-f]{128})")
+S1_SCAN_ELEM_HDR = re.compile(r"S1 elem @scan(\d+): world element \(ViewEntry=(\w+)\)")
+S1_SCAN_ELEM = re.compile(r"S1 elem @scan \+0x([0-9a-f]+): ([0-9a-f]+)")
+
+
+def parse_exfils(path):
+    """Per exfil frame: {idx: {0: m0bytes, 1: m1bytes}} + [(reg, matrix)]."""
+    exfils, cur_entries, cur_mats = [], {}, []
+    for line in open(path, encoding="utf-8", errors="replace"):
+        m = S1_EXENTRY.search(line)
+        if m:
+            cur_entries.setdefault(int(m.group(1)), {})[int(m.group(2))] = \
+                bytes.fromhex(m.group(3))
+            continue
+        m = S1_EXMAT.search(line)
+        if m:
+            cur_mats.append((int(m.group(1)), bytes.fromhex(m.group(2))))
+            continue
+        if "S1 exfil: frame=" in line:
+            if cur_entries or cur_mats:
+                exfils.append((cur_entries, cur_mats))
+            cur_entries, cur_mats = {}, []
+    if cur_entries or cur_mats:
+        exfils.append((cur_entries, cur_mats))
+    return exfils
+
+
+def _mat_dist(a, b):
+    """Mean absolute elementwise distance between two 4x4 float matrices."""
+    fa = struct.unpack("<16f", a)
+    fb = struct.unpack("<16f", b)
+    return sum(abs(x - y) for x, y in zip(fa, fb)) / 16.0
+
+
+def _transpose(b):
+    f = struct.unpack("<16f", b)
+    return struct.pack("<16f", *[f[r * 4 + c] for c in range(4) for r in range(4)])
+
+
+def report_exfil(path):
+    """Offline relationship search: for each exfiled GPU matrix, the closest
+    walked-view entry matrix (m0/m1, plus transposed) by mean |diff|. A small
+    distance on a non-exact match reveals the derivation (e.g. projection
+    product, conjugation, or a rebuilt view matrix)."""
+    exfils = parse_exfils(path)
+    if not exfils:
+        return
+    print(f"\n################ exfil relationship search ({len(exfils)} frames) ############")
+    for entries, mats in exfils:
+        if not mats:
+            continue
+        print(f"\n--- exfil frame: {len(entries)} views, {len(mats)} GPU matrices ---")
+        for reg, mat in mats:
+            best = (1e30, None)
+            for idx, d in sorted(entries.items()):
+                for name, cand in (("m0", d.get(0)), ("m1", d.get(1))):
+                    for variant, m in ((name, cand),
+                                       (name + "T", _transpose(cand) if cand else None)):
+                        if m is None:
+                            continue
+                        dist = _mat_dist(mat, m)
+                        if dist < best[0]:
+                            best = (dist, f"i{idx}.{variant}")
+            f = struct.unpack("<16f", mat)
+            print(f"  c{reg}: best={best[1]} dist={best[0]:.5g} "
+                  f"t=[{', '.join(f'{v:.3g}' for v in f[12:15])}]")
+
+
+def report_scan_elems(path):
+    """Decode the scan-based world-element dumps (S1c: full-ring scan)."""
+    cur, idx, found = None, None, 0
+    for line in open(path, encoding="utf-8", errors="replace"):
+        m = S1_SCAN_ELEM_HDR.search(line)
+        if m:
+            cur, idx = bytearray(96), int(m.group(1))
+            continue
+        m = S1_SCAN_ELEM.search(line)
+        if m and cur is not None:
+            off = int(m.group(1), 16)
+            b = bytes.fromhex(m.group(2))
+            if off < 96:
+                cur[off : off + len(b)] = b
+            if off + len(b) >= 96:
+                if decode_elem96(f"scan{idx}", cur):
+                    found += 1
+                cur = None
+    if found:
+        print(f"\n  scan-based world elements verified: {found}")
+
+
 def report_s1(path):
     elems, old_elems, naive, xforms, vsmats, echoes = parse_s1(path)
     print("\n################ S1 evidence ################")
@@ -218,6 +312,8 @@ def report_s1(path):
         print_mat16(frame, f"S1 vsmat reg=c{reg}", f"tag={tag}", raw)
     for frame, state, tag, raw in xforms:
         print_mat16(frame, "S1 xform", f"state={state} tag={tag}", raw)
+    report_scan_elems(path)
+    report_exfil(path)
 
 
 # ---- M3 analysis ------------------------------------------------------------

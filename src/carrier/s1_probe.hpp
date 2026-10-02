@@ -1,24 +1,36 @@
-// S1: consumer + field-use runtime instrumentation (docs/stereo_design.md
-// §S1 + §S1 run results). Two revisions:
-//   S1  (first run): consumer bracket + SetTransform/SetViewport logging +
-//        m[1] residency patch + satellite classification. ANSWERS: consumer
-//        runs at pipeline time; element = {size,ptr} descriptors confirmed;
-//        SetTransform NEVER called (shader-driven engine) -> camera evidence
-//        must come from SetVertexShaderConstantF; satellite frames confirmed.
-//   S1b (second run): SetVertexShaderConstantF (slot 94) matrix reconstruction
-//        + classification; residency patch v2 on a LIVE head view (nonzero m[0]
-//        translation) with two spaced windows — window A patches m[1][3],
-//        window B patches the camera staging slot pos (frameCtx+0xc2110+
-//        head*0x30) — the visual nudge (or the VS-constant match) then
-//        discriminates the draw-camera channel; counter semantics fixed
-//        (+0x10 = 32-bit cumulative, monotonic); element dumps re-armed to
-//        fire only when the frame has world views; satellite detection uses
-//        the uncapped per-frame view total.
+// S1c — third revision of the S1 instrumentation. Run history:
+//   S1  (run 1): consumer bracket + SetTransform/SetViewport logging + m[1]
+//        residency patch + satellite classification. ANSWERS: consumer runs
+//        at pipeline time; elements are {size,ptr} descriptors; SetTransform
+//        NEVER called (shader-driven); satellite frames confirmed; the S0
+//        counter decode was wrong.
+//   S1b (run 2): SetVertexShaderConstantF (slot 94) classification + live-head
+//        patch windows. ANSWERS: world-view element {0x30,0x810,0x680} VERIFIED
+//        in the ring (staging/entry/ctx pointers all correct); ring position =
+//        A.low16 % cap (advancing 624/frame in the boat scene; mid-frame reads
+//        are VM scratch — high16 mutates transiently); GPU-bound matrices do
+//        NOT exactly match any ViewEntry matrix (derived, not copied); patch
+//        windows A(m[1])/B(staging slot) on the only rendered view produced
+//        NO nudge -> neither channel feeds the draw camera. REGRESSION: the
+//        per-group classification (up to 3.6M/10s x ~800 memcmps) halved the
+//        frame rate -> S1c memoizes and budgets it.
+//   S1c (run 3, this): performance fix (content-hash memo + per-frame
+//        classification/region budgets); matched-tag logging (run 2's single
+//        real match — 4x transposed on c12 — had no tag logged); patch
+//        windows A-E across ALL walked views and ALL candidate camera
+//        channels: A entry m[1][3], B camera staging slot pos (ctx+0xc2110),
+//        C camera-record ring records (ctx+0xcb110, {pos,serial,rot,entry*,lod}
+//        0x28-stride — the walk-time snapshot the VM consumer most plausibly
+//        reads), D entry pos7c4[0], E entry m[0][12]; a full-ring SCAN for
+//        {0x30,0x810,0x680} world elements (no more position guessing); and a
+//        bounded one-shot matrix EXFIL (unique GPU matrices + walked-view
+//        m[0]/m[1] hex + FOV dwords) for offline derivation analysis — the
+//        GPU matrices are derived, so exact-match classification can only ever
+//        attribute a subset; the exfil lets the analyzer search the
+//        relationships offline.
 // New MidHooks live here; the M3 handlers (render_dump.cpp) and the device
-// VmtHook (device.cpp) feed this module via the note_*/on_* taps, so the M3
-// ambient telemetry is extended, not replaced. Handlers run on the main
-// thread (single-threaded render path); report_window() runs on the queue
-// poller thread like the M3 window reports — same loose-read policy.
+// VmtHook (device.cpp) feed this module via the note_*/on_* taps. Handlers
+// run on the main thread; report_window() runs on the queue poller thread.
 #pragma once
 
 #include <cstdint>
@@ -31,19 +43,18 @@ void install();
 
 // Tap from render_dump.cpp's view-loop MidHook (0x0048e9ea): one call per
 // walked view. `flags` = the full ViewRef+0x14 dword (low16 = type);
-// `frame_ctx` = EBX at that site = the frame-ctx object (0x680 block at
-// +0xd2950, camera staging at +0xc2110), validated structurally before use.
+// `frame_ctx` = EBX at that site = the frame-ctx object, validated
+// structurally before use.
 void note_view(uint32_t idx, uint32_t type, uint32_t flags, uintptr_t frame_ctx);
 
 // Tap from render_dump.cpp's opcode MidHook (0x008569f5): first stream
-// command of each frame records countersA (bracket point 3).
+// command of each frame (bracket point 3).
 void note_stream_opcode();
 
 // Tap from render_dump.cpp's slot-4 handler (EndOfFrameHook): bracket point 4.
 void note_end_of_frame();
 
-// Taps from device.cpp's VmtHook handlers. SetTransform is kept for
-// completeness (S1 proved it unused, but the count documents that per run).
+// Taps from device.cpp's VmtHook handlers.
 void on_set_transform(uint32_t state, const float *m);
 void on_set_viewport(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                      float minz, float maxz);
