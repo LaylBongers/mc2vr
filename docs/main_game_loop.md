@@ -22,8 +22,8 @@ Per-address facts (names, prototypes, loop addresses, vtable layouts, globals, s
 ## Open items
 
 - True class name of the shell singleton (`g_RenderShell`) unknown — no Pangea RTTI.
-- Actual render call site inside a state's `update(dt)` not yet traced (rendering happens inside the state update; no explicit render pass in the frame tick).
-- `DAT_01175288` singleton (device-like fields `+0x5bc`, `+0x5e4`; used by `PgCloudsWin32`) unidentified.
+- ~~Actual render call site inside a state's `update(dt)` not yet traced~~ RESOLVED:RESOLVED: toptop state `g_InGameShellState``g_InGameShellState` →→ frame pipeline →frame pipeline → render packet submit; full chainpacket submit; full chain in the `GameShell_FrameTick``GameShell_FrameTick` plate comment, see `render_path.md`plate comment, see `render_path.md`.
+- ~~`DAT_01175288` singleton unidentified~~unidentified~~ RESOLVED: LTI `RenderSystem` singleton (created in `RenderSystem_Init`, owns the D3D9 state layer;RESOLVED: LTI `RenderSystem` singleton (created in `RenderSystem_Init`, owns the D3D9 state layer; `+0x5bc` sub-objectsub-object receivesreceives initialinitial state callsstate calls).
 - Runtime confirmation that `vt[4]`/`vt[5]` remain no-ops (static analysis says the base+derived vtables both install `VirtHook_NoOp`).
 - Purpose of the pointer array at `0x017d30e8` (count `0x017d30dc`) and the `0x1000`-byte buffer at `0x00f7fb90`, both cleared on idle reset — unknown.
 - Roles of the two task tables (`g_TaskTable1`/`g_TaskTable2`) — one may be a shutdown table.

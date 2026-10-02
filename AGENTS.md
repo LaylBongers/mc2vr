@@ -9,4 +9,5 @@ The goal is to add full-featured VR support, including motion controls.
 - SecuROM v7 is present but already bypassed and inert — treat it as a non-issue. Ignore the `Stext`/`Sitext`/`Srdata`/`Sdata`/`Sidata`/`.securom` sections (protection VM, not game code). Only if live debugging/hooking misbehaves, suspect leftover anti-tamper there (see the doc).
 - The binary has rich embedded MSVC symbols (Pandemic "G" engine).
 - `/Mercenaries2.exe.0` in the Ghidra project is just the DOS stub; ignore it.
-- When you encounter a vtable, annotate it pre-emptively (vtable struct + typed object/pointer globals) so virtual calls decompile as `obj->vftable->Method()` instead of raw pointer arithmetic. No MSVC RTTI in this binary — derive class names from symbols/ctors.
+- When you encounter a vtable, annotate it pre-emptively (vtable struct + typed object/pointer globals) so virtual calls decompile as `obj->vftable->Method()` instead of raw pointer arithmetic. No MSVC RTTI in this binary — derive class names from symbols/ctors. See `docs/vtables.md` for the recipe and tooling gotchas.
+- Before researching anything, check `docs/` for prior findings — they record methodology, cross-cutting facts, and open items not repeated in the Ghidra project (per-address facts live in Ghidra; docs point to them).
