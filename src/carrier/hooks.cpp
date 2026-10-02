@@ -144,4 +144,9 @@ bool install()
     return true;
 }
 
+uint64_t frame_count()
+{
+    return g_total_frames;
+}
+
 } // namespace mc2vr::hooks

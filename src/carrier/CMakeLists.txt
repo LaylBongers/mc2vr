@@ -5,6 +5,7 @@ add_library(mc2vr_carrier SHARED
     dllmain.cpp
     init.cpp
     hooks.cpp
+    device.cpp
     probes.cpp
     log.cpp
     sha256.c
@@ -26,3 +27,7 @@ target_link_libraries(mc2vr_carrier PRIVATE safetyhook)
 # Static runtimes: an injected DLL must not depend on libstdc++-6.dll etc.
 # being present in the Wine prefix.
 target_link_options(mc2vr_carrier PRIVATE -static -static-libgcc -static-libstdc++)
+
+# The device hooks use __builtin_return_address(0) for caller-site evidence;
+# keep frame pointers so it is reliable on i386.
+target_compile_options(mc2vr_carrier PRIVATE -fno-omit-frame-pointer)

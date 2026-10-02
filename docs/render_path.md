@@ -16,9 +16,14 @@ Per-address facts (names, chain, vtables, queue layout) are stored in the Ghidra
 - Render consumer found from xrefs to the `GetD3DDevice` thunk — only 3 functions call it directly, one of which is called from the RenderShell frame function.
 - Device-lost branch (`DAT_01174a94 == 1`) gave the RenderShell slot semantics for free: `slot01` invalidate → `slot03` timed render → `slot02` restore.
 
-## D3D9 device vtable offsets (observed, confirmed by call signatures)
+## D3D9 device vtable offsets (slots validated against d3d9.h via the observed SetRenderState anchor)
 
-- `+0xe4` SetRenderState, `+0x10c` SetSamplerState, `+0x114` SetTexture (all verified against arg patterns in `RenderSystem_Init` state apply).
+- Anchor: game's LTI layer applies render state through `+0xe4` = **slot 57 = SetRenderState**, exactly matching d3d9.h's layout (including the quirk that SetDialogBoxMode occupies slot 20, between GetRasterStatus 19 and SetGammaRamp 21). This validates the whole header layout for the DXVK runtime.
+- Corrected (2026-10-02, M2 prep — the old labels were shape-based mislabels; both calls take a (DWORD, enum, DWORD) triple):
+  - `+0x10c` = slot 67 = **SetTextureStageState** — confirmed by `FUN_00753050` looping 36 stage-state types per stage with a stride-`0x24` per-stage cache (`DAT_00f7e328`).
+  - `+0x114` = slot 69 = **SetSamplerState** — confirmed by the 4-arg `(0, 4, 2)` call = (sampler 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR).
+  - SetTexture is slot 65 (`+0x104`), not `+0x114`.
+- M2 hook targets (slot numbers, runtime confirmation by call patterns in progress): Reset 16 (`+0x40`), Present 17 (`+0x44`), BeginScene 41 (`+0xa4`), EndScene 42 (`+0xa8`); swapchain GetSwapChain 14, IDirect3DSwapChain9::GetPresentParameters 9.
 - BeginScene/EndScene/Present/Reset offsets not yet pinned — they live below `RenderCmd_ExecuteStream` in SecuROM-encrypted thunks. Verify at runtime before hooking.
 
 ## VR hook strategy (render side)

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "build_lock.h"
+#include "device.hpp"
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
@@ -110,6 +111,10 @@ void init()
     probes::call_vm_thunk();
 
     hooks::install();
+
+    // M2: device capture + VmtHook (Present/BeginScene/EndScene/Reset).
+    // Best-effort: a failure here keeps the game and FrameTick hook alive.
+    device::capture_and_hook();
 
     MC2VR_LOG("init complete");
 }

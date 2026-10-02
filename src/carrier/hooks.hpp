@@ -16,10 +16,17 @@
 // RenderShell vtable +0x10/+0x14 @ 0x00be84c0 (direct pointer store).
 #pragma once
 
+#include <cstdint>
+
 namespace mc2vr::hooks {
 
 // Installs all hooks for the current milestone. Returns true on success.
 // Caller must have verified the build lock (init.cpp gates on it).
 bool install();
+
+// Total GameShell_FrameTick invocations since install. Written on the main
+// thread; readers on other threads get approximate values (fine for
+// diagnostics — the count is only correlated by same-thread callers anyway).
+uint64_t frame_count();
 
 } // namespace mc2vr::hooks
