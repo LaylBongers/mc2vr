@@ -389,7 +389,56 @@ patch→consume chain is broken in a way the run cannot distinguish from (a)
    object — either its source is snapshotted BEFORE the pre-VM patch point
    (timing hypothesis) or it is entirely external to the view system.
 
-### S1h — run 8 (timing control + correlation; IMPLEMENTED 2026-10-02, pending run)
+### S1h — run 8 (timing control + correlation; run 8 done → results below)
+
+
+### S1h run results (2026-10-02, run 8 — full gameplay; NO nudges; THE STRUCTURAL ANSWER)
+
+1. **Window K (walk-entry) NEGATIVE**: 5 walk entries × 200 field writes
+   (m[0]/m[1] translations, pos7c4, pos7ac, quat of every live type-2 view)
+   applied BEFORE every walk copy — still no nudge, no GPU-proof hit.
+2. **CONCLUSION (runs 1–8, all mechanisms now exhausted): the draw camera
+   is EXTERNAL to the view system.** The VM consumer does not read the draw
+   camera from ViewEntry fields, staging slots, ring records, the ctx
+   block/subobjects, or camData — at ANY point after walk entry. The view
+   entries are per-frame DERIVED COPIES of a game-side ROOT camera object
+   (which also feeds streaming/culling — the observed patch hitches), and
+   the VM evidently reads that root camera directly.
+3. Corroborating: the burst (fired early, in the static boat phase) shows
+   views 0/1's pos7c4 = (−1470.16, −18.53, 2803.86) — EXACTLY the GPU
+   camera position (c8 in that phase, c21 in gameplay). The views hold
+   copies of the root camera; patching a copy cannot move the draw.
+4. Instrument gaps for the record: the vsclock control never armed (the
+   only exact uploads this run were TRANSPOSED m0T matches, excluded by the
+   arming filter — the discrimination was moot anyway given K); the burst
+   fired at world-view frame 40 = the static pre-gameplay phase where the
+   camera registers use a different shader base (c8, not c21–c26) and the
+   camera does not move — fix: start the burst later (~frame 1500+) and
+   include c8–c12 in the logged register set.
+
+### S1i — next (STATIC RE FIRST; design change recorded)
+
+**Find the ROOT camera object** — the game-side source that the per-frame
+view update reads (the writer of ViewEntry pos7c4/quat7d4 and the object
+whose position equals the GPU camera): static-RE the writers of +0x7c4/
++0x7d4 (the FUN_0048f9d0 chain reads them; find who WRITES them — likely a
+camera-manager global reached via the game view object / ViewRef), then one
+patch window on the root camera's position (+4, 5 frames) settles it
+visually. If the root camera is the VM's source (expected), it becomes the
+S2 per-eye injection point.
+
+**DESIGN IMPACT (recorded for S2/S3 rework):** the S0-era clone-at-stage
+design (duplicate the world-view element with shadow ViewEntry/staging)
+assumed the VIEW ENTRY was the draw camera source — runs 4–8 prove it is
+not. Per-eye camera control must instead inject at the ROOT camera (per-eye
+override during a duplicated submission pass — needs the root object's
+layout and the VM's read point, hence S1i), or failing that, at the GPU
+boundary (rewrite the c21–c26 camera registers per eye via the
+SetVertexShaderConstantF hook during a second draw pass — a consumer-side
+approach, previously rejected for the stream-replay costs, but now the
+proven-fallback). The rest of S1's verified facts (element layout, ring
+consumption timing, counter semantics) remain valid.
+
 
 - **Window K (replacing J)**: a walk-entry MidHook (SubmitWorldPackets entry
   0x0048e620, first instruction) patches ALL candidate camera fields of

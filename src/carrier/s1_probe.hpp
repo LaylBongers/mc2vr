@@ -49,6 +49,14 @@
 //        = consume-time read; vsclean = snapshot predates the walk); a
 //        24-frame burst correlates the c21-c26 GPU camera registers with
 //        every live view's position.
+//   S1h (run 8) FINAL STRUCTURAL ANSWER: window K (walk-entry, 200 field
+//        writes per frame across all live views BEFORE every walk copy)
+//        produced NO nudge -> the draw camera is EXTERNAL to the view
+//        system. The VM reads a game-side ROOT camera directly; all view
+//        data is derived copies (view 0/1 pos7c4 == the GPU camera
+//        position exactly). S1i (next agent): static-RE the ROOT camera
+//        (writer/source of pos7c4/quat7d4), patch IT, and rebuild the S2
+//        per-eye design around it.
 // New MidHooks live here; the M3 handlers (render_dump.cpp) and the device
 // VmtHook (device.cpp) feed this module via the note_*/on_* taps. Handlers
 // run on the main thread; report_window() runs on the queue poller thread.
