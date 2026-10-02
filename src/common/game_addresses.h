@@ -65,9 +65,41 @@
 #define MC2_G_RENDERSHELLPTR ((uintptr_t)0x00dfb2f8u)
 
 // g_RenderQueue ring buffer fields (render_path.md): base is the struct;
-// elementSize base+4, capacity base+8, buffer base+0xc, producer counters
-// base+0x10/0x14 (packed 16-bit pairs semantics unresolved), CS base+0x18.
+// elementSize base+4, capacity base+8, buffer base+0xc, counters base+0x10/
+// base+0x14 (S0 decode: countersA base+0x10 packs low16 = consumer-advanced,
+// high16 = producer-advanced; countersB base+0x14 packs low16 = producer
+// batch count), CS base+0x18.
 #define MC2_G_RENDERQUEUE ((uintptr_t)0x00ff3618u)
+#define MC2_QUEUE_ELEM_SIZE ((uintptr_t)0x00ff361cu)  // u32 = 96
+#define MC2_QUEUE_CAPACITY ((uintptr_t)0x00ff3620u)   // u32 = 4096
+#define MC2_QUEUE_BUFFER ((uintptr_t)0x00ff3624u)     // u32 -> element array
+#define MC2_QUEUE_COUNTERS_A ((uintptr_t)0x00ff3628u) // packed u16 consumer/producer
+#define MC2_QUEUE_COUNTERS_B ((uintptr_t)0x00ff362cu) // packed u16 producer batch
+
+// ---- S1 instrument sites (docs/stereo_design.md §S1) ----
+
+// InGameShellState_FramePipeline call site of the SecuROM-VM'd packet
+// interpreter: 0x004c99f9 IS the 5-byte `call 0x0050f660`, immediately after
+// the SubmitWorldPackets call (0x004c99f4 -> 0x0048e620). A MidHook here
+// fires just before the VM interpreter runs and its trampoline executes the
+// original call (SafetyHook relocates the rel32). NEVER hook the stub itself.
+// Other post-submission pipeline calls for the S1.1 decision tree:
+// 0x004c99fe -> 0x006b93e0, 0x004ca003 -> 0x006f9490.
+#define MC2_PIPELINE_VMSTUB_CALL ((uintptr_t)0x004c99f9u)
+
+// RenderShell_RenderFrame entry (consumer half of the render path; reached
+// via RenderShell vtable slot03 = RenderFrameTimed 0x0085abd0). Prologue is
+// push ebp; mov ebp,esp; and esp,-16; sub esp,0x114 (13 bytes) — a MidHook
+// at the first instruction is convention-free and reads countersA at entry.
+#define MC2_RENDERSHELL_RENDERFRAME ((uintptr_t)0x00855690u)
+
+// Head index of the ACTIVE-VIEW linked list (S0: NOT a count; link =
+// ViewEntry+0x4, negative terminates; ~256-entry table, indices seen <= 239).
+#define MC2_VIEW_LIST_HEAD ((uintptr_t)0x00d29e60u)
+
+// ViewRef type/flags dword at per-view-object+0x14 (ViewRef at entry+0x7e4):
+// low WORD = view type (2/4), high WORD = flags (e.g. 0x5ad80002 seen).
+#define MC2_VIEW_REF_TYPEFLAGS_OFF ((uintptr_t)0x14u)
 
 // GetD3DDevice — thunk (6 bytes, jmp into a SecuROM VM stub), void* (void),
 // 12 call sites. Hooking VM stubs is forbidden; CALLING them is fine (probe).

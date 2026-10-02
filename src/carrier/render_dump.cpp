@@ -9,6 +9,7 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
+#include "s1_probe.hpp"
 
 namespace mc2vr::render {
 
@@ -119,6 +120,11 @@ void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry, bool tra
 // RenderCmd_ExecuteStream opcode dispatch: EAX = opcode.
 void opcode_midhook(safetyhook::Context &ctx)
 {
+    // S1.1 bracket point 3: countersA.low at the first stream command of the
+    // frame (consumption inside RenderFrame's record walk would show here).
+    // Cheap: once-per-frame work inside s1, keyed on the frame counter.
+    s1::note_stream_opcode();
+
     const uint32_t op = (uint32_t)ctx.eax;
     if (op < OPCODE_COUNT) {
         g_cmd_hist[op]++;
@@ -190,6 +196,16 @@ void view_midhook(safetyhook::Context &ctx)
         g_refresh_done++;
         dump_view_entry(idx, type, entry, false);
     }
+
+    // S1.4 tap: per-frame (idx, type, flags) list + frame-ctx capture. The
+    // flags dword lives at ViewRef+0x14 (low16 = the type the loop checked,
+    // high16 = flags). EBX at this site = the frame-ctx object (S0).
+    uint32_t flags = 0xffffffffu;
+    const uint32_t ref = *(const uint32_t *)(entry + MC2_VIEW_OBJ_PTR_OFF);
+    if (ref != 0) {
+        flags = *(const uint32_t *)((uintptr_t)ref + MC2_VIEW_REF_TYPEFLAGS_OFF);
+    }
+    s1::note_view(idx, type, flags, (uintptr_t)ctx.ebx);
 }
 
 // ---- g_RenderShell slot 4/5 claim test --------------------------------------
@@ -199,6 +215,9 @@ void view_midhook(safetyhook::Context &ctx)
 
 void slot4_endofframe_hook()
 {
+    // S1.1 bracket point 4: countersA.low at end of frame.
+    s1::note_end_of_frame();
+
     g_slot4_calls++;
     if (!g_slot4_logged) {
         g_slot4_logged = true;
@@ -285,6 +304,9 @@ void report_window()
     g_prod_a_min = 0xffffffff;
     g_prod_a_max = 0;
     g_queue_changed_polls = 0;
+
+    // S1 window report (bracket + xform/viewport + view-list classification).
+    s1::report_window();
 }
 
 DWORD WINAPI poller_thread(LPVOID)
@@ -389,6 +411,11 @@ void install()
     if (!g_poller_thread) {
         MC2VR_LOG("M3: FATAL — queue poller thread creation failed (%lu)", GetLastError());
     }
+
+    // S1: consumer bracket MidHooks (pre-VM 0x004c99f9 + RenderFrame entry
+    // 0x00855690); the xform/viewport hooks are installed with the device
+    // VmtHook (device.cpp).
+    s1::install();
 }
 
 } // namespace mc2vr::render

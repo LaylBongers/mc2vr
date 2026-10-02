@@ -115,6 +115,48 @@ per-view camera records go through `FUN_004906b0` into a 0x28-stride ring at
 
 ### S1 — Consumer + field-use instrumentation (one run)
 
+**IMPLEMENTED (2026-10-02, pending run)** — carrier code: `src/carrier/s1_probe.cpp`
+(new MidHooks + all S1 state; M3 handlers and the device VmtHook feed it via
+`s1::note_*` / `s1::on_*` taps), `device.cpp` (SetTransform 44 / SetViewport 47
+slots), `render_dump.cpp` (view-loop flags tap, opcode/slot-4 bracket taps, S1
+window report). `tools/analyze_dumps.py` decodes the S1 blocks (element layout
+check, xform float decode, evidence echo). Implementation deltas vs. this
+spec (all behavior-preserving):
+
+- `0x004c99f9` IS the 5-byte `call 0x0050f660` itself (verified by decode);
+  the MidHook there fires just before the interpreter and SafetyHook relocates
+  the rel32 call into its trampoline. RenderFrame is bracketed by a MidHook at
+  its first instruction (same evidence as an entry InlineHook, no convention
+  hazard); two extra bracket points were added for free on existing hooks:
+  first stream opcode of the frame (opcode MidHook) and EndOfFrameHook
+  (slot 4) — countersA.low is now sampled at 4 points (pre-VM → RenderFrame
+  entry → first cmd → end of frame), resolving the "consumes inside
+  RenderFrame" branch of the decision tree in one run.
+- The other post-submission calls decode to `0x006b93e0` (from `0x004c99fe`)
+  and `0x006f9490` (from `0x004ca003`) — the earlier `0x006B99E0` in this doc
+  was a transcription typo.
+- Ring-element dumps are taken at the S0 formula positions AND the naive
+  candidates (`countersA.low % cap`, `countersA.high % cap`) — if the doc
+  formula mis-decodes, the analyzer identifies the true element positions
+  against the {0x30, 0x810, 0x680} pair layout (element layout check is
+  offline in `analyze_dumps.py`).
+- S1.3 patches m[1][3] (translation x) with +4.0 for a 5-frame window
+  (restore at each frame's pre-hook, re-apply relative to current values) —
+  long enough to survive an odd frame, short enough to limit exposure of the
+  patched field to game logic. Head view must be type-2 (checked per frame
+  before starting); the proof is logged when any SetTransform matrix equals
+  the live patched entry's m[1] while the patch is active.
+- S1.4 logs the full `(idx, type, flags)` list (flags = high word of the
+  ViewRef `+0x14` dword) only on: the first two frames ever, the first frame
+  of each new list signature (FNV over head + recs, ≤6/window), and satellite
+  frames (n > 100, ≤2/window) — steady state must not produce a line per
+  frame. Window reports carry t2/frame min/max + satellite counts.
+- Read-safety: the frame-ctx pointer (EBX at the loop-head site) is
+  structurally validated before any scan (0x680 block must carry
+  `&g_RenderQueue` at +0x60 and `g_ViewTable` at +0xC4); the ctx 0x680 block
+  and the two live primary subobjects (ptrs at block +0x74) are also scanned
+  for SetTransform matches ("ctx+off" / "subN+off" tags).
+
 Static work hit the SecuROM wall at the consumer; S1 settles the open semantics at
 runtime, all via proven mechanisms (no new hook species):
 
@@ -158,7 +200,7 @@ runtime, all via proven mechanisms (no new hook species):
   RenderFrame entry → interpreter confirmed at pipeline time (`0x0050f660` identified,
   clone-at-stage S3 proceeds as designed). CountersA only moves during/after RenderFrame
   entry → the interpreter is a different call (re-check the other post-submission calls:
-  `0x006B99E0`, `0x006F9490` from `0x004c99f9`/`0x004c99fe`/`0x004ca003`) or consume
+  `0x006b93e0`, `0x006f9490` from `0x004c99fe`/`0x004ca003`) or consume
   happens inside RenderFrame — re-bracket inside RenderFrame before concluding anything.
   SetTransform shows per-view matrices matching live `ViewEntry` content → residency +
   m[1] attribution confirmed. SetTransform shows ctx-derived values only → the 0x680
@@ -244,11 +286,11 @@ slot-5 hook (S4). No new mechanism — this doc ends at visual VR.
 
 | Site | Mechanism | Phase | Status |
 |---|---|---|---|
-| SubmitWorldPackets loop head `0x0048e9ea` | MidHook | M3 anchor | installed (M3) |
+| SubmitWorldPackets loop head `0x0048e9ea` | MidHook | M3 anchor + S1.4 tap (flags, frame-ctx EBX) | installed (M3, extended S1) |
 | SubmitWorldPackets element staging `0x0048ef71` (count `[ESP+0x19a00]`, array `[ESP+0x79a0]`, cap 768) | MidHook | S3 clone-at-stage | S0-mapped, pending install |
 | SubmitWorldPackets iterator reload `0x0048f013` (ESI=`*(entry+4)`; EIP→`0x0048e9d0` re-runs view) / back-edge `0x0048f01f` | MidHook (+context EIP redirect) | S3 fallback re-emit | S0-mapped |
-| Pipeline pre-VM-stub `0x004c99f9` + RenderFrame entry `0x00855690` | MidHook / InlineHook | S1 consumer bracket | pending install |
-| Device `SetTransform` (44) / `SetViewport` (47) | VmtHook (proven device clone) | S1 camera attribution | pending install |
+| Pipeline pre-VM-stub `0x004c99f9` + RenderFrame entry `0x00855690` | MidHook / MidHook at first instruction | S1 consumer bracket | **installed (S1)** — plus taps at first stream opcode and slot-4 for a 4-point bracket |
+| Device `SetTransform` (44) / `SetViewport` (47) | VmtHook (proven device clone) | S1 camera attribution | **installed (S1)** |
 | `ViewEntry` camera fields | shadow copies (S2), never in-place on live entries | S2/S3 | S0 design settled |
 | device `Present` (slot 17) | VmtHook | S4 compositor | installed (M2) |
 | device `Reset` (slot 16) | VmtHook | S4 param changes | installed (M2) |

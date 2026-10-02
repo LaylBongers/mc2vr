@@ -10,6 +10,7 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
+#include "s1_probe.hpp"
 
 namespace mc2vr::device {
 
@@ -29,6 +30,10 @@ constexpr size_t SLOT_Reset = 16;
 constexpr size_t SLOT_Present = 17;
 constexpr size_t SLOT_BeginScene = 41;
 constexpr size_t SLOT_EndScene = 42;
+// S1 camera attribution: SetTransform +0xB0, SetViewport +0xBC (stereo_design
+// §S1.2; the SetRenderState@57 anchor that pinned the Present region pins these).
+constexpr size_t SLOT_SetTransform = 44;
+constexpr size_t SLOT_SetViewport = 47;
 // IDirect3DSwapChain9::GetPresentParameters
 constexpr size_t SLOT_SC_GetPresentParameters = 9;
 
@@ -41,6 +46,8 @@ using BeginScene_t = HRESULT(__stdcall *)(void *);
 using Reset_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
 using GetSwapChain_t = HRESULT(__stdcall *)(void *, UINT, void **);
 using GetPresentParams_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
+using SetTransform_t = HRESULT(__stdcall *)(void *, DWORD, const D3DMATRIX *);
+using SetViewport_t = HRESULT(__stdcall *)(void *, const D3DVIEWPORT9 *);
 
 // Leaked by design (see device.hpp).
 safetyhook::VmtHook *g_vmt_hook = nullptr;
@@ -48,6 +55,8 @@ safetyhook::VmHook *g_present_hook = nullptr;
 safetyhook::VmHook *g_beginscene_hook = nullptr;
 safetyhook::VmHook *g_endscene_hook = nullptr;
 safetyhook::VmHook *g_reset_hook = nullptr;
+safetyhook::VmHook *g_settransform_hook = nullptr;
+safetyhook::VmHook *g_setviewport_hook = nullptr;
 
 void *g_device = nullptr;
 bool g_params_logged = false;
@@ -204,6 +213,45 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
     return g_reset_hook->stdcall<HRESULT>(self, pp);
 }
 
+// ---- S1.2: SetTransform / SetViewport (camera attribution) --------------------
+// Thin handlers: burst-log the first calls (caller attribution, M2 style),
+// hand the matrix/rect to s1 for classification/aggregation, then dispatch
+// the original through the cloned-vtable trampoline. Main thread only.
+
+uint64_t g_settransform_calls = 0;
+uint64_t g_setviewport_calls = 0;
+
+HRESULT __stdcall settransform_hook(void *self, DWORD state, const D3DMATRIX *m)
+{
+    g_settransform_calls++;
+    if (g_settransform_calls <= BURST_LOG_CALLS) {
+        char caller[96];
+        describe_code_address(__builtin_return_address(0), caller, sizeof(caller));
+        MC2VR_LOG("D3D: SetTransform call #%llu: state=%lu frame=%llu | caller=%s",
+                  (unsigned long long)g_settransform_calls, (unsigned long)state,
+                  (unsigned long long)hooks::frame_count(), caller);
+    }
+    s1::on_set_transform((uint32_t)state, (const float *)m);
+    return g_settransform_hook->stdcall<HRESULT>(self, state, m);
+}
+
+HRESULT __stdcall setviewport_hook(void *self, const D3DVIEWPORT9 *vp)
+{
+    g_setviewport_calls++;
+    if (g_setviewport_calls <= BURST_LOG_CALLS) {
+        char caller[96];
+        describe_code_address(__builtin_return_address(0), caller, sizeof(caller));
+        MC2VR_LOG("D3D: SetViewport call #%llu: frame=%llu | caller=%s",
+                  (unsigned long long)g_setviewport_calls,
+                  (unsigned long long)hooks::frame_count(), caller);
+    }
+    if (vp) {
+        s1::on_set_viewport(vp->X, vp->Y, vp->Width, vp->Height, vp->MinZ, vp->MaxZ);
+    }
+    return g_setviewport_hook->stdcall<HRESULT>(self, vp);
+}
+
+
 } // namespace
 
 bool capture_and_hook()
@@ -246,6 +294,8 @@ bool capture_and_hook()
         {SLOT_BeginScene, (void *)&beginscene_hook, &g_beginscene_hook, "BeginScene"},
         {SLOT_EndScene, (void *)&endscene_hook, &g_endscene_hook, "EndScene"},
         {SLOT_Reset, (void *)&reset_hook, &g_reset_hook, "Reset"},
+        {SLOT_SetTransform, (void *)&settransform_hook, &g_settransform_hook, "SetTransform"},
+        {SLOT_SetViewport, (void *)&setviewport_hook, &g_setviewport_hook, "SetViewport"},
     };
 
     for (const SlotSpec &spec : slots) {
@@ -260,7 +310,7 @@ bool capture_and_hook()
     }
 
     MC2VR_LOG("D3D: VmtHook installed — Present/BeginScene/EndScene/Reset pinned "
-              "pending runtime call-pattern confirmation");
+              "(M2) + SetTransform/SetViewport (S1 camera attribution)");
     return true;
 }
 
