@@ -22,8 +22,8 @@ constexpr uint32_t ENTRY_DUMP_MAX = 12;
 constexpr uint32_t VIEW_STRIDE = 0x810;
 constexpr uint32_t POLL_MS = 250;
 constexpr uint32_t REPORT_POLLS = 10 * 1000 / POLL_MS;
-constexpr uint32_t REFRESH_EVERY_WINDOWS = 6;  // re-dump one entry ~once a minute
-constexpr uint32_t REFRESH_MAX = 8;            // steady-state re-dumps per run
+constexpr uint32_t REFRESH_EVERY_WINDOWS = 3;  // re-dump one entry every ~30s
+constexpr uint32_t REFRESH_MAX = 12;            // steady-state re-dumps per run
 
 // Leaked by design (same teardown reasoning as the device hooks).
 SafetyHookMid g_opcode_mid;
@@ -315,17 +315,22 @@ DWORD WINAPI poller_thread(LPVOID)
 
         if (++polls >= REPORT_POLLS) {
             polls = 0;
+
+            // Pick the refresh target BEFORE report_window() clears the
+            // aggregation (reading after it always saw distinct=0 — that
+            // ordering bug silently disabled steady-state re-dumps).
+            uint32_t distinct = g_view_distinct; // approximate cross-thread read
+            uint32_t pick = UINT32_MAX;
+            if (distinct > 0) {
+                pick = g_views[refresh_rotor++ % distinct].idx;
+            }
+
             report_window();
             windows++;
 
-            // Request one steady-state re-dump per REFRESH_EVERY_WINDOWS,
-            // rotating through observed view indices.
-            if (windows % REFRESH_EVERY_WINDOWS == 0 && g_refresh_done < REFRESH_MAX) {
-                uint32_t distinct = g_view_distinct; // approximate cross-thread read
-                if (distinct > 0) {
-                    const uint32_t pick = g_views[refresh_rotor++ % distinct].idx;
-                    InterlockedExchange(&g_refresh_target, (LONG)pick);
-                }
+            if (windows % REFRESH_EVERY_WINDOWS == 0 && g_refresh_done < REFRESH_MAX &&
+                pick != UINT32_MAX) {
+                InterlockedExchange(&g_refresh_target, (LONG)pick);
             }
         }
     }
