@@ -35,6 +35,10 @@ Mechanism rules: `docs/launcher_plan.md`. Runtime frame chain:
 - S0: active views = intrusive list (head `DAT_00d29e60`, link `ViewEntry+0x4`);
   per-view element = three `{size, ptr}` pairs ({0x30 staging}, {0x810 entry},
   {0x680 ctx}); the consumer derefs POST-walk.
+- `LtiRenderer_EndSubmit` already StretchRects RT0 → backbuffer
+  (`LtiRenderer+0x3ea4`) whenever they differ (S2; plates on `g_LtiRenderer` /
+  `LtiRenderer_EndSubmit`) — an existing RT→backbuffer copy path the S4
+  compositor can co-opt instead of adding its own blit.
 
 ## Architecture (REVISED by S1)
 
