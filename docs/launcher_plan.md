@@ -1,6 +1,6 @@
 # Launcher + Carrier Plan (TEMPORARY)
 
-Keep until M3/M4 planning is done, then fold into `initial_analysis.md`/`render_path.md` and delete. Per-address facts live in Ghidra; not repeated beyond the hook list below.
+Keep until M4 planning is done, then fold into `initial_analysis.md`/`render_path.md` and delete — the stereo design already lives in `docs/stereo_design.md`. Per-address facts live in Ghidra; not repeated beyond the hook list below.
 
 ## Architecture
 
@@ -64,7 +64,7 @@ Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device
   - Queue+0x10 is a ring POSITION (wraps 0..cap-1; capacity 4096, elem 96); +0x14 stayed 0.
   - Carrier keeps the M3 instrumentation as ambient telemetry for future runs.
   - Remaining for stereo design: identify which matrix feeds the packets (m[1] likely) and the loop body's submit flow.
-- M4 (future): first redirects. Device already exists at injection (creation params unchangeable post-boot); use device-lost path (`DAT_01174a94`) + `Reset` VmtHook for present-param changes, or Present-hook interop blit (needs neither).
+- M4 (**in design** — see `docs/stereo_design.md`): first redirects (eye duplication). Design: producer-side per-view duplication in the `SubmitWorldPackets` loop + `ViewEntry` camera patching; Present-hook compositor for the HMD; slot-4/5 claims as the frame orchestration points. First work item is the loop-body RE (packet data residency + viewport flow). Device already exists at injection (creation params unchangeable post-boot); device-lost path + `Reset` VmtHook or Present-hook interop blit for param changes (the latter needs neither).
 
 ## Motion-control / logic-mod track (long-term)
 
