@@ -129,9 +129,18 @@ constexpr uint32_t EXFIL_VIEWS = 6;         // walked views with m0/m1 hex
 constexpr float PATCH_DELTA = 4.0f;
 constexpr uint32_t PATCH_WINDOW = 5;
 constexpr uint32_t PATCH_GAP = 60;
-constexpr uint32_t PATCH_TRY_MAX = 3600;    // ~60s at 60fps to find a live frame
 constexpr uint32_t PATCH_MAX_TARGETS = 64;
 constexpr uint32_t PATCH_MAX_RECORDS = 128;
+// Run-3 lessons: gameplay submits 15-85 world views, menu/cutscene
+// backgrounds 1-2 — gate window starts on gameplay-like frames so the
+// sequence does not fire on a menu background and get its budget burned by
+// the level-load screen (which submits no views for ~35s).
+constexpr uint32_t PATCH_GAMEPLAY_MIN_VIEWS = 4;
+constexpr uint32_t PATCH_STAGE_TRIES = 600; // per-stage retries before advancing
+// Camera/view constants live in LOW registers; classify those ahead of the
+// budget (run 3: ~24k float4s/frame starved a flat 256/frame budget on
+// per-object matrices before the camera registers got a look).
+constexpr uint32_t VS_PRIOR_REGS = 32;
 
 // ---- hook storage (leaked by design, same teardown reasoning as M2/M3) ------
 
@@ -350,11 +359,13 @@ const char *const PATCH_NAMES[5] = {
 
 uint8_t *g_pt_addr[PATCH_MAX_TARGETS];
 float g_pt_saved[PATCH_MAX_TARGETS];
+uint32_t g_pt_idx[PATCH_MAX_TARGETS];
 uint32_t g_pt_n = 0;
 uint32_t g_pleft = 0;
 uint32_t g_pgap = 0;
-uint32_t g_ptries = 0;
+uint32_t g_pstage_tries = 0;
 bool g_patch_any_live = false;
+bool g_crec_dumped = false;
 
 bool g_residency_seen = false;
 bool g_residency_logged = false;
@@ -407,7 +418,6 @@ uint32_t g_match_log_n = 0;
 
 uint32_t g_exfil_done = 0;
 uint32_t g_exfil_view_counter = 0;
-uint64_t g_exfil_frame = UINT64_MAX;
 struct ExMat {
     uint32_t hash;
     uint32_t reg;
@@ -415,6 +425,21 @@ struct ExMat {
 };
 ExMat g_exmats[EXFIL_MATS];
 uint32_t g_exmat_n = 0;
+// Entry snapshot taken at SELECTION time (the walk of that frame just
+// finished, so entry values are final); the GPU matrices arrive during the
+// same frame's render. Run-3 bug: the emit keyed off the LIVE view list,
+// which has already moved on by emit time — nothing was ever logged.
+struct ExEntrySnap {
+    uint32_t idx;
+    uint8_t m0[64];
+    uint8_t m1[64];
+};
+ExEntrySnap g_ex_entries[EXFIL_VIEWS];
+uint32_t g_ex_entry_n = 0;
+uint32_t g_ex_fov[3] = {};
+uint32_t g_ex_pending = 0;
+uint64_t g_ex_frame = 0;
+uint32_t g_ex_views_total = 0;
 
 // ---- helpers ---------------------------------------------------------------------
 
@@ -700,22 +725,23 @@ bool window_c_scan()
         if (ep < VIEW_TABLE || ep >= VIEW_TABLE_END) {
             continue;
         }
-        bool walked = false;
+        uint32_t matched_idx = 0xffffffffu;
         for (uint32_t i = 0; i < g_list_n; i++) {
             const uint32_t idx = g_list[i].idx;
             if (idx < VIEW_IDX_MAX &&
                 (uintptr_t)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE) == ep) {
-                walked = true;
+                matched_idx = idx;
                 break;
             }
         }
-        if (!walked) {
+        if (matched_idx == 0xffffffffu) {
             continue;
         }
         // Stale matches (already-consumed records of prior frames) are
         // harmless: the fresh record for this frame is what the consumer reads.
         g_pt_addr[g_pt_n] = (uint8_t *)r;
         g_pt_saved[g_pt_n] = *(const float *)r;
+        g_pt_idx[g_pt_n] = matched_idx;
         g_pt_n++;
     }
     if (g_pt_n == 0) {
@@ -775,6 +801,7 @@ bool build_patch_targets(uint64_t frame)
         }
         g_pt_addr[g_pt_n] = addr;
         g_pt_saved[g_pt_n] = *(const float *)addr;
+        g_pt_idx[g_pt_n] = idx;
         if (live) {
             g_patch_any_live = true;
         }
@@ -813,18 +840,56 @@ void patch_start_window(uint64_t frame)
     g_pstate = PatchState::Window;
     g_pleft = PATCH_WINDOW;
     patch_apply_targets();
+    char tgt[96];
+    int n = 0;
+    const uint32_t shown = g_pt_n < 4 ? g_pt_n : 4;
+    for (uint32_t i = 0; i < shown && n < (int)sizeof(tgt) - 16; i++) {
+        n += _snprintf(tgt + n, sizeof(tgt) - n, " i%u", g_pt_idx[i]);
+    }
+    tgt[n] = '\0';
     if (g_pstage == 2) {
-        MC2VR_LOG("S1 patch %s: %u ring records (stride 0x28, entry ptr +0x20) "
-                  "pos[0] += %g for %u frames — expected visual: nudge #%d",
-                  PATCH_NAMES[g_pstage], g_pt_n, (double)PATCH_DELTA,
+        MC2VR_LOG("S1 patch %s: %u ring records (stride 0x28, entry ptr +0x20; "
+                  "first:%s) pos[0] += %g for %u frames — expected visual: "
+                  "nudge #%d",
+                  PATCH_NAMES[g_pstage], g_pt_n, tgt, (double)PATCH_DELTA,
                   (unsigned)PATCH_WINDOW, g_pstage + 1);
     } else {
-        MC2VR_LOG("S1 patch %s: %u targets (anyLive=%u) pos += %g for %u "
-                  "frames — expected visual: nudge #%d",
+        MC2VR_LOG("S1 patch %s: %u targets (anyLive=%u; first:%s) pos += %g for "
+                  "%u frames — expected visual: nudge #%d",
                   PATCH_NAMES[g_pstage], g_pt_n, g_patch_any_live ? 1u : 0u,
-                  (double)PATCH_DELTA, (unsigned)PATCH_WINDOW, g_pstage + 1);
+                  tgt, (double)PATCH_DELTA, (unsigned)PATCH_WINDOW, g_pstage + 1);
     }
     (void)frame;
+}
+
+// One-shot ring-record dump for offline layout analysis: window C found no
+// records with a walked ViewEntry* at +0x20 — dump raw records so the layout
+// can be re-derived (S1d, run-3 lesson).
+void dump_crecs()
+{
+    g_crec_dumped = true;
+    if (!g_ctx_valid) {
+        return;
+    }
+    const uint8_t *base = (const uint8_t *)(g_frame_ctx + CTX_RING_OFF);
+    MC2VR_LOG("S1 crec: dumping 8 records (0x28 stride) at ctx+0x%08x — window "
+              "C matched nothing (ViewEntry* at +0x20 suspect); offline: find "
+              "the entry-pointer offset / record layout",
+              (unsigned)CTX_RING_OFF);
+    for (uint32_t r = 0; r < 8; r++) {
+        const uint8_t *p = base + r * RING_REC_STRIDE;
+        for (uint32_t off = 0; off < RING_REC_STRIDE; off += 16) {
+            const uint32_t n = RING_REC_STRIDE - off < 16 ? RING_REC_STRIDE - off : 16;
+            char hex[48];
+            char *w = hex;
+            for (uint32_t j = 0; j < n; j++) {
+                *w++ = "0123456789abcdef"[p[off + j] >> 4];
+                *w++ = "0123456789abcdef"[p[off + j] & 0xf];
+            }
+            *w = '\0';
+            MC2VR_LOG("S1 crec rec%u +0x%02x: %s", r, off, hex);
+        }
+    }
 }
 
 void run_patch(uint64_t frame)
@@ -874,19 +939,32 @@ void run_patch(uint64_t frame)
 
     case PatchState::Idle:
         // Both the initial start and the post-Gap stage advance land here:
-        // build targets for the current stage and open the window.
-        if (++g_ptries > PATCH_TRY_MAX) {
-            g_pstate = PatchState::Done;
-            MC2VR_LOG("S1 patch: no walkable frames in %u tries — windows skipped",
-                      (unsigned)PATCH_TRY_MAX);
+        // build targets for the current stage and open the window. Gate on
+        // gameplay-like frames (>= PATCH_GAMEPLAY_MIN_VIEWS) so the sequence
+        // runs on the real camera, not a menu background (run-3 lesson).
+        if (g_list_frame != frame || g_list_total < PATCH_GAMEPLAY_MIN_VIEWS) {
+            return; // menu/cutscene/load phase — wait, no retry cost
+        }
+        if (++g_pstage_tries > PATCH_STAGE_TRIES) {
+            g_pstage_tries = 0;
+            g_pstage++;
+            if (g_pstage > 4) {
+                g_pstate = PatchState::Done;
+                MC2VR_LOG("S1 patch: all stages starved — windows skipped");
+                return;
+            }
+            MC2VR_LOG("S1 patch: stage %s starved after %u gameplay tries — "
+                      "advancing to %s", PATCH_NAMES[g_pstage - 1],
+                      (unsigned)PATCH_STAGE_TRIES, PATCH_NAMES[g_pstage]);
             return;
         }
-        if (g_list_frame != frame || g_list_total == 0) {
-            return; // no world views walked this frame — try again next frame
-        }
         if (!build_patch_targets(frame)) {
-            return; // stage prerequisites missing (e.g., ctx invalid) — retry
+            if (g_pstage == 2 && !g_crec_dumped) {
+                dump_crecs();
+            }
+            return; // stage prerequisites missing — retry (budgeted)
         }
+        g_pstage_tries = 0;
         patch_start_window(frame);
         return;
     }
@@ -912,34 +990,21 @@ bool exfil_collect(const float *m16, uint32_t reg_base)
     return true;
 }
 
-void exfil_emit(uint64_t frame)
+void exfil_emit()
 {
-    MC2VR_LOG("S1 exfil: frame=%llu views=%u (walked m0/m1 + FOV below; GPU "
-              "matrices follow — offline: search derived relationships vs "
-              "entry matrices)",
-              (unsigned long long)frame, g_list_total);
+    MC2VR_LOG("S1 exfil: frame=%llu views=%u (entry m0/m1 + FOV from the "
+              "selection-time snapshot; GPU matrices follow — offline: search "
+              "derived relationships vs entry matrices)",
+              (unsigned long long)g_ex_frame, g_ex_views_total);
     char hex[132];
-    const uint32_t views = g_list_n < EXFIL_VIEWS ? g_list_n : EXFIL_VIEWS;
-    for (uint32_t i = 0; i < views; i++) {
-        const uint32_t idx = g_list[i].idx;
-        if (idx >= VIEW_IDX_MAX) {
-            continue;
-        }
-        const uint8_t *entry = (const uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
-        hex64(entry + VIEW_M0_OFF, hex, sizeof(hex));
-        MC2VR_LOG("S1 exentry: i%u m0=%s", idx, hex);
-        hex64(entry + VIEW_M1_OFF, hex, sizeof(hex));
-        MC2VR_LOG("S1 exentry: i%u m1=%s", idx, hex);
+    for (uint32_t i = 0; i < g_ex_entry_n; i++) {
+        hex64(g_ex_entries[i].m0, hex, sizeof(hex));
+        MC2VR_LOG("S1 exentry: i%u m0=%s", g_ex_entries[i].idx, hex);
+        hex64(g_ex_entries[i].m1, hex, sizeof(hex));
+        MC2VR_LOG("S1 exentry: i%u m1=%s", g_ex_entries[i].idx, hex);
         if (i == 0) {
-            MC2VR_LOG("S1 exfov: i%u fovSinCos(+0x2ec/2f4)=%08x/%08x "
-                      "near(+0x188)=%08x pos7c4=(%g,%g,%g)",
-                      idx,
-                      *(const uint32_t *)(entry + 0x2ec),
-                      *(const uint32_t *)(entry + 0x2f4),
-                      *(const uint32_t *)(entry + 0x188),
-                      (double)*(const float *)(entry + VIEW_POS_OFF),
-                      (double)*(const float *)(entry + VIEW_POS_OFF + 4),
-                      (double)*(const float *)(entry + VIEW_POS_OFF + 8));
+            MC2VR_LOG("S1 exfov: i%u fovSinCos(+0x2ec/2f4)=%08x/%08x near(+0x188)=%08x",
+                      g_ex_entries[i].idx, g_ex_fov[0], g_ex_fov[1], g_ex_fov[2]);
         }
     }
     for (uint32_t i = 0; i < g_exmat_n; i++) {
@@ -947,17 +1012,16 @@ void exfil_emit(uint64_t frame)
         MC2VR_LOG("S1 exmat: reg=c%u m=%s", g_exmats[i].reg, hex);
     }
     g_exmat_n = 0;
-    g_exfil_frame = UINT64_MAX;
+    g_ex_pending = 0;
 }
 
 void exfil_maybe(uint64_t frame)
 {
-    // Emit the pending exfil block: its frame just fully completed, and the
-    // view list still belongs to that frame (note_view for `frame` has not
-    // run yet, so g_list_frame == the exfil frame).
-    if (g_exfil_frame != UINT64_MAX && g_list_frame == g_exfil_frame &&
-        g_list_total > 0) {
-        exfil_emit(g_exfil_frame);
+    // Emit the pending snapshot: its frame's render is complete by now (all
+    // four bracket points fired). Entry matrices come from the selection-time
+    // snapshot — the live view list has already moved to the current frame.
+    if (g_ex_pending) {
+        exfil_emit();
     }
     if (g_list_frame != frame || g_list_total == 0) {
         return; // no world views walked this frame
@@ -968,8 +1032,32 @@ void exfil_maybe(uint64_t frame)
     }
     if (g_exfil_done < EXFIL_EARLY || g_exfil_view_counter % EXFIL_STRIDE == 0) {
         g_exfil_done++;
-        g_exfil_frame = frame;
+        // Snapshot the walked views NOW: the walk of `frame` just ended, so
+        // the entry values are final for this frame.
+        g_ex_entry_n = 0;
+        const uint32_t views = g_list_n < EXFIL_VIEWS ? g_list_n : EXFIL_VIEWS;
+        for (uint32_t i = 0; i < views; i++) {
+            const uint32_t idx = g_list[i].idx;
+            if (idx >= VIEW_IDX_MAX) {
+                continue;
+            }
+            const uint8_t *entry =
+                (const uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
+            ExEntrySnap &snap = g_ex_entries[g_ex_entry_n];
+            snap.idx = idx;
+            memcpy(snap.m0, entry + VIEW_M0_OFF, 64);
+            memcpy(snap.m1, entry + VIEW_M1_OFF, 64);
+            if (g_ex_entry_n == 0) {
+                g_ex_fov[0] = *(const uint32_t *)(entry + 0x2ec);
+                g_ex_fov[1] = *(const uint32_t *)(entry + 0x2f4);
+                g_ex_fov[2] = *(const uint32_t *)(entry + 0x188);
+            }
+            g_ex_entry_n++;
+        }
+        g_ex_views_total = g_list_total;
         g_exmat_n = 0;
+        g_ex_frame = frame;
+        g_ex_pending = 1;
     }
 }
 
@@ -1032,8 +1120,11 @@ struct VsMemoEntry {
 };
 VsMemoEntry g_memo[VS_MEMO_SLOTS];
 
-// Classify with content-hash memoization and budgets (S1c perf fix).
-MatrixMatch vs_classify(const float *m16)
+// Classify with content-hash memoization and budgets (S1c perf fix, S1d
+// register priority). `priority` (low registers) bypasses the classification
+// budget: the camera constants are few and memo-deduped, so they are always
+// classified even in heavy scenes.
+MatrixMatch vs_classify(const float *m16, bool priority)
 {
     g_vs_classified++;
     const uint32_t h = hash64((const uint8_t *)m16);
@@ -1042,12 +1133,14 @@ MatrixMatch vs_classify(const float *m16)
         g_vs_memo_hits++;
         return e.result;
     }
-    if (g_vs_cls_budget_left == 0) {
-        g_vs_cls_skipped++;
-        MatrixMatch none;
-        return none;
+    if (!priority) {
+        if (g_vs_cls_budget_left == 0) {
+            g_vs_cls_skipped++;
+            MatrixMatch none;
+            return none;
+        }
+        g_vs_cls_budget_left--;
     }
-    g_vs_cls_budget_left--;
     const bool region_scan = g_vs_region_budget_left > 0;
     if (region_scan) {
         g_vs_region_budget_left--;
@@ -1063,10 +1156,14 @@ MatrixMatch vs_classify(const float *m16)
 
 void vs_candidate(const float *m16, uint32_t reg_base, uint64_t frame, bool detail)
 {
-    if (g_exfil_frame == frame) {
+    if (g_ex_pending && frame == g_ex_frame) {
         exfil_collect(m16, reg_base);
     }
-    const MatrixMatch mm = vs_classify(m16);
+    // Register priority (S1d): low registers carry the camera/view constants —
+    // classify them even when the per-frame budget is exhausted (they are few
+    // and memo-deduped); high registers (per-object matrices) only get the
+    // leftover budget.
+    const MatrixMatch mm = vs_classify(m16, reg_base < VS_PRIOR_REGS);
     vs_count_result(mm, reg_base, frame);
 
     if (detail && g_vs_detail < VS_DETAIL_BURST) {

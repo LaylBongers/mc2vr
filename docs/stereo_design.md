@@ -237,7 +237,47 @@ spec (all behavior-preserving):
 6. Stability: 0 FATALs, no Reset; ~620 elements/frame flow through the ring
    in the boat scene (the world element is one of them).
 
-### S1c — follow-up run (camera-channel discrimination; IMPLEMENTED 2026-10-02, pending run)
+### S1c — follow-up run (camera-channel discrimination; run 3 done → results below)
+
+
+### S1c run results (2026-10-02, run 3 — new game, played through boat + gameplay; NO nudges reported)
+
+1. **Performance fix CONFIRMED**: steady 16.67ms average (full 60fps) through
+   gameplay; only the level-load spikes remain. The memo/budget machinery works.
+2. **Two of the three evidence channels were defeated by carrier bugs** (so
+   the "no nudges" result tests nothing yet):
+   - **Exfil: 12 frames selected, ZERO emitted.** The emit keyed on the live
+     view list, which has already moved on to the next frame by emit time —
+     dead code. (S1d fix: entries snapshotted at selection time; the block is
+     emitted unconditionally at the next pre-VM hook.)
+   - **Patch windows mistimed**: A/B fired ~30s in on the menu-background
+     phase (2 walked views i0/i1, head 0 — before the level load), and stage C
+     then retried for ~35s with ZERO matching ring records while the load
+     screen consumed the shared retry budget → "windows skipped": C/D/E never
+     ran, and A/B were over before gameplay began. (S1d fixes: window starts
+     gate on gameplay-like frames — menu submits 1–2 views, gameplay 15–85,
+     gate ≥ 4; per-stage retry budgets instead of one shared budget; on
+     window-C failure the raw ring records are dumped ("S1 crec:") so the
+     record layout can be re-derived offline.)
+3. **Classification starved**: ~24k float4s/frame exhaust the flat 256/frame
+   budget on per-object matrices before the camera registers get a look
+   (0 matches this run vs run 2's 4 transposed on c12). S1d: registers < c32
+   are classified with priority (memo-deduped, budget-exempt).
+4. Working as intended: full-ring element scan (6 world elements captured),
+   satellite detection (satMax 109, 137 satellite frames), gameplay view
+   lists (15–85 views/frame, distinct up to 96, head 15 in the wide phase),
+   bracket steady.
+
+### S1d — run 4 (audit fixes; IMPLEMENTED 2026-10-02, pending run)
+
+- Exfil snapshot+emit fix, gameplay-gated windows A–E with per-stage budgets,
+  "S1 crec:" ring-record dumps on window-C failure (offline layout analysis
+  via analyze_dumps.py, which flags ViewEntry pointers at any record offset),
+  register-priority VS classification, and per-window target lists in the
+  patch logs (which views are being nudged).
+- Everything else unchanged from S1c; the run procedure is identical: count
+  up to five ~5-frame nudges ~1s apart once gameplay starts.
+
 
 - **Performance fix** for the run-2 regression: content-hash memoization of
   classification results (512-entry direct-mapped, full 64-byte verify),

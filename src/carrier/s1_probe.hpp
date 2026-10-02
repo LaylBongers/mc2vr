@@ -14,7 +14,7 @@
 //        NO nudge -> neither channel feeds the draw camera. REGRESSION: the
 //        per-group classification (up to 3.6M/10s x ~800 memcmps) halved the
 //        frame rate -> S1c memoizes and budgets it.
-//   S1c (run 3, this): performance fix (content-hash memo + per-frame
+//   S1c (run 3): performance fix (content-hash memo + per-frame
 //        classification/region budgets); matched-tag logging (run 2's single
 //        real match — 4x transposed on c12 — had no tag logged); patch
 //        windows A-E across ALL walked views and ALL candidate camera

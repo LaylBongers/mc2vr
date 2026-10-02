@@ -71,8 +71,8 @@ def words(d, key="data"):
 S1_ECHO = re.compile(
     r"S1 (RESIDENCY|patch|raw:|vsmat:|vs:|vsreg:|vlist:|bracket: frame|"
     r"bracket: frames|xform: calls|xform\(SetTransform|vp: calls|"
-    r"vlist: frames|elem: |elemscan|vsmatch:|: frame-ctx|: RenderFrame entry|"
-    r": WARNING)"
+    r"vlist: frames|elem: |elemscan|vsmatch:|crec: dumping|: frame-ctx|"
+    r": RenderFrame entry|: WARNING)"
 )
 # S1b: "S1 elem @consPos+<elem> +0x<off>: hex" (3 x 32B lines per element).
 S1_ELEM_CONSPOS = re.compile(r"S1 elem @consPos\+(\d+) \+0x([0-9a-f]+): ([0-9a-f]+)")
@@ -262,6 +262,36 @@ def report_scan_elems(path):
         print(f"\n  scan-based world elements verified: {found}")
 
 
+# S1d: camera-ring record dumps (window C layout analysis).
+S1_CREC = re.compile(r"S1 crec rec(\d+) \+0x([0-9a-f]+): ([0-9a-f]+)")
+
+
+def report_crecs(path):
+    """Decode the camera-ring record dumps: print dwords and flag any value in
+    the view-table range (ViewEntry pointers) — identifies the real layout of
+    the {pos, serial, rot16, ViewEntry*, lodByte} records."""
+    recs = {}
+    for line in open(path, encoding="utf-8", errors="replace"):
+        m = S1_CREC.search(line)
+        if m:
+            r, off, b = int(m.group(1)), int(m.group(2), 16), bytes.fromhex(m.group(3))
+            recs.setdefault(r, bytearray(40))[off : off + len(b)] = b
+    if not recs:
+        return
+    print(f"\n#### camera-ring records (window C layout analysis, {len(recs)} dumped) ####")
+    VIEW_TABLE = 0x012865e0
+    VIEW_STRIDE = 0x810
+    for r in sorted(recs):
+        dwords = [struct.unpack_from("<I", recs[r], o)[0] for o in range(0, 40, 4)]
+        parts = []
+        for i, v in enumerate(dwords):
+            note = ""
+            if VIEW_TABLE <= v < VIEW_TABLE + 512 * VIEW_STRIDE:
+                note = f" <-ViewEntry i{(v - VIEW_TABLE) // VIEW_STRIDE}"
+            parts.append(f"+0x{i*4:02x}:{v:08x}{note}")
+        print(f"  rec{r}: " + "  ".join(parts))
+
+
 def report_s1(path):
     elems, old_elems, naive, xforms, vsmats, echoes = parse_s1(path)
     print("\n################ S1 evidence ################")
@@ -313,6 +343,7 @@ def report_s1(path):
     for frame, state, tag, raw in xforms:
         print_mat16(frame, "S1 xform", f"state={state} tag={tag}", raw)
     report_scan_elems(path)
+    report_crecs(path)
     report_exfil(path)
 
 
