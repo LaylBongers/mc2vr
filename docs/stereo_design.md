@@ -307,7 +307,56 @@ gameplay, exfil emitted, 0 FATALs), and the run 4 evidence is decisive:
    for satellite views; never patched), and the **ctx-block primary-
    subobject copies** (2 × 0x164 at block +0xEC — never dumped).
 
-### S1e — run 5 (remaining channels; IMPLEMENTED 2026-10-02, pending run)
+### S1e — run 5 (remaining channels; run 5 done → results below)
+
+
+### S1e run results (2026-10-02, run 5 — new game, full gameplay; NO nudges)
+
+All six windows A–F ran during gameplay (60fps-ish; C finally patched 25 ring
+records with the +0x18 layout, F patched 160 matrix targets) — **no nudge in
+any**. The per-view channel space is exhausted: every camera data field in
+the ViewEntry (m[0..m[8], pos7c4), the camera staging slot pos, and the
+walk-time ring-record pos has been patched post-walk with no visible effect.
+Nudge magnitude is NOT the issue: +4 world units ≈ 4 m (two character
+heights; logged camera positions are meter-scale) for ~5 frames, plus the
+restore/re-apply cycle freezes the patched field (a moving camera would also
+stutter).
+
+The extended exfil (9 matrices per view + ctx subobject copies) found **zero
+exact sub↔entry hits** and no close GPU↔entry matches — the visible camera is
+not a raw copy of anything dumped so far. `vsmatch` this run: only the early
+e0.m0T/e1.m0T (no satellite section performed, so views 70–74 never
+activated).
+
+**Open possibilities after run 5:** (a) the visible draw camera reads a
+source we have not touched — the ctx 0x680 block's non-copy fields, the LIVE
+primary subobjects (only their +0xEC copies were dumped), the entry's second
+pos copy +0x7ac, or a game-side camera object; or (b) something in the
+patch→consume chain is broken in a way the run cannot distinguish from (a)
+— run 5 had no way to prove a patch ever reached the GPU.
+
+### S1f — run 6 (positive control + last sources; IMPLEMENTED 2026-10-02, pending run)
+
+- **Per-window GPU proof (the "is the experiment wired" check)**: during
+  matrix windows A/E/F the carrier snapshots each target's full 16-float
+  matrix right after patching and compares EVERY GPU-bound group against the
+  expected set — a hit ("S1 vspatched:") proves the patched field reaches the
+  GPU even if the visible result is nil (offscreen view); silence proves the
+  consumer does not read the field at all. This disambiguates (a) vs (b)
+  above without depending on the visual signal.
+- **Window G (stage 6)**: scans the ctx 0x680 block AND the two live primary
+  subobjects (via the block's +0x74 pointers, the never-touched VM-visible
+  camera homes) for floats equal to any live view's camera position
+  component, and patches them — surgical, only current-camera-coordinate
+  holders. Per-frame rescan with restore-with-verify (the content moves).
+- **Window H (stage 7)**: entry pos7ac[0] — the OTHER M3 camera position
+  copy, never patched before.
+- **Exfil additions**: the live subobjects dumped per gameplay exfil frame
+  (as exsub2/exsub3 — the analyzer's window search covers them unchanged),
+  plus the full c0–c31 VS register cache at emit time ("S1 excache:") — the
+  offline dynamic-register report lists which low registers change across
+  exfil frames (camera candidates) vs static global constants.
+
 
 - **Window C fixed** (ViewEntry* at +0x18) — the top suspect finally testable.
 - **Window F added** (stage 5): patches the translation x of m[2]..m[8] on

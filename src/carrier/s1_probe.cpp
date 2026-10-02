@@ -64,8 +64,11 @@ constexpr uint32_t VIEW_LIST_MAX_HOPS = 300;
 constexpr uint32_t VIEW_IDX_MAX = 512;        // table is ~256 entries; slack
 constexpr uintptr_t VIEW_TABLE_END = VIEW_TABLE + (size_t)VIEW_IDX_MAX * VIEW_STRIDE;
 
-// Entry camera-position copy read by the walk's staging copy (0x0048ec3e).
+// Entry camera-position copies: +0x7c4 is read by the walk's staging copy
+// (0x0048ec3e); +0x7ac is the OTHER copy (M3 field map) — never patched
+// before S1f (window H).
 constexpr uint32_t VIEW_POS_OFF = 0x7c4;
+constexpr uint32_t VIEW_POS2_OFF = 0x7ac;
 
 // Frame-ctx layout (SubmitWorldPackets this+...): 0x680 block at +0xd2950
 // (S0), per-view camera staging slots at +0xc2110 (stride 0x30; content per
@@ -145,6 +148,9 @@ constexpr uint32_t PATCH_MAX_RECORDS = 128;
 // the level-load screen (which submits no views for ~35s).
 constexpr uint32_t PATCH_GAMEPLAY_MIN_VIEWS = 4;
 constexpr uint32_t PATCH_STAGE_TRIES = 600; // per-stage retries before advancing
+constexpr float PATCH_POS_EPS = 1e-3f;       // window G pos-match epsilon
+constexpr uint32_t PATCH_POS_TARGETS = 96;   // live-view pos components to scan for
+constexpr uint32_t PATCH_EXP_MAX = 160;     // patched-matrix expected set (GPU proof)
 // Camera/view constants live in LOW registers; classify those ahead of the
 // budget (run 3: ~24k float4s/frame starved a flat 256/frame budget on
 // per-object matrices before the camera registers got a look).
@@ -359,16 +365,33 @@ bool type_flags_mismatch_logged = false;
 enum class PatchState { Idle, Window, Gap, Done };
 PatchState g_pstate = PatchState::Idle;
 int g_pstage = 0; // 0=A m[1][3], 1=B staging pos, 2=C ring record pos,
-                  // 3=D entry pos7c4[0], 4=E m[0][12], 5=F m[2..m[8][12]
-const char *const PATCH_NAMES[6] = {
+                  // 3=D entry pos7c4[0], 4=E m[0][12], 5=F m[2..m[8][12],
+                  // 6=G ctx-block/live-subobject pos matches, 7=H pos7ac[0]
+const char *const PATCH_NAMES[8] = {
     "A entry m[1][3]", "B staging-slot pos[0]", "C camera-ring record pos[0]",
     "D entry pos7c4[0]", "E entry m[0][12]", "F entry m[2..m[8][12]",
+    "G ctx/live-sub pos matches", "H entry pos7ac[0]",
 };
 
 uint8_t *g_pt_addr[PATCH_MAX_TARGETS];
 float g_pt_saved[PATCH_MAX_TARGETS];
 uint32_t g_pt_idx[PATCH_MAX_TARGETS];
+uint32_t g_pt_k[PATCH_MAX_TARGETS]; // matrix index for stages 0/4/5 (GPU proof)
 uint32_t g_pt_n = 0;
+
+// GPU proof (S1f — the "is the experiment wired" check): during matrix patch
+// windows (A/E/F) every GPU-bound group is compared against the exact
+// PATCHED matrices; a hit proves the field reaches the GPU even when the
+// visible result is nil (offscreen view). Silence proves the consumer does
+// not read the field at all.
+float g_exp_mat[PATCH_EXP_MAX][16];
+uint8_t g_exp_hit_logged[PATCH_EXP_MAX];
+uint32_t g_exp_n = 0;
+
+// Window G: live-view camera position components to scan for in the ctx
+// block and the live primary subobjects.
+float g_pos_tgts[PATCH_POS_TARGETS];
+uint32_t g_pos_tgt_n = 0;
 uint32_t g_pleft = 0;
 uint32_t g_pgap = 0;
 uint32_t g_pstage_tries = 0;
@@ -752,7 +775,78 @@ bool window_c_scan()
         g_pt_addr[g_pt_n] = (uint8_t *)r;
         g_pt_saved[g_pt_n] = *(const float *)r;
         g_pt_idx[g_pt_n] = matched_idx;
+        g_pt_k[g_pt_n] = 0;
         g_pt_n++;
+    }
+    if (g_pt_n == 0) {
+        return false;
+    }
+    g_patch_any_live = true;
+    return true;
+}
+
+// Window G: scan a byte range for floats equal (within PATCH_POS_EPS) to any
+// live walked view's camera position component — the surgical way to find
+// wherever the current camera coordinates live inside the ctx block and the
+// live primary subobjects (the last VM-visible camera homes, untouched by
+// windows A-F).
+void g_scan_range(const uint8_t *base, uint32_t size)
+{
+    if (!base || (uintptr_t)base < 0x00100000 || (uintptr_t)base >= 0x80000000) {
+        return;
+    }
+    for (uint32_t off = 0; off + 4 <= size && g_pt_n < PATCH_MAX_TARGETS; off += 4) {
+        const float v = *(const float *)(base + off);
+        if (v == 0.0f) {
+            continue;
+        }
+        for (uint32_t i = 0; i < g_pos_tgt_n; i++) {
+            const float d = v - g_pos_tgts[i];
+            if (d < PATCH_POS_EPS && d > -PATCH_POS_EPS) {
+                g_pt_addr[g_pt_n] = (uint8_t *)(base + off);
+                g_pt_saved[g_pt_n] = v;
+                g_pt_idx[g_pt_n] = 0xffffffffu; // range target, not a view
+                g_pt_k[g_pt_n] = 0;
+                g_pt_n++;
+                break;
+            }
+        }
+    }
+}
+
+bool window_g_scan()
+{
+    if (!g_ctx_valid) {
+        return false;
+    }
+    g_pt_n = 0;
+    g_pos_tgt_n = 0;
+    // Collect live views' pos7c4 components.
+    for (uint32_t i = 0; i < g_list_n && g_pos_tgt_n + 3 <= PATCH_POS_TARGETS; i++) {
+        const uint32_t idx = g_list[i].idx;
+        if (idx >= VIEW_IDX_MAX) {
+            continue;
+        }
+        const uint8_t *entry = (const uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
+        if (!view_is_live(entry)) {
+            continue;
+        }
+        const float *pos = (const float *)(entry + VIEW_POS_OFF);
+        if (pos[0] == 0.0f && pos[1] == 0.0f && pos[2] == 0.0f) {
+            continue;
+        }
+        g_pos_tgts[g_pos_tgt_n++] = pos[0];
+        g_pos_tgts[g_pos_tgt_n++] = pos[1];
+        g_pos_tgts[g_pos_tgt_n++] = pos[2];
+    }
+    if (g_pos_tgt_n == 0) {
+        return false;
+    }
+    const uint8_t *block = (const uint8_t *)(g_frame_ctx + CTX_BLOCK_OFF);
+    g_scan_range(block, CTX_BLOCK_SIZE); // incl. the +0xEC subobject copies
+    for (uint32_t s = 0; s < 2; s++) {
+        g_scan_range(*(const uint8_t *const *)(block + CTX_SUBPTR_OFF + s * 4),
+                     CTX_SUBOBJ_SCAN); // the LIVE primary subobjects
     }
     if (g_pt_n == 0) {
         return false;
@@ -772,6 +866,9 @@ bool build_patch_targets(uint64_t frame)
     }
     if (g_pstage == 2) {
         return window_c_scan(); // C targets the ring, not per-view fields
+    }
+    if (g_pstage == 6) {
+        return window_g_scan(); // G targets ctx-block/live-subobject pos floats
     }
     for (uint32_t i = 0; i < g_list_n && g_pt_n < PATCH_MAX_TARGETS; i++) {
         const uint32_t idx = g_list[i].idx;
@@ -800,6 +897,12 @@ bool build_patch_targets(uint64_t frame)
             }
             addr = (uint8_t *)(entry + VIEW_POS_OFF);
             break;
+        case 7: // H: entry pos7ac[0] — the OTHER M3 camera position copy
+            if (!live) {
+                continue;
+            }
+            addr = (uint8_t *)(entry + VIEW_POS2_OFF);
+            break;
         case 4: // E: entry m[0][12]
             if (!live) {
                 continue;
@@ -821,6 +924,7 @@ bool build_patch_targets(uint64_t frame)
                 g_pt_addr[g_pt_n] = a;
                 g_pt_saved[g_pt_n] = *(const float *)a;
                 g_pt_idx[g_pt_n] = idx;
+                g_pt_k[g_pt_n] = k;
                 if (live) {
                     g_patch_any_live = true;
                 }
@@ -834,6 +938,7 @@ bool build_patch_targets(uint64_t frame)
         g_pt_addr[g_pt_n] = addr;
         g_pt_saved[g_pt_n] = *(const float *)addr;
         g_pt_idx[g_pt_n] = idx;
+        g_pt_k[g_pt_n] = (g_pstage == 0) ? 1 : (g_pstage == 4 ? 0 : 0);
         if (live) {
             g_patch_any_live = true;
         }
@@ -845,9 +950,10 @@ bool build_patch_targets(uint64_t frame)
 void patch_restore_targets()
 {
     for (uint32_t i = 0; i < g_pt_n; i++) {
-        if (g_pstage == 2) {
-            // Ring records keep advancing: only restore a record that still
-            // holds OUR patch (else the slot was reused for fresh data).
+        if (g_pstage == 2 || g_pstage == 6) {
+            // Ring records / ctx-subobject floats keep getting rewritten:
+            // only restore a slot that still holds OUR patch (else it was
+            // reused for fresh data).
             if (*(const float *)g_pt_addr[i] == g_pt_saved[i] + PATCH_DELTA) {
                 *(float *)g_pt_addr[i] = g_pt_saved[i];
             }
@@ -864,6 +970,46 @@ void patch_apply_targets()
         // fields between frames) and patch relative to it.
         g_pt_saved[i] = *(const float *)g_pt_addr[i];
         *(float *)g_pt_addr[i] = g_pt_saved[i] + PATCH_DELTA;
+    }
+    // GPU proof set (stages A/E/F): the exact patched matrices, read back
+    // after patching. Any GPU upload equal to one of these proves the
+    // channel reaches the GPU (S1f "is the experiment wired" check).
+    g_exp_n = 0;
+    if (g_pstage == 0 || g_pstage == 4 || g_pstage == 5) {
+        for (uint32_t i = 0; i < g_pt_n && g_exp_n < PATCH_EXP_MAX; i++) {
+            if (g_pt_idx[i] == 0xffffffffu) {
+                continue; // range targets (window G) have no matrix
+            }
+            const uint8_t *mat = g_pt_addr[i] - 12 * 4; // matrix base (target is [12])
+            memcpy(g_exp_mat[g_exp_n], mat, 64);
+            g_exp_mat[g_exp_n][12] += PATCH_DELTA;
+            g_exp_hit_logged[g_exp_n] = 0;
+            g_exp_n++;
+        }
+    }
+}
+
+// Compare a GPU-bound group against the expected patched matrices.
+uint32_t g_vspatched_logs = 0; // global one-shot cap (S1f)
+
+void check_patched_gpu(const float *m16, uint32_t reg_base, uint64_t frame)
+{
+    if (g_vspatched_logs >= 12) {
+        return;
+    }
+    for (uint32_t i = 0; i < g_exp_n; i++) {
+        if (memcmp(m16, g_exp_mat[i], 64) == 0 || matrix_eq_T(m16, g_exp_mat[i])) {
+            if (!g_exp_hit_logged[i]) {
+                g_exp_hit_logged[i] = 1;
+                g_vspatched_logs++;
+                MC2VR_LOG("S1 vspatched: frame=%llu reg=c%u window=%s view=i%u "
+                          "m%u — the PATCHED value reaches the GPU%s",
+                          (unsigned long long)frame, reg_base, PATCH_NAMES[g_pstage],
+                          g_pt_idx[i], g_pt_k[i],
+                          matrix_eq_T(m16, g_exp_mat[i]) ? " (transposed)" : "");
+            }
+            return;
+        }
     }
 }
 
@@ -932,14 +1078,16 @@ void run_patch(uint64_t frame)
 
     case PatchState::Window:
         patch_restore_targets();
-        if (g_pstage == 2) {
-            // Re-scan each frame: the ring records move as the walk republishes.
-            if (!window_c_scan()) {
-                MC2VR_LOG("S1 patch C: no matching ring records this frame — record "
-                          "layout suspect or view list empty; ending window");
+        if (g_pstage == 2 || g_pstage == 6) {
+            // Re-scan each frame: the ring records / ctx pos floats move as
+            // the walk republishes.
+            if (!build_patch_targets(frame)) {
+                MC2VR_LOG("S1 patch %s: no targets this frame; ending window",
+                          PATCH_NAMES[g_pstage]);
                 g_pstate = PatchState::Gap;
                 g_pgap = PATCH_GAP;
                 g_pt_n = 0;
+                g_exp_n = 0;
                 return;
             }
         }
@@ -950,6 +1098,7 @@ void run_patch(uint64_t frame)
             g_pstate = PatchState::Gap;
             g_pgap = PATCH_GAP;
             g_pt_n = 0;
+            g_exp_n = 0;
             return;
         }
         patch_apply_targets();
@@ -960,9 +1109,9 @@ void run_patch(uint64_t frame)
             return;
         }
         g_pstage++;
-        if (g_pstage > 5) {
+        if (g_pstage > 7) {
             g_pstate = PatchState::Done;
-            MC2VR_LOG("S1 patch: all windows A-F complete — residency_seen=%u",
+            MC2VR_LOG("S1 patch: all windows A-H complete — residency_seen=%u",
                       g_residency_seen ? 1u : 0u);
             return;
         }
@@ -980,7 +1129,7 @@ void run_patch(uint64_t frame)
         if (++g_pstage_tries > PATCH_STAGE_TRIES) {
             g_pstage_tries = 0;
             g_pstage++;
-            if (g_pstage > 5) {
+            if (g_pstage > 7) {
                 g_pstate = PatchState::Done;
                 MC2VR_LOG("S1 patch: all stages starved — windows skipped");
                 return;
@@ -1056,6 +1205,47 @@ void exfil_emit()
                       (double)*(const float *)&g_ex_fov[3],
                       (double)*(const float *)&g_ex_fov[4],
                       (double)*(const float *)&g_ex_fov[5]);
+        }
+    }
+    // S1f: the LIVE primary subobjects (via the block's resolved pointers at
+    // +0x74) — emitted as exsub2/exsub3 so the analyzer's existing window
+    // search covers them. Gameplay frames only (the first EXFIL_EARLY frames
+    // are the menu-background phase).
+    if (g_ctx_valid && g_exfil_done > EXFIL_EARLY) {
+        const uint8_t *block0 = (const uint8_t *)(g_frame_ctx + CTX_BLOCK_OFF);
+        for (uint32_t s = 0; s < 2; s++) {
+            const uint8_t *live =
+                *(const uint8_t *const *)(block0 + CTX_SUBPTR_OFF + s * 4);
+            if (!live || (uintptr_t)live < 0x00100000 || (uintptr_t)live >= 0x80000000) {
+                continue;
+            }
+            for (uint32_t off = 0; off < CTX_SUBOBJ_SCAN; off += 32) {
+                const uint32_t n = CTX_SUBOBJ_SCAN - off < 32 ? CTX_SUBOBJ_SCAN - off : 32;
+                char lhex[96];
+                char *w = lhex;
+                for (uint32_t j = 0; j < n; j++) {
+                    *w++ = "0123456789abcdef"[live[off + j] >> 4];
+                    *w++ = "0123456789abcdef"[live[off + j] & 0xf];
+                }
+                *w = '\0';
+                MC2VR_LOG("S1 exsub%u +0x%03x: %s", s + 2, off, lhex);
+            }
+        }
+        // The full low-register VS cache at emit time: offline diffing across
+        // exfil frames finds the per-frame dynamic registers (the camera
+        // candidates) by elimination — global constants are static.
+        for (uint32_t r = 0; r < VS_PRIOR_REGS; r++) {
+            if (!g_vs_valid[r]) {
+                continue;
+            }
+            char chex[40];
+            char *w = chex;
+            for (uint32_t j = 0; j < 16; j++) {
+                *w++ = "0123456789abcdef"[((const uint8_t *)g_vs_rows[r])[j] >> 4];
+                *w++ = "0123456789abcdef"[((const uint8_t *)g_vs_rows[r])[j] & 0xf];
+            }
+            *w = '\0';
+            MC2VR_LOG("S1 excache: c%u=%s", r, chex);
         }
     }
     // S1e: the ctx-block primary-subobject copies (what the VM consumer
@@ -1252,6 +1442,9 @@ void vs_candidate(const float *m16, uint32_t reg_base, uint64_t frame, bool deta
     // leftover budget.
     const MatrixMatch mm = vs_classify(m16, reg_base < VS_PRIOR_REGS);
     vs_count_result(mm, reg_base, frame);
+    if (g_pstate == PatchState::Window && (g_pstage == 0 || g_pstage == 4 || g_pstage == 5)) {
+        check_patched_gpu(m16, reg_base, frame); // S1f GPU proof
+    }
 
     if (detail && g_vs_detail < VS_DETAIL_BURST) {
         g_vs_detail++;

@@ -71,7 +71,7 @@ def words(d, key="data"):
 S1_ECHO = re.compile(
     r"S1 (RESIDENCY|patch|raw:|vsmat:|vs:|vsreg:|vlist:|bracket: frame|"
     r"bracket: frames|xform: calls|xform\(SetTransform|vp: calls|"
-    r"vlist: frames|elem: |elemscan|vsmatch:|crec: dumping|: frame-ctx|"
+    r"vlist: frames|elem: |elemscan|vsmatch:|vspatched:|crec: dumping|: frame-ctx|"
     r": RenderFrame entry|: WARNING)"
 )
 # S1b: "S1 elem @consPos+<elem> +0x<off>: hex" (3 x 32B lines per element).
@@ -235,24 +235,27 @@ def report_exfil(path):
         # plus transposes, and sliding 16-float windows of the subobject
         # copies (the VM consumer receives them inside the 0x680 element —
         # a derived main-camera source would match a sub window).
+        def _nonzero(b):
+            return b is not None and any(b)
+
         candidates = []
         for idx, d in sorted(entries.items()):
             for k, mat in sorted(d.items()):
-                if mat is None:
-                    continue
+                if not _nonzero(mat):
+                    continue  # all-zero template matrices match everything
                 candidates.append((f"i{idx}.m{k}", mat))
                 candidates.append((f"i{idx}.m{k}T", _transpose(mat)))
         for s, buf in sorted(subs.items()):
             for off in range(0, max(1, len(buf) - 63), 4):
                 win = bytes(buf[off : off + 64])
-                if len(win) < 64:
-                    break
+                if len(win) < 64 or not _nonzero(win):
+                    continue
                 candidates.append((f"sub{s}+0x{off:03x}", win))
         # Cross-search: which sub windows equal an entry matrix?
         for s, buf in sorted(subs.items()):
             for idx, d in sorted(entries.items()):
                 for k, mat in d.items():
-                    if mat is None:
+                    if not _nonzero(mat):
                         continue
                     for off in range(0, max(1, len(buf) - 63), 4):
                         win = bytes(buf[off : off + 64])
@@ -322,6 +325,40 @@ def report_crecs(path):
         print(f"  rec{r}: " + "  ".join(parts))
 
 
+# S1f: low-register VS cache dumps per exfil frame — offline dynamic-register
+# analysis: registers whose content changes between exfil frames are the
+# per-frame camera candidates; static ones are global constants.
+S1_EXCACHE = re.compile(r"S1 excache: c(\d+)=([0-9a-f]+)")
+
+
+def report_excache(path):
+    frames = []  # list of {reg: bytes16}, one per exfil frame
+    cur = None
+    for line in open(path, encoding="utf-8", errors="replace"):
+        if "S1 exfil: frame=" in line:
+            cur = {}
+            frames.append(cur)
+            continue
+        m = S1_EXCACHE.search(line)
+        if m and cur is not None:
+            cur[int(m.group(1))] = bytes.fromhex(m.group(2))
+    frames = [f for f in frames if f]
+    if len(frames) < 2:
+        return
+    print(f"\n#### VS low-register dynamics across {len(frames)} exfil frames ####")
+    regs = sorted({r for f in frames for r in f})
+    for r in regs:
+        vals = [f.get(r) for f in frames]
+        n = sum(1 for v in vals if v is not None)
+        uniq = len(set(v for v in vals if v is not None))
+        if uniq == 0:
+            continue
+        t = struct.unpack("<4f", next(v for v in vals if v is not None))
+        status = ("STATIC" if uniq == 1 else f"dynamic x{uniq}")
+        print(f"  c{r}: {status} (seen in {n}/{len(frames)} frames) "
+              f"first=[{', '.join(f'{v:.4g}' for v in t)}]")
+
+
 def report_s1(path):
     elems, old_elems, naive, xforms, vsmats, echoes = parse_s1(path)
     print("\n################ S1 evidence ################")
@@ -374,6 +411,7 @@ def report_s1(path):
         print_mat16(frame, "S1 xform", f"state={state} tag={tag}", raw)
     report_scan_elems(path)
     report_crecs(path)
+    report_excache(path)
     report_exfil(path)
 
 
