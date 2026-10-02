@@ -48,26 +48,6 @@ def parse(path):
                 "data": bytearray(VIEW_STRIDE),
                 "objdata": bytearray(OBJ_LEN),
             }
-            cur = {
-                "refresh": bool(m.group(1)),
-                "idx": int(m.group(2)),
-                "type": int(m.group(3)),
-                "obj": int(m.group(5), 16),
-                "t3": int(m.group(6), 16),
-                "state": m.group(7),
-                "data": bytearray(VIEW_STRIDE),
-                "objdata": bytearray(OBJ_LEN),
-            }
-            cur = {
-                "refresh": bool(m.group(1)),
-                "idx": int(m.group(2)),
-                "type": int(m.group(3)),
-                "obj": int(m.group(5), 16),
-                "t3": int(m.group(6), 16),
-                "state": m.group(7),
-                "data": bytearray(VIEW_STRIDE),
-                "objdata": bytearray(OBJ_LEN),
-            }
             dumps.append(cur)
             continue
         m = re.search(r"M3 entry \+0x([0-9a-f]+): ([0-9a-f]+)", line)
