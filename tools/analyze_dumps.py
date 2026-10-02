@@ -66,115 +66,158 @@ def words(d, key="data"):
     return [struct.unpack_from("<I", d[key], o)[0] for o in range(0, len(d[key]), 4)]
 
 
-# ---- S1 analysis -----------------------------------------------------------
+# ---- S1/S1b analysis ---------------------------------------------------------
 
 S1_ECHO = re.compile(
-    r"S1 (RESIDENCY|patch:|vlist:|bracket: frame|xform: calls|vp: calls|"
-    r"vlist: frames|elem: ca=|: frame-ctx|: RenderFrame entry|: WARNING|"
-    r"elem @docConsPos \(3)"
+    r"S1 (RESIDENCY|patch|raw:|vsmat:|vs:|vsreg:|vlist:|bracket: frame|"
+    r"bracket: frames|xform: calls|xform\(SetTransform|vp: calls|"
+    r"vlist: frames|elem: |: frame-ctx|: RenderFrame entry|: WARNING)"
 )
+# S1b: "S1 elem @consPos+<elem> +0x<off>: hex" (3 x 32B lines per element).
+S1_ELEM_CONSPOS = re.compile(r"S1 elem @consPos\+(\d+) \+0x([0-9a-f]+): ([0-9a-f]+)")
+# S1b: VS-constant matrix classification detail.
+S1_VSMAT = re.compile(r"S1 vsmat: frame=(\d+) reg=c(\d+) tag=(\S+) m=([0-9a-f]{128})")
+# S1 (first run) formats, kept so old logs still parse.
 S1_ELEM_LINE = re.compile(r"S1 elem @docConsPos \+0x([0-9a-f]+): ([0-9a-f]+)")
 S1_ELEM_NAIVE = re.compile(
-    r"S1 elem @(naiveCons|naiveProd|docConsPos) \+0x[0-9a-f]+: "
+    r"S1 elem @(naiveCons|naiveProd) \+0x[0-9a-f]+: "
     r"((?:[0-9a-f]{2}){8} (?:[0-9a-f]{2}){8} (?:[0-9a-f]{2}){8} "
     r"(?:[0-9a-f]{2}){8} (?:[0-9a-f]{2}){8} (?:[0-9a-f]{2}){8} "
     r"(?:[0-9a-f]{2}){8} (?:[0-9a-f]{2}){8})$"
 )
-S1_ELEM_HDR = re.compile(r"S1 elem: ca=.*")
 S1_XFORM = re.compile(r"S1 xform: frame=(\d+) state=(\w+) tag=(\S+) m=([0-9a-f]{128})")
 
 
+def _walk_dword_pairs(buf):
+    """Yield (offset, size, ptr) for {u32 size, ptr} descriptor pairs found in a
+    96-byte queue element (S0 layout: pairs start at +0x1c; S1 runtime capture
+    showed other producers use the same {size, ptr} scheme with other sizes)."""
+    out = []
+    for i in range(1, 22):
+        size = struct.unpack_from("<I", buf, i * 4)[0]
+        ptr = struct.unpack_from("<I", buf, (i + 1) * 4)[0]
+        if 0x4 <= size <= 0x400000 and 0x00100000 <= ptr < 0x01a48000:
+            out.append((i * 4, size, ptr))
+    return out
+
+
+def decode_elem96(tag, buf):
+    """Decode and verify one 96-byte ring element; returns True if it is a
+    SubmitWorldPackets world-view element ({0x30,0x810,0x680} pairs)."""
+    if len(buf) < 96:
+        print(f"\n=== S1 element @ {tag}: incomplete capture ({len(buf)}B) ===")
+        return False
+    dwords = [struct.unpack_from("<I", buf, o)[0] for o in range(0, 96, 4)]
+    is_world = dwords[7] == 0x30 and dwords[9] == 0x810 and dwords[11] == 0x680
+    print(f"\n=== S1 element @ {tag}: "
+          f"{'WORLD-VIEW ELEMENT VERIFIED (30/810/680)' if is_world else 'other producer'} ===")
+    print(f"  +0x00 hdr: {dwords[0]:#010x} {dwords[1]:#010x}")
+    print(f"  +0x08 cursors: {' '.join(f'{dwords[i]:#x}' for i in range(2, 7))}")
+    pairs = _walk_dword_pairs(buf)
+    if pairs:
+        for off, size, ptr in pairs:
+            label = {0x30: "camera staging", 0x810: "ViewEntry*", 0x680: "frame-ctx"}.get(size)
+            print(f"  +0x{off:02x} pair {{{size:#x}, {ptr:#010x}}}"
+                  f"{f'  ({label})' if label else ''}")
+    else:
+        print(f"  +0x1c..: {' '.join(f'{dwords[i]:#x}' for i in range(7, 24))}")
+    return is_world
+
+
+def print_mat16(frame, where, tag, raw):
+    floats = struct.unpack("<16f", raw)
+    print(f"\n=== {where} frame={frame} {tag} ===")
+    for r in range(4):
+        print("  [" + " ".join(f"{floats[r * 4 + c]:12.4g}" for c in range(4)) + "]")
+
+
 def parse_s1(path):
-    """Collect S1 evidence from the log."""
-    elems = {}  # tag -> {off: bytes}
-    naive = {}  # tag -> bytes(32)
-    xforms = []
-    echoes = []
+    """Collect S1/S1b evidence from the log."""
+    elems = {}   # elem index -> {off: bytes}   (S1b @consPos)
+    old_elems = {}  # off -> bytes              (S1 @docConsPos)
+    naive = {}   # tag -> bytes(32)             (S1 @naiveCons/naiveProd)
+    xforms, vsmats, echoes = [], [], []
     for line in open(path, encoding="utf-8", errors="replace"):
         line = line.rstrip("\n")
+        m = S1_ELEM_CONSPOS.search(line)
+        if m:
+            elems.setdefault(int(m.group(1)), {})[int(m.group(2), 16)] = \
+                bytes.fromhex(m.group(3))
+            continue
         m = S1_ELEM_LINE.search(line)
         if m:
-            elems.setdefault("docConsPos", {})[int(m.group(1), 16)] = bytes.fromhex(
-                m.group(2)
-            )
+            old_elems.setdefault("docConsPos", {})[int(m.group(1), 16)] = \
+                bytes.fromhex(m.group(2))
             continue
         m = S1_ELEM_NAIVE.search(line)
         if m:
             naive[m.group(1)] = bytes.fromhex(m.group(2).replace(" ", ""))
             continue
-        if S1_ELEM_HDR.search(line):
-            echoes.append(line)
+        m = S1_VSMAT.search(line)
+        if m:
+            vsmats.append((int(m.group(1)), int(m.group(2)), m.group(3),
+                           bytes.fromhex(m.group(4))))
             continue
         m = S1_XFORM.search(line)
         if m:
-            xforms.append(
-                (int(m.group(1)), m.group(2), m.group(3), bytes.fromhex(m.group(4)))
-            )
+            xforms.append((int(m.group(1)), m.group(2), m.group(3),
+                           bytes.fromhex(m.group(4))))
             continue
-        m = S1_ECHO.search(line)
-        if m:
+        if S1_ECHO.search(line):
             echoes.append(line)
-    return elems, naive, xforms, echoes
-
-
-def decode_elem(tag, data, off_base=0):
-    """Verify the expected 96-byte element layout and print it."""
-    buf = bytearray(96)
-    n = 0
-    for off, b in data.items():
-        rel = off - off_base
-        if 0 <= rel < 96:
-            buf[rel : rel + len(b)] = b
-            n += len(b)
-    if n < 96:
-        return False  # element lines not captured at this offset — skip
-    dwords = [struct.unpack_from("<I", buf, o)[0] for o in range(0, 96, 4)]
-    ok = dwords[7] == 0x30 and dwords[9] == 0x810 and dwords[11] == 0x680
-    print(
-        f"\n=== S1 element @ {tag}: layout "
-        f"{'VERIFIED (30/810/680 pairs)' if ok else 'NOT as expected'} ==="
-    )
-    print(f"  +0x00 hdr: {dwords[0]:#010x} {dwords[1]:#010x}")
-    print(f"  +0x0c cursors: {' '.join(f'{dwords[i]:#x}' for i in range(3, 7))}")
-    print(f"  +0x1c pair0 {{30, ptr {dwords[8]:#010x}}}  (camera staging slot)")
-    print(f"  +0x24 pair1 {{810, ptr {dwords[10]:#010x}}} (ViewEntry*)")
-    print(f"  +0x2c pair2 {{680, ptr {dwords[12]:#010x}}} (frame-ctx block)")
-    print(f"  +0x34 tail: {' '.join(f'{dwords[i]:#x}' for i in range(13, 24))}")
-    return ok
+    return elems, old_elems, naive, xforms, vsmats, echoes
 
 
 def report_s1(path):
-    elems, naive, xforms, echoes = parse_s1(path)
+    elems, old_elems, naive, xforms, vsmats, echoes = parse_s1(path)
     print("\n################ S1 evidence ################")
-    for line in echoes[:60]:
+    for line in echoes[:80]:
         print("  " + line)
-    if len(echoes) > 60:
-        print(f"  ... ({len(echoes) - 60} more echoed lines)")
-    if elems:
-        for off_base in (0, 96, 192):
-            decode_elem(
-                f"docConsPos elem@+0x{off_base:x}", elems["docConsPos"], off_base
-            )
+    if len(echoes) > 80:
+        print(f"  ... ({len(echoes) - 80} more echoed lines)")
+
+    world_found = 0
+    for idx in sorted(elems):
+        data = elems[idx]
+        buf = bytearray(96)
+        n = 0
+        for off, b in data.items():
+            if 0 <= off < 96:
+                buf[off : off + len(b)] = b
+                n += len(b)
+        if n < 96:
+            continue  # element lines not captured — skip
+        if decode_elem96(f"consPos+{idx}", buf):
+            world_found += 1
+    if elems and not world_found:
+        print("\n  NOTE: no world-view element ({0x30,0x810,0x680}) in this "
+              "run's element dumps")
+
+    for off_base in (0, 96, 192):
+        if "docConsPos" in old_elems:
+            data = old_elems["docConsPos"]
+            buf = bytearray(96)
+            n = 0
+            for off, b in data.items():
+                rel = off - off_base
+                if 0 <= rel < 96:
+                    buf[rel : rel + len(b)] = b
+                    n += len(b)
+            if n >= 96:
+                decode_elem96(f"docConsPos elem@+0x{off_base:x}", buf)
+
     for tag, b in naive.items():
         dwords = [struct.unpack_from("<I", b, o)[0] for o in range(0, 32, 4)]
-        ok = (
-            len(b) >= 52
-            and dwords[7] == 0x30
-            and dwords[9] == 0x810
+        ok = len(b) >= 52 and dwords[7] == 0x30 and dwords[9] == 0x810 \
             and dwords[11] == 0x680
-        )
-        print(
-            f"\n=== S1 element @ {tag} (first 32B): "
-            f"{'LOOKS VALID' if ok else 'not an element header'} ==="
-        )
+        print(f"\n=== S1 element @ {tag} (first 32B): "
+              f"{'LOOKS VALID' if ok else 'not an element header'} ===")
         print("  " + " ".join(f"{v:08x}" for v in dwords))
+
+    for frame, reg, tag, raw in vsmats:
+        print_mat16(frame, f"S1 vsmat reg=c{reg}", f"tag={tag}", raw)
     for frame, state, tag, raw in xforms:
-        floats = struct.unpack("<16f", raw)
-        print(f"\n=== S1 xform frame={frame} state={state} tag={tag} ===")
-        for r in range(4):
-            print(
-                "  [" + " ".join(f"{floats[r * 4 + c]:12.4g}" for c in range(4)) + "]"
-            )
+        print_mat16(frame, "S1 xform", f"state={state} tag={tag}", raw)
 
 
 # ---- M3 analysis ------------------------------------------------------------

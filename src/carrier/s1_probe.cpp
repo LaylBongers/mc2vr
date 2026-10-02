@@ -1,14 +1,13 @@
-// S1 implementation — see s1_probe.hpp for the design map. Per-address facts
-// come from the Ghidra plate comments (SubmitWorldPackets S0 analysis); the
-// decision tree that consumes the logged evidence is docs/stereo_design.md
-// §S1 "Operational notes".
+// S1b implementation — see s1_probe.hpp for the design map and the S1 run
+// results that shaped it. Per-address facts come from the Ghidra plate
+// comments (SubmitWorldPackets S0 analysis); the decision tree that consumes
+// the logged evidence is docs/stereo_design.md §S1 + §"S1 run results".
 //
-// Read-safety discipline: every live-pointer deref here is either bounded
-// to a known image range (view-table walk: fixed base, idx < 512, hop cap)
-// or structurally validated before use (frame-ctx pointer: its 0x680 block
-// must contain &g_RenderQueue at +0x60 and g_ViewTable at +0xC4 — the same
-// anchors the S0 static analysis found). Proven-mechanism rule unchanged:
-// plaintext reads only, no VM-region access.
+// Read-safety discipline: every live-pointer deref here is either bounded to
+// a known image range (view-table walk: fixed base, idx < 512, hop cap) or
+// structurally validated before use (frame-ctx pointer: its 0x680 block must
+// contain &g_RenderQueue at +0x60 and g_ViewTable at +0xC4). Proven-mechanism
+// rule unchanged: plaintext reads only, no VM-region access.
 
 #include "s1_probe.hpp"
 
@@ -35,18 +34,23 @@ constexpr uint32_t VIEW_STRIDE = 0x810;
 constexpr uint32_t VIEW_MATRIX_OFF = 0x20;    // nine 4x4 matrices, stride 0x40
 constexpr uint32_t VIEW_MATRIX_STRIDE = 0x40;
 constexpr uint32_t VIEW_MATRIX_COUNT = 9;
-constexpr uint32_t VIEW_M1_OFF = 0x60;         // m[1] worldToView (negated pos)
+constexpr uint32_t VIEW_M0_OFF = 0x20;        // m[0] viewToWorld (camera pos)
+constexpr uint32_t VIEW_M1_OFF = 0x60;        // m[1] worldToView (negated pos)
 constexpr uint32_t VIEW_LINK_OFF = 0x04;      // next index; negative terminates
 constexpr uint32_t VIEW_LIST_MAX_HOPS = 300;
 constexpr uint32_t VIEW_IDX_MAX = 512;        // table is ~256 entries; slack
 
-// Frame-ctx 0x680 block (SubmitWorldPackets this+0xd2950).
+// Frame-ctx layout (SubmitWorldPackets this+...): 0x680 block at +0xd2950
+// (S0), per-view camera staging slots at +0xc2110 (stride 0x30; content per
+// walk: pos3 at +0x00, serial +0x0c, rot16 +0x10, lodByte +0x20).
 constexpr uint32_t CTX_BLOCK_OFF = 0xd2950;
 constexpr uint32_t CTX_BLOCK_SIZE = 0x680;
 constexpr uint32_t CTX_QUEUEPTR_OFF = 0x60;  // &g_RenderQueue (also +0x6c/+0x9c/+0xa8)
 constexpr uint32_t CTX_TABLEPTR_OFF = 0xC4; // g_ViewTable
 constexpr uint32_t CTX_SUBPTR_OFF = 0x74;    // resolved primary-subobject ptrs[2]
 constexpr uint32_t CTX_SUBOBJ_SCAN = 0x3a0; // live primary-subobject size
+constexpr uint32_t CTX_STAGING_OFF = 0xc2110;
+constexpr uint32_t STAGING_STRIDE = 0x30;
 
 constexpr uint32_t D3DTS_VIEW = 2;
 constexpr uint32_t D3DTS_PROJECTION = 3;
@@ -55,42 +59,54 @@ constexpr uint32_t D3DTS_PROJECTION = 3;
 
 constexpr uint32_t FRAME_SAMPLES = 8;      // per-frame bracket ring (frame % 8)
 constexpr uint32_t BRACKET_BURST = 3;      // one-shot full bracket lines
-constexpr uint32_t ELEM_DUMP_FRAMES = 3;   // ring-element dumps, process lifetime
-constexpr uint32_t FRAME_LIST_MAX = 64;    // per-frame (idx,type,flags) recs
+constexpr uint32_t RAW_SERIES_MAX = 60;     // one-shot raw-counter lines (world-view frames)
+constexpr uint32_t ELEM_DUMP_FRAMES = 3;    // ring-element dumps (frames with world views)
+constexpr uint32_t ELEM_DUMP_FORWARD = 12;  // elements dumped ahead of the consumer position
+constexpr uint32_t FRAME_LIST_MAX = 64;     // per-frame (idx,type,flags) recs (list line only)
 constexpr uint32_t LIST_LOG_ENTRIES = 40;   // entries in a full-list log line
 constexpr uint32_t SIG_SLOTS = 6;          // distinct view-list signatures / window
 constexpr uint32_t RECT_SLOTS = 16;        // distinct viewport rects / window
 constexpr uint32_t VP_BURST = 3;           // one-shot full viewport lines
-constexpr uint32_t XFORM_DETAIL_BURST = 6; // one-shot xform matrix hex lines
 constexpr uint32_t SATELLITE_MIN_VIEWS = 100;
-constexpr uint32_t SATELLITE_LOG_MAX = 2;  // full satellite lists / window
+constexpr uint32_t SATELLITE_LOG_MAX = 2;   // full satellite lists / window
+constexpr uint32_t VS_ROWS = 256;           // VS constant float4 cache (vs_2_0 max)
+constexpr uint32_t VS_BULK_MAX_GROUPS = 64; // per-call cap on bulk 4-float-aligned classification
+constexpr uint32_t VS_DETAIL_BURST = 8;     // one-shot vsmat detail lines
 
-// S1.3 residency patch: m[1][3] (translation x) of the head view.
+// S1.3 residency patch v2: two spaced windows on a LIVE head view
+// (nonzero m[0] translation — the first run patched an all-zero template
+// view 0 and proved nothing).
 constexpr float PATCH_DELTA = 4.0f;
-constexpr uint32_t PATCH_FRAMES = 5;        // ~5 frames nudged: enough to survive
-                                           // one odd frame, short exposure of
-                                           // the patched field to game logic
-constexpr uint32_t PATCH_TRY_MAX = 3600;    // ~60s at 60fps to find a type-2 head
+constexpr uint32_t PATCH_FRAMES = 5;        // frames per window (~0.08s)
+constexpr uint32_t PATCH_GAP = 120;         // frames between windows (~2s, so
+                                            // the two nudges are separately
+                                            // visible)
+constexpr uint32_t PATCH_TRY_MAX = 3600;    // ~60s at 60fps to find a live head
 
 // ---- hook storage (leaked by design, same teardown reasoning as M2/M3) ------
 
 SafetyHookMid g_pre_vm_mid;
 SafetyHookMid g_renderframe_mid;
 
-// ---- S1.1 consumer bracket ---------------------------------------------------
+// ---- S1.1 consumer bracket (countersA = queue+0x10 is a 32-bit cumulative
+// monotonic counter — S1 run result; the S0 packed-u16 decode was wrong) ------
 
 struct FrameSample {
     uint64_t frame = UINT64_MAX;
-    uint32_t cons_pre = 0, prod_pre = 0;  // countersA split at the pre-VM site
-    uint32_t cons_rf = 0;                 // countersA.low at RenderFrame entry
-    uint32_t cons_cmd = 0;                // ... at first stream command
-    uint32_t cons_eof = 0;                // ... at EndOfFrameHook
-    uint8_t seen = 0;                      // bit0 pre, 1 rf, 2 cmd, 3 eof
+    uint32_t a_pre = 0;    // countersA at the pre-VM site
+    uint32_t a_rf = 0;     // at RenderFrame entry
+    uint32_t a_cmd = 0;    // at first stream command
+    uint32_t a_eof = 0;    // at EndOfFrameHook
+    uint32_t b_pre = 0;    // countersB at the pre-VM site
+    uint32_t full_delta = 0; // a_pre(frame) - a_pre(frame-1)
+    uint32_t views = 0;      // world views walked this frame (total)
+    uint8_t seen = 0;        // bit0 pre, 1 rf, 2 cmd, 3 eof
     bool classified = false;
 };
 FrameSample g_samples[FRAME_SAMPLES];
 uint64_t g_bracket_logged = 0;
 bool g_rf_logged = false;
+uint32_t g_prev_a_pre = 0;
 
 // Window aggregates (reset in report_window()).
 uint64_t g_full_brackets = 0;
@@ -98,8 +114,8 @@ uint64_t g_adv_pipeline = 0;
 uint64_t g_adv_rf_to_cmd = 0;
 uint64_t g_adv_cmd_to_eof = 0;
 uint64_t g_adv_none = 0;
-uint32_t g_unc_min = 0xffffffff, g_unc_max = 0;
-uint32_t g_elem_dumps = 0; // process-lifetime one-shot counter
+uint32_t g_elem_dumps = 0;     // process-lifetime one-shot counter
+uint64_t g_raw_series = 0;     // process-lifetime one-shot counter
 
 inline uint32_t read_counters_a()
 {
@@ -116,10 +132,11 @@ FrameSample &sample_for(uint64_t frame)
     return s;
 }
 
-// Decision-tree classification (stereo_design.md): countersA.low (consumer)
-// advancing pre-VM -> RenderFrame entry = interpreter at pipeline time;
-// advancing entry -> first stream cmd = consumption inside RenderFrame's
-// record walk; advancing after the stream = a later consumer.
+// Decision-tree classification (stereo_design.md): countersA advancing
+// pre-VM -> RenderFrame entry = consumer at pipeline time (the only code
+// between the two points is the 0x0050f660 call) — the clone-at-stage
+// precondition. Additional advance entry -> first stream cmd = consumption
+// also happens inside RenderFrame before the command stream runs.
 void classify_sample(FrameSample &s)
 {
     if (s.classified || (s.seen & 0x3) != 0x3) {
@@ -128,11 +145,11 @@ void classify_sample(FrameSample &s)
     s.classified = true;
     g_full_brackets++;
 
-    const uint32_t d_pipe = (s.cons_rf - s.cons_pre) & 0xffff;
+    const uint32_t d_pipe = s.a_rf - s.a_pre; // monotonic 32-bit; no wrap in-run
     const bool has_cmd = (s.seen & 0x4) != 0;
     const bool has_eof = (s.seen & 0x8) != 0;
-    const uint32_t d_cmd = has_cmd ? (s.cons_cmd - s.cons_rf) & 0xffff : 0;
-    const uint32_t d_eof = (has_cmd && has_eof) ? (s.cons_eof - s.cons_cmd) & 0xffff : 0;
+    const uint32_t d_cmd = has_cmd ? s.a_cmd - s.a_rf : 0;
+    const uint32_t d_eof = (has_cmd && has_eof) ? s.a_eof - s.a_cmd : 0;
 
     if (d_pipe != 0) {
         g_adv_pipeline++;
@@ -149,16 +166,29 @@ void classify_sample(FrameSample &s)
 
     if (g_bracket_logged < BRACKET_BURST) {
         g_bracket_logged++;
-        MC2VR_LOG("S1 bracket: frame=%llu cons pre=%u rf=%u cmd=%u eof=%u prod=%u "
-                  "| adv pre->rf=%u rf->cmd=%u cmd->eof=%u | rawCountersA=%04x:%04x",
-                  (unsigned long long)s.frame, s.cons_pre, s.cons_rf, s.cons_cmd,
-                  s.cons_eof, s.prod_pre, d_pipe, d_cmd, d_eof, s.cons_pre, s.prod_pre);
+        MC2VR_LOG("S1 bracket: frame=%llu views=%u A pre=%08x rf=%08x cmd=%08x "
+                  "eof=%08x B=%08x | adv pre->rf=%u rf->cmd=%u cmd->eof=%u "
+                  "fullFrame=%u",
+                  (unsigned long long)s.frame, s.views, s.a_pre, s.a_rf, s.a_cmd,
+                  s.a_eof, s.b_pre, d_pipe, d_cmd, d_eof, s.full_delta);
+    }
+
+    // One-shot raw-counter series over world-view frames: the offline decode
+    // basis for the ring position/counter semantics (S1 run result: the S0
+    // formula and the packed-u16 decode were both wrong).
+    if (s.views > 0 && g_raw_series < RAW_SERIES_MAX) {
+        g_raw_series++;
+        MC2VR_LOG("S1 raw: frame=%llu views=%u A pre=%08x rf=%08x cmd=%08x "
+                  "eof=%08x B=%08x | d(pre->rf)=%u d(rf->cmd)=%u d(cmd->eof)=%u "
+                  "fullFrame=%u",
+                  (unsigned long long)s.frame, s.views, s.a_pre, s.a_rf, s.a_cmd,
+                  s.a_eof, s.b_pre, d_pipe, d_cmd, d_eof, s.full_delta);
     }
 }
 
-// ---- S1.1 element layout dump (one-shot, first few busy frames) --------------
+// ---- S1.1 element layout dump (frames with world views only) ----------------
 
-void dump_ring_elements(uint32_t ca, uint32_t cb)
+void dump_ring_elements(uint32_t a, uint32_t b)
 {
     const uint32_t elem = *(const uint32_t *)MC2_QUEUE_ELEM_SIZE;
     const uint32_t cap = *(const uint32_t *)MC2_QUEUE_CAPACITY;
@@ -173,23 +203,15 @@ void dump_ring_elements(uint32_t ca, uint32_t cb)
         return;
     }
 
-    const uint32_t cons = ca & 0xffff;
-    const uint32_t prod = ca >> 16;
-    const uint32_t unconsumed = (prod - cons) & 0xffff;
-    // S0-decoded positions (stereo_design.md) + the two naive candidates, so
-    // any counter mis-decode is visible offline against the pair layout.
-    const uint32_t doc_cons_pos = (cons + prod) % cap;
-    const uint32_t doc_prod_pos = ((cb & 0xffff) + cons) % cap;
-    MC2VR_LOG("S1 elem: ca=%04x:%04x cb=%04x cons=%u prod=%u unconsumed=%u "
-              "docConsPos=%u docProdPos=%u naiveCons=%u naiveProd=%u",
-              cons, prod, cb & 0xffff, cons, prod, unconsumed, doc_cons_pos,
-              doc_prod_pos, cons % cap, prod % cap);
-
-    const uint8_t *p = buf + (size_t)doc_cons_pos * elem;
-    MC2VR_LOG("S1 elem @docConsPos (3 elems, expect +0x1c/0x24/0x2c = "
-              "30/810/680 + live ptrs):");
-    for (uint32_t i = 0; i < 3; i++) {
-        p = buf + (size_t)((doc_cons_pos + i) % cap) * elem;
+    // At the pre-VM site the current frame's staged elements sit AHEAD of the
+    // consumer counter (consumption happens after this point — S1 bracket
+    // evidence), so dump forward from A % cap.
+    const uint32_t end = a % cap;
+    MC2VR_LOG("S1 elem: A=%08x B=%08x consPos=%u (dumping %u elems forward; "
+              "world elements expect +0x1c/0x24/0x2c = 30/810/680 + live ptrs)",
+              a, b, end, ELEM_DUMP_FORWARD);
+    for (uint32_t i = 0; i < ELEM_DUMP_FORWARD; i++) {
+        const uint8_t *p = buf + (size_t)((end + i) % cap) * elem;
         for (uint32_t off = 0; off < elem; off += 32) {
             const uint32_t n = elem - off < 32 ? elem - off : 32;
             char hex[96];
@@ -199,23 +221,9 @@ void dump_ring_elements(uint32_t ca, uint32_t cb)
                 *w++ = "0123456789abcdef"[p[off + j] & 0xf];
             }
             *w = '\0';
-            MC2VR_LOG("S1 elem @docConsPos +0x%02x: %s", i * elem + off, hex);
+            MC2VR_LOG("S1 elem @consPos+%u +0x%02x: %s", i, off, hex);
         }
     }
-    p = buf + (size_t)(cons % cap) * elem;
-    MC2VR_LOG("S1 elem @naiveCons +0x00: %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x "
-              "%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
-              p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
-              p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15],
-              p[16], p[17], p[18], p[19], p[20], p[21], p[22], p[23],
-              p[24], p[25], p[26], p[27], p[28], p[29], p[30], p[31]);
-    p = buf + (size_t)(prod % cap) * elem;
-    MC2VR_LOG("S1 elem @naiveProd +0x00: %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x "
-              "%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
-              p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
-              p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15],
-              p[16], p[17], p[18], p[19], p[20], p[21], p[22], p[23],
-              p[24], p[25], p[26], p[27], p[28], p[29], p[30], p[31]);
 }
 
 // ---- S1.4 per-frame view list (signature-deduped logging) --------------------
@@ -226,7 +234,8 @@ struct ViewRec {
     uint32_t flags;
 };
 ViewRec g_list[FRAME_LIST_MAX];
-uint32_t g_list_n = 0;
+uint32_t g_list_n = 0;        // capped record count (log line only)
+uint32_t g_list_total = 0;    // uncapped walk count (satellite detection)
 uint32_t g_list_t2 = 0;
 uint64_t g_list_frame = UINT64_MAX;
 int32_t g_list_head = -1;
@@ -252,29 +261,26 @@ uint32_t g_t2_min = 0xffffffff, g_t2_max = 0;
 
 bool type_flags_mismatch_logged = false;
 
-// ---- S1.3 residency patch ----------------------------------------------------
+// ---- S1.3 residency patch v2 ---------------------------------------------------
 
-enum class PatchState { Idle, Active, Done };
+enum class PatchState { Idle, WindowA, Gap, WindowB, Done };
 PatchState g_patch_state = PatchState::Idle;
-const uint8_t *g_patch_entry = nullptr;
+const uint8_t *g_patch_entry = nullptr; // window A target (head ViewEntry)
 float g_patch_saved[16];
+uint8_t *g_patch_slot = nullptr;        // window B target (staging slot pos)
+float g_patch_slot_saved = 0.0f;
+int32_t g_patch_head = -1;
 uint32_t g_patch_left = 0;
+uint32_t g_patch_gap_left = 0;
 uint32_t g_patch_tries = 0;
 bool g_residency_seen = false;
 bool g_residency_logged = false;
 
-// ---- S1.2 xform/viewport aggregates -------------------------------------------
+// ---- S1.2 aggregates (SetTransform: kept to document its deadness;
+// VS constants: the real camera channel) -----------------------------------------
 
 uint64_t g_x_calls = 0, g_x_view = 0, g_x_proj = 0, g_x_other = 0;
-uint64_t g_match_entry = 0, g_match_entry_T = 0;
-uint64_t g_match_ctx = 0, g_match_sub = 0, g_match_none = 0;
 uint64_t g_x_detail = 0;
-char g_last_view_tag[48] = "-";
-char g_last_proj_tag[48] = "-";
-
-uint64_t g_xf_frame = UINT64_MAX;
-uint32_t g_xf_frame_n = 0;
-uint32_t g_xf_min = 0xffffffff, g_xf_max = 0;
 
 uint64_t g_vp_calls = 0;
 struct RectRec {
@@ -287,6 +293,19 @@ uint64_t g_vp_frame = UINT64_MAX;
 uint32_t g_vpf_frame_n = 0;
 uint32_t g_vpf_min = 0xffffffff, g_vpf_max = 0;
 uint64_t g_vp_burst = 0;
+
+// VS constant channel (S1b).
+uint64_t g_vs_calls = 0, g_vs_vec4s = 0;
+uint64_t g_vs_classified = 0;
+uint64_t g_vs_detail = 0;
+struct VsMatchAgg {
+    uint64_t entry, entryT, ctx, sub, none;
+};
+VsMatchAgg g_vs{};
+uint32_t g_vs_reg_hits[VS_ROWS] = {};
+uint64_t g_vs_frame = UINT64_MAX;
+float g_vs_rows[VS_ROWS][4] = {};
+uint8_t g_vs_valid[VS_ROWS] = {};
 
 // ---- helpers ------------------------------------------------------------------
 
@@ -349,107 +368,121 @@ bool find_in_entries(const float *m, int32_t &idx_out, uint32_t &k_out, bool &t_
     return false;
 }
 
-// ---- S1.2: SetTransform classification -----------------------------------------
+// Shared classification core. Sets exactly one class; callers do their own
+// counting/tagging/logging.
+struct MatrixMatch {
+    enum class Kind { None, Entry, Ctx, Sub } kind = Kind::None;
+    const uint8_t *entry = nullptr; // Kind::Entry
+    int32_t idx = -1;
+    uint32_t k = 0;
+    bool transposed = false;
+    uint32_t region_off = 0; // Kind::Ctx / Kind::Sub
+    uint32_t sub_idx = 0;     // Kind::Sub
+};
 
-void classify_matrix(const float *m, uint32_t state, uint64_t frame)
+MatrixMatch find_matrix(const float *m)
 {
-    char tagbuf[48];
-    int32_t hit_idx = -1;
-    uint32_t hit_k = 0;
-    bool hit_t = false;
-
-    if (find_in_entries(m, hit_idx, hit_k, hit_t)) {
-        _snprintf(tagbuf, sizeof(tagbuf), "e%d.m%u%s", hit_idx, hit_k, hit_t ? "T" : "");
-        if (hit_t) {
-            g_match_entry_T++;
-        } else {
-            g_match_entry++;
-        }
-
-        // S1.3 residency proof: the patched live entry's m[1] showing up in a
-        // SetTransform means the consumer derefs the live ViewEntry at
-        // consume time (the whole clone-at-stage design rests on this).
-        const uint8_t *hit_entry =
-            (const uint8_t *)(VIEW_TABLE + (size_t)hit_idx * VIEW_STRIDE);
-        if (!hit_t && hit_k == 1 && hit_entry == g_patch_entry &&
-            g_patch_state == PatchState::Active) {
-            g_residency_seen = true;
-            if (!g_residency_logged) {
-                g_residency_logged = true;
-                MC2VR_LOG("S1 RESIDENCY PROVEN: SetTransform(state=%u) matches the live "
-                          "PATCHED ViewEntry m[1] (delta %g) at frame=%llu — consumer "
-                          "derefs the live entry at consume time",
-                          state, (double)PATCH_DELTA, (unsigned long long)frame);
-            }
-        }
-    } else {
-        uint32_t off = 0;
-        const uint8_t *block =
-            g_ctx_valid ? (const uint8_t *)(g_frame_ctx + CTX_BLOCK_OFF) : nullptr;
-        if (find_in_region(m, block, CTX_BLOCK_SIZE, off)) {
-            _snprintf(tagbuf, sizeof(tagbuf), "ctx+0x%03x", off);
-            g_match_ctx++;
-        } else {
-            bool sub_hit = false;
-            for (uint32_t s = 0; block && s < 2 && !sub_hit; s++) {
-                const uint8_t *sub = *(const uint8_t *const *)(block + CTX_SUBPTR_OFF + s * 4);
-                if (find_in_region(m, sub, CTX_SUBOBJ_SCAN, off)) {
-                    _snprintf(tagbuf, sizeof(tagbuf), "sub%u+0x%03x", s, off);
-                    g_match_sub++;
-                    sub_hit = true;
-                }
-            }
-            if (!sub_hit) {
-                strncpy(tagbuf, "none", sizeof(tagbuf) - 1);
-                g_match_none++;
-            }
+    MatrixMatch mm;
+    int32_t idx = -1;
+    uint32_t k = 0;
+    bool t = false;
+    if (find_in_entries(m, idx, k, t)) {
+        mm.kind = MatrixMatch::Kind::Entry;
+        mm.entry = (const uint8_t *)(VIEW_TABLE + (size_t)idx * VIEW_STRIDE);
+        mm.idx = idx;
+        mm.k = k;
+        mm.transposed = t;
+        return mm;
+    }
+    const uint8_t *block =
+        g_ctx_valid ? (const uint8_t *)(g_frame_ctx + CTX_BLOCK_OFF) : nullptr;
+    uint32_t off = 0;
+    if (find_in_region(m, block, CTX_BLOCK_SIZE, off)) {
+        mm.kind = MatrixMatch::Kind::Ctx;
+        mm.region_off = off;
+        return mm;
+    }
+    for (uint32_t s = 0; block && s < 2; s++) {
+        const uint8_t *sub = *(const uint8_t *const *)(block + CTX_SUBPTR_OFF + s * 4);
+        if (find_in_region(m, sub, CTX_SUBOBJ_SCAN, off)) {
+            mm.kind = MatrixMatch::Kind::Sub;
+            mm.sub_idx = s;
+            mm.region_off = off;
+            return mm;
         }
     }
-    tagbuf[sizeof(tagbuf) - 1] = '\0';
+    return mm;
+}
 
-    if (state == D3DTS_VIEW) {
-        strncpy(g_last_view_tag, tagbuf, sizeof(g_last_view_tag) - 1);
-        g_last_view_tag[sizeof(g_last_view_tag) - 1] = '\0';
-    } else {
-        strncpy(g_last_proj_tag, tagbuf, sizeof(g_last_proj_tag) - 1);
-        g_last_proj_tag[sizeof(g_last_proj_tag) - 1] = '\0';
+void format_match_tag(const MatrixMatch &mm, char *out, size_t out_size)
+{
+    switch (mm.kind) {
+    case MatrixMatch::Kind::Entry:
+        _snprintf(out, out_size, "e%d.m%u%s", mm.idx, mm.k, mm.transposed ? "T" : "");
+        break;
+    case MatrixMatch::Kind::Ctx:
+        _snprintf(out, out_size, "ctx+0x%03x", mm.region_off);
+        break;
+    case MatrixMatch::Kind::Sub:
+        _snprintf(out, out_size, "sub%u+0x%03x", mm.sub_idx, mm.region_off);
+        break;
+    default:
+        strncpy(out, "none", out_size - 1);
+        out[out_size - 1] = '\0';
+        break;
     }
+    if (out_size) {
+        out[out_size - 1] = '\0';
+    }
+}
 
-    // One-shot detail lines: raw matrix bytes for offline diffing against
-    // the M3 entry dumps (analyze_dumps.py decodes the hex to floats).
-    if (g_x_detail < XFORM_DETAIL_BURST) {
-        g_x_detail++;
-        const uint8_t *raw = (const uint8_t *)m;
-        char hex[132];
-        char *w = hex;
-        for (uint32_t i = 0; i < 64; i++) {
-            *w++ = "0123456789abcdef"[raw[i] >> 4];
-            *w++ = "0123456789abcdef"[raw[i] & 0xf];
+// Residency proof (window A): a matrix equal to the live PATCHED entry m[1]
+// reaching the GPU means the consumer derefs the live ViewEntry at consume
+// time — the clone-at-stage design rests on this.
+void check_residency(const MatrixMatch &mm, uint64_t frame)
+{
+    if (mm.kind == MatrixMatch::Kind::Entry && !mm.transposed && mm.k == 1 &&
+        mm.entry == g_patch_entry && g_patch_state == PatchState::WindowA) {
+        g_residency_seen = true;
+        if (!g_residency_logged) {
+            g_residency_logged = true;
+            MC2VR_LOG("S1 RESIDENCY PROVEN: GPU-bound matrix matches the live "
+                      "PATCHED ViewEntry m[1] (delta %g) at frame=%llu — consumer "
+                      "derefs the live entry at consume time",
+                      (double)PATCH_DELTA, (unsigned long long)frame);
         }
-        *w = '\0';
-        MC2VR_LOG("S1 xform: frame=%llu state=%s tag=%s m=%s",
-                  (unsigned long long)frame, state == D3DTS_VIEW ? "view" : "proj",
-                  tagbuf, hex);
     }
+}
+
+void hex64(const float *m, char *out, size_t out_size)
+{
+    const uint8_t *raw = (const uint8_t *)m;
+    char *w = out;
+    for (uint32_t i = 0; i < 64 && (size_t)(w - out) + 2 < out_size; i++) {
+        *w++ = "0123456789abcdef"[raw[i] >> 4];
+        *w++ = "0123456789abcdef"[raw[i] & 0xf];
+    }
+    *w = '\0';
 }
 
 // ---- S1.4 helpers ---------------------------------------------------------------
 
 void log_view_list(uint64_t frame)
 {
-    if (g_list_frame != frame || g_list_n == 0) {
+    if (g_list_frame != frame || g_list_total == 0) {
         return; // no world views walked this frame (menu etc.)
     }
     g_list_frames++;
 
     // Signature over the records in walk order (order = activation recency,
-    // head included — a change in either yields a new signature).
+    // head + totals included — a change in any yields a new signature).
     uint32_t h = 0x811c9dc5;
     auto mix = [&h](uint32_t v) {
         h = (h ^ v) * 0x01000193;
     };
     mix((uint32_t)g_list_head);
     mix(g_list_n);
+    mix(g_list_total);
     mix(g_list_t2);
     for (uint32_t i = 0; i < g_list_n; i++) {
         mix(g_list[i].idx);
@@ -475,11 +508,13 @@ void log_view_list(uint64_t frame)
         slot->frames++;
     }
 
-    const bool satellite = g_list_n > SATELLITE_MIN_VIEWS;
+    // Satellite detection on the UNCAPPED total (S1 bug: the capped record
+    // count could never exceed FRAME_LIST_MAX).
+    const bool satellite = g_list_total > SATELLITE_MIN_VIEWS;
     if (satellite) {
         g_sat_frames++;
-        if (g_list_n > g_sat_max) {
-            g_sat_max = g_list_n;
+        if (g_list_total > g_sat_max) {
+            g_sat_max = g_list_total;
         }
     }
     if (g_list_t2 < g_t2_min) {
@@ -502,83 +537,207 @@ void log_view_list(uint64_t frame)
     }
     g_list_first_logged++;
 
-    char list[900];
+    char list[880];
     int n = _snprintf(list, sizeof(list), "head=%d n=%u t2=%u sig=%08x ctx=%p:",
-                      g_list_head, g_list_n, g_list_t2, h, (void *)g_frame_ctx);
+                      g_list_head, g_list_total, g_list_t2, h, (void *)g_frame_ctx);
     const uint32_t shown = g_list_n < LIST_LOG_ENTRIES ? g_list_n : LIST_LOG_ENTRIES;
     for (uint32_t i = 0; i < shown && n < (int)sizeof(list) - 24; i++) {
         n += _snprintf(list + n, sizeof(list) - n, " i%u/t%u/f%04x", g_list[i].idx,
                        g_list[i].type, g_list[i].flags >> 16);
     }
-    if (g_list_n > shown && n < (int)sizeof(list) - 24) {
-        _snprintf(list + n, sizeof(list) - n, " ...(%u more)", g_list_n - shown);
+    if (g_list_total > shown && n < (int)sizeof(list) - 24) {
+        _snprintf(list + n, sizeof(list) - n, " ...(%u more)", g_list_total - shown);
     }
     list[sizeof(list) - 1] = '\0';
     MC2VR_LOG("S1 vlist: frame=%llu %s", (unsigned long long)frame, list);
 }
 
-// ---- S1.3 residency patch driver -----------------------------------------------
+// ---- S1.3 residency patch v2 driver ---------------------------------------------
 
-void apply_patch(uint64_t frame)
+bool head_is_live(const uint8_t *&entry_out, int32_t &head_out)
+{
+    const int32_t head = *(volatile int32_t *)MC2_VIEW_LIST_HEAD;
+    if (head < 0 || (uint32_t)head >= VIEW_IDX_MAX) {
+        return false;
+    }
+    const uint8_t *entry = (const uint8_t *)(VIEW_TABLE + (size_t)head * VIEW_STRIDE);
+    const uintptr_t ref = *(const uintptr_t *)(entry + MC2_VIEW_OBJ_PTR_OFF);
+    if (!ref) {
+        return false;
+    }
+    if ((*(const uint32_t *)(ref + MC2_VIEW_REF_TYPEFLAGS_OFF) & 0xffff) != 2) {
+        return false; // not a world view
+    }
+    // Liveness (S1 lesson: head view 0 is a type-2 ALL-ZERO template): the
+    // viewToWorld matrix must carry a camera translation.
+    const float *m0 = (const float *)(entry + VIEW_M0_OFF);
+    if (m0[12] == 0.0f && m0[13] == 0.0f && m0[14] == 0.0f) {
+        return false;
+    }
+    entry_out = entry;
+    head_out = head;
+    return true;
+}
+
+void patch_apply_m1(uint64_t frame)
 {
     memcpy(g_patch_saved, g_patch_entry + VIEW_M1_OFF, sizeof(g_patch_saved));
     ((float *)(g_patch_entry + VIEW_M1_OFF))[12] += PATCH_DELTA;
-    // g_patch_frame not needed: run_patch keys on frame != patch frame via
-    // the call order (run_patch is called once per frame at the pre-VM site).
+    (void)frame;
+}
+
+void patch_apply_slot(uint64_t frame)
+{
+    g_patch_slot_saved = *(const float *)g_patch_slot;
+    *(float *)g_patch_slot += PATCH_DELTA;
     (void)frame;
 }
 
 void run_patch(uint64_t frame)
 {
-    if (g_patch_state == PatchState::Done) {
+    switch (g_patch_state) {
+    case PatchState::Done:
         return;
-    }
-    if (g_patch_state == PatchState::Active) {
-        // Restore the previous frame's m[1] first: the game may rewrite m[1]
-        // at any point, so never keep a patch past its frame.
+
+    case PatchState::WindowA:
+        // Restore the previous frame's m[1]: the game may rewrite m[1] at any
+        // point, so never keep a patch past its frame.
         memcpy((void *)(g_patch_entry + VIEW_M1_OFF), g_patch_saved, sizeof(g_patch_saved));
         if (--g_patch_left == 0) {
-            g_patch_state = PatchState::Done;
-            MC2VR_LOG("S1 patch: window ended (%u frames, delta %g) — residency_seen=%u",
-                      (unsigned)PATCH_FRAMES, (double)PATCH_DELTA,
-                      g_residency_seen ? 1u : 0u);
+            MC2VR_LOG("S1 patch A (m1) ended: head=%d — residency_seen=%u "
+                      "(nudge observed? consumer reads m[1] live; none? m[1] is "
+                      "not the draw-camera source)",
+                      g_patch_head, g_residency_seen ? 1u : 0u);
+            g_patch_state = PatchState::Gap;
+            g_patch_gap_left = PATCH_GAP;
             return;
         }
-        apply_patch(frame); // re-apply relative to the current values
+        patch_apply_m1(frame); // re-apply relative to current values
+        return;
+
+    case PatchState::Gap:
+        if (--g_patch_gap_left > 0) {
+            return;
+        }
+        // Fall through to WindowB setup.
+        g_patch_state = PatchState::WindowB;
+        g_patch_left = 0;
+        [[fallthrough]];
+
+    case PatchState::WindowB: {
+        if (g_patch_slot) {
+            *(float *)g_patch_slot = g_patch_slot_saved; // restore previous frame
+            const int32_t head = *(volatile int32_t *)MC2_VIEW_LIST_HEAD;
+            if (head != g_patch_head) {
+                MC2VR_LOG("S1 patch B (staging slot) aborted: head changed %d -> %d",
+                          g_patch_head, head);
+                g_patch_slot = nullptr;
+                g_patch_state = PatchState::Done;
+                return;
+            }
+            if (--g_patch_left == 0) {
+                MC2VR_LOG("S1 patch B (staging slot) ended: head=%d slot=%p — "
+                          "(nudge observed? draw camera reads the staging slot at "
+                          "consume time)",
+                          g_patch_head, (const void *)g_patch_slot);
+                g_patch_slot = nullptr;
+                g_patch_state = PatchState::Done;
+                return;
+            }
+            patch_apply_slot(frame);
+            return;
+        }
+        // Window B not started yet: need a live head (same one) + a validated ctx.
+        const uint8_t *entry = nullptr;
+        int32_t head = -1;
+        if (!g_ctx_valid || !head_is_live(entry, head)) {
+            if (++g_patch_tries > PATCH_TRY_MAX) {
+                g_patch_state = PatchState::Done;
+                MC2VR_LOG("S1 patch B: no live head/ctx in %u frames — skipped",
+                          (unsigned)PATCH_TRY_MAX);
+            }
+            return;
+        }
+        g_patch_head = head;
+        g_patch_slot = (uint8_t *)(g_frame_ctx + CTX_STAGING_OFF + (size_t)head * STAGING_STRIDE);
+        g_patch_left = PATCH_FRAMES;
+        patch_apply_slot(frame);
+        MC2VR_LOG("S1 patch B (staging slot): head=%d slot=%p pos[0] += %g for %u "
+                  "frames — expected visual: second brief nudge ~%u frames after "
+                  "the first",
+                  head, (const void *)g_patch_slot, (double)PATCH_DELTA,
+                  (unsigned)PATCH_FRAMES, (unsigned)PATCH_GAP);
         return;
     }
 
-    // Idle: look for a type-2 head view to patch (head = the view the S3
-    // duplication will care about first; type 2 = world view).
-    if (++g_patch_tries > PATCH_TRY_MAX) {
-        g_patch_state = PatchState::Done;
-        MC2VR_LOG("S1 patch: no type-2 head view in %u frames — residency proof "
-                  "skipped (menu-only run?)", (unsigned)PATCH_TRY_MAX);
+    case PatchState::Idle: {
+        if (++g_patch_tries > PATCH_TRY_MAX) {
+            g_patch_state = PatchState::Done;
+            MC2VR_LOG("S1 patch A: no live head view in %u frames — proof skipped",
+                      (unsigned)PATCH_TRY_MAX);
+            return;
+        }
+        const uint8_t *entry = nullptr;
+        int32_t head = -1;
+        if (!head_is_live(entry, head)) {
+            return; // try again next frame
+        }
+        g_patch_entry = entry;
+        g_patch_head = head;
+        patch_apply_m1(frame);
+        g_patch_state = PatchState::WindowA;
+        g_patch_left = PATCH_FRAMES;
+        const float *m0 = (const float *)(entry + VIEW_M0_OFF);
+        MC2VR_LOG("S1 patch A (m1): head=%d entry=%p (ViewRef=%p) camera pos "
+                  "(%g, %g, %g) m1[3] += %g for %u frames — expected visual: "
+                  "brief nudge; proof: 'S1 RESIDENCY' or e%d.m1 in S1 vs lines",
+                  head, (const void *)entry,
+                  (const void *)*(const uintptr_t *)(entry + MC2_VIEW_OBJ_PTR_OFF),
+                  (double)m0[12], (double)m0[13], (double)m0[14], (double)PATCH_DELTA,
+                  (unsigned)PATCH_FRAMES, head);
         return;
     }
-    const int32_t head = *(volatile int32_t *)MC2_VIEW_LIST_HEAD;
-    if (head < 0 || (uint32_t)head >= VIEW_IDX_MAX) {
-        return;
     }
-    const uint8_t *entry = (const uint8_t *)(VIEW_TABLE + (size_t)head * VIEW_STRIDE);
-    const uintptr_t ref = *(const uintptr_t *)(entry + MC2_VIEW_OBJ_PTR_OFF);
-    if (!ref) {
-        return;
+}
+
+// ---- VS constant classification (S1b camera attribution) ------------------------
+
+void vs_classify(const float *m16, uint32_t reg_base, uint64_t frame)
+{
+    g_vs_classified++;
+    const MatrixMatch mm = find_matrix(m16);
+    switch (mm.kind) {
+    case MatrixMatch::Kind::Entry:
+        if (mm.transposed) {
+            g_vs.entryT++;
+        } else {
+            g_vs.entry++;
+        }
+        break;
+    case MatrixMatch::Kind::Ctx:
+        g_vs.ctx++;
+        break;
+    case MatrixMatch::Kind::Sub:
+        g_vs.sub++;
+        break;
+    default:
+        g_vs.none++;
+        break;
     }
-    if ((*(const uint32_t *)(ref + MC2_VIEW_REF_TYPEFLAGS_OFF) & 0xffff) != 2) {
-        return; // head is not a world view this frame — try again next frame
+    if (mm.kind != MatrixMatch::Kind::None && reg_base < VS_ROWS) {
+        g_vs_reg_hits[reg_base]++;
     }
-    g_patch_entry = entry;
-    apply_patch(frame);
-    g_patch_state = PatchState::Active;
-    g_patch_left = PATCH_FRAMES; // frames left INCLUDING the current one: the
-    // Active branch decrements at every later pre-hook, so the patch covers
-    // exactly PATCH_FRAMES frames.
-    MC2VR_LOG("S1 patch: head=%d entry=%p (ViewRef=%p) m1[3] += %g for %u frames — "
-              "expected visual: brief world-camera nudge; proof: 'S1 RESIDENCY' line "
-              "or e%d.m1 tag in S1 xform/window lines",
-              head, (const void *)entry, (const void *)ref, (double)PATCH_DELTA,
-              (unsigned)PATCH_FRAMES, head);
+    check_residency(mm, frame);
+
+    if (g_vs_detail < VS_DETAIL_BURST) {
+        g_vs_detail++;
+        char tag[48];
+        char hex[132];
+        format_match_tag(mm, tag, sizeof(tag));
+        hex64(m16, hex, sizeof(hex));
+        MC2VR_LOG("S1 vsmat: frame=%llu reg=c%u tag=%s m=%s",
+                  (unsigned long long)frame, reg_base, tag, hex);
+    }
 }
 
 // ---- MidHook handlers ------------------------------------------------------------
@@ -597,20 +756,17 @@ void pre_vm_midhook(safetyhook::Context &)
     }
 
     FrameSample &s = sample_for(frame);
-    s.cons_pre = ca & 0xffff;
-    s.prod_pre = ca >> 16;
+    const uint32_t full_delta = ca - g_prev_a_pre;
+    g_prev_a_pre = ca;
+    s.a_pre = ca;
+    s.b_pre = cb;
+    s.full_delta = full_delta;
+    s.views = (g_list_frame == frame) ? g_list_total : 0;
     s.seen |= 1;
 
-    const uint32_t unconsumed = ((ca >> 16) - (ca & 0xffff)) & 0xffff;
-    if (unconsumed < g_unc_min) {
-        g_unc_min = unconsumed;
-    }
-    if (unconsumed > g_unc_max) {
-        g_unc_max = unconsumed;
-    }
-
-    // One-shot element layout dump at the candidate consumer positions.
-    if (g_elem_dumps < ELEM_DUMP_FRAMES && unconsumed > 0) {
+    // Element dumps re-armed on world-view frames only (S1 lesson: the
+    // boot-time dumps only ever captured other producers' elements).
+    if (g_elem_dumps < ELEM_DUMP_FRAMES && s.views > 0) {
         g_elem_dumps++;
         dump_ring_elements(ca, cb);
     }
@@ -624,7 +780,7 @@ void renderframe_midhook(safetyhook::Context &ctx)
 {
     const uint64_t frame = hooks::frame_count();
     FrameSample &s = sample_for(frame);
-    s.cons_rf = read_counters_a() & 0xffff;
+    s.a_rf = read_counters_a();
     s.seen |= 2;
     if (!g_rf_logged) {
         g_rf_logged = true;
@@ -663,12 +819,14 @@ void note_view(uint32_t idx, uint32_t type, uint32_t flags, uintptr_t frame_ctx)
     if (frame != g_list_frame) {
         g_list_frame = frame;
         g_list_n = 0;
+        g_list_total = 0;
         g_list_t2 = 0;
         g_list_head = *(volatile int32_t *)MC2_VIEW_LIST_HEAD;
     }
     if (g_list_n < FRAME_LIST_MAX) {
         g_list[g_list_n++] = {(uint16_t)idx, (uint16_t)type, flags};
     }
+    g_list_total++;
     if (type == 2) {
         g_list_t2++;
     }
@@ -690,49 +848,99 @@ void note_stream_opcode()
         return; // once per frame
     }
     s.seen |= 4;
-    s.cons_cmd = read_counters_a() & 0xffff;
+    s.a_cmd = read_counters_a();
 }
 
 void note_end_of_frame()
 {
     FrameSample &s = sample_for(hooks::frame_count());
     s.seen |= 8;
-    s.cons_eof = read_counters_a() & 0xffff;
+    s.a_eof = read_counters_a();
 }
 
 void on_set_transform(uint32_t state, const float *m)
 {
+    // S1 result: the engine never calls this (shader-driven). Keep the
+    // counter to re-verify per run; classification stays for completeness.
     g_x_calls++;
     if (!m) {
         g_x_other++;
         return;
     }
     if (state != D3DTS_VIEW && state != D3DTS_PROJECTION) {
-        g_x_other++; // world/texture matrices: counted only (hot path)
+        g_x_other++;
         return;
     }
-
-    const uint64_t frame = hooks::frame_count();
-    if (frame != g_xf_frame) {
-        if (g_xf_frame != UINT64_MAX) {
-            if (g_xf_frame_n < g_xf_min) {
-                g_xf_min = g_xf_frame_n;
-            }
-            if (g_xf_frame_n > g_xf_max) {
-                g_xf_max = g_xf_frame_n;
-            }
-        }
-        g_xf_frame = frame;
-        g_xf_frame_n = 0;
-    }
-    g_xf_frame_n++;
-
     if (state == D3DTS_VIEW) {
         g_x_view++;
     } else {
         g_x_proj++;
     }
-    classify_matrix(m, state, frame);
+    if (g_x_detail < 3) {
+        g_x_detail++;
+        char tag[48];
+        char hex[132];
+        const MatrixMatch mm = find_matrix(m);
+        format_match_tag(mm, tag, sizeof(tag));
+        hex64(m, hex, sizeof(hex));
+        MC2VR_LOG("S1 xform: frame=%llu state=%s tag=%s m=%s",
+                  (unsigned long long)hooks::frame_count(),
+                  state == D3DTS_VIEW ? "view" : "proj", tag, hex);
+    }
+}
+
+void on_set_vs_constant(uint32_t start_register, const float *data, uint32_t vec4_count)
+{
+    g_vs_calls++;
+    if (!data || vec4_count == 0) {
+        return;
+    }
+    g_vs_vec4s += vec4_count;
+
+    const uint64_t frame = hooks::frame_count();
+    if (frame != g_vs_frame) {
+        g_vs_frame = frame;
+        memset(g_vs_valid, 0, sizeof(g_vs_valid));
+    }
+
+    if (g_vs_calls <= 3) {
+        MC2VR_LOG("S1 vs: first call #%llu: start=c%u count=%u frame=%llu",
+                  (unsigned long long)g_vs_calls, start_register, vec4_count,
+                  (unsigned long long)frame);
+    }
+
+    // Bulk path: 4-float-aligned groups inside one call (count >= 4 covers
+    // the usual whole-matrix upload).
+    if (vec4_count >= 4) {
+        const uint32_t groups = vec4_count - 3 < VS_BULK_MAX_GROUPS
+                                    ? vec4_count - 3
+                                    : VS_BULK_MAX_GROUPS;
+        for (uint32_t i = 0; i < groups; i++) {
+            vs_classify(data + i * 4, start_register + i, frame);
+        }
+    }
+
+    // Row-cache path: matrices uploaded one float4 at a time (row r lands in
+    // register c_base+r). Cache rows; when c_base..c_base+3 are all present,
+    // assemble and classify. Covers both row-major and column-major uploads
+    // (the transposed compare catches the latter).
+    if (start_register < VS_ROWS) {
+        const uint32_t n = vec4_count < VS_ROWS - start_register
+                               ? vec4_count
+                               : VS_ROWS - start_register;
+        for (uint32_t i = 0; i < n; i++) {
+            const uint32_t r = start_register + i;
+            memcpy(g_vs_rows[r], data + i * 4, 16);
+            g_vs_valid[r] = 1;
+            if (r >= 3 && g_vs_valid[r - 3] && g_vs_valid[r - 2] && g_vs_valid[r - 1]) {
+                float m16[16];
+                for (uint32_t row = 0; row < 4; row++) {
+                    memcpy(m16 + row * 4, g_vs_rows[r - 3 + row], 16);
+                }
+                vs_classify(m16, r - 3, frame);
+            }
+        }
+    }
 }
 
 void on_set_viewport(uint32_t x, uint32_t y, uint32_t w, uint32_t h, float minz, float maxz)
@@ -774,22 +982,57 @@ void on_set_viewport(uint32_t x, uint32_t y, uint32_t w, uint32_t h, float minz,
 void report_window()
 {
     MC2VR_LOG("S1 bracket: frames=%llu pipeline=%llu rfToCmd=%llu cmdToEof=%llu "
-              "none=%llu | unconsumedAtPre min=%u max=%u",
+              "none=%llu | A(lastPre)=%08x",
               (unsigned long long)g_full_brackets, (unsigned long long)g_adv_pipeline,
               (unsigned long long)g_adv_rf_to_cmd, (unsigned long long)g_adv_cmd_to_eof,
-              (unsigned long long)g_adv_none, g_unc_min == 0xffffffff ? 0 : g_unc_min,
-              g_unc_max);
+              (unsigned long long)g_adv_none, g_prev_a_pre);
 
-    MC2VR_LOG("S1 xform: calls=%llu view=%llu proj=%llu other=%llu | matches "
-              "entry=%llu entryT=%llu ctx=%llu sub=%llu none=%llu | viewTag=%s "
-              "projTag=%s | view+proj sets/frame min=%u max=%u | residency=%s",
-              (unsigned long long)g_x_calls, (unsigned long long)g_x_view,
-              (unsigned long long)g_x_proj, (unsigned long long)g_x_other,
-              (unsigned long long)g_match_entry, (unsigned long long)g_match_entry_T,
-              (unsigned long long)g_match_ctx, (unsigned long long)g_match_sub,
-              (unsigned long long)g_match_none, g_last_view_tag, g_last_proj_tag,
-              g_xf_min == 0xffffffff ? 0 : g_xf_min, g_xf_max,
+    MC2VR_LOG("S1 vs: calls=%llu vec4s=%llu classified=%llu | entry=%llu entryT=%llu "
+              "ctx=%llu sub=%llu none=%llu | residency=%s",
+              (unsigned long long)g_vs_calls, (unsigned long long)g_vs_vec4s,
+              (unsigned long long)g_vs_classified, (unsigned long long)g_vs.entry,
+              (unsigned long long)g_vs.entryT, (unsigned long long)g_vs.ctx,
+              (unsigned long long)g_vs.sub, (unsigned long long)g_vs.none,
               g_residency_seen ? "PROVEN" : "not-yet");
+    {
+        // Top matching VS registers (bounded line, insertion sort by hits).
+        uint32_t top[6] = {VS_ROWS, VS_ROWS, VS_ROWS, VS_ROWS, VS_ROWS, VS_ROWS};
+        for (uint32_t r = 0; r < VS_ROWS; r++) {
+            if (g_vs_reg_hits[r] == 0) {
+                continue;
+            }
+            for (int slot = 0; slot < 6; slot++) {
+                bool already = false;
+                for (int j = 0; j < 6; j++) {
+                    already = already || (top[j] == r);
+                }
+                if (already) {
+                    break;
+                }
+                if (top[slot] == VS_ROWS || g_vs_reg_hits[r] > g_vs_reg_hits[top[slot]]) {
+                    for (int j = 5; j > slot; j--) {
+                        top[j] = top[j - 1];
+                    }
+                    top[slot] = r;
+                    break;
+                }
+            }
+        }
+        char regs[256];
+        int n = 0;
+        for (int slot = 0; slot < 6 && top[slot] != VS_ROWS && n < (int)sizeof(regs) - 32;
+             slot++) {
+            n += _snprintf(regs + n, sizeof(regs) - n, " c%u=x%llu", top[slot],
+                           (unsigned long long)g_vs_reg_hits[top[slot]]);
+        }
+        regs[n] = '\0';
+        MC2VR_LOG("S1 vsreg: top matched registers:%s", n ? regs : " (none)");
+    }
+
+    MC2VR_LOG("S1 xform(SetTransform, expected dead): calls=%llu view=%llu proj=%llu "
+              "other=%llu",
+              (unsigned long long)g_x_calls, (unsigned long long)g_x_view,
+              (unsigned long long)g_x_proj, (unsigned long long)g_x_other);
 
     {
         char rects[640];
@@ -811,28 +1054,22 @@ void report_window()
               g_t2_max, (unsigned long long)g_sat_frames, g_sat_max, g_sig_n);
 
     // Reset window aggregates. Process-lifetime one-shots (g_bracket_logged,
-    // g_elem_dumps, g_x_detail, g_vp_burst, g_list_first_logged,
+    // g_raw_series, g_elem_dumps, g_vs_detail, g_vp_burst, g_list_first_logged,
     // g_residency_seen/logged, g_patch_*) are NOT reset.
     g_full_brackets = 0;
     g_adv_pipeline = 0;
     g_adv_rf_to_cmd = 0;
     g_adv_cmd_to_eof = 0;
     g_adv_none = 0;
-    g_unc_min = 0xffffffff;
-    g_unc_max = 0;
     g_x_calls = 0;
     g_x_view = 0;
     g_x_proj = 0;
     g_x_other = 0;
-    g_match_entry = 0;
-    g_match_entry_T = 0;
-    g_match_ctx = 0;
-    g_match_sub = 0;
-    g_match_none = 0;
-    strncpy(g_last_view_tag, "-", sizeof(g_last_view_tag) - 1);
-    strncpy(g_last_proj_tag, "-", sizeof(g_last_proj_tag) - 1);
-    g_xf_min = 0xffffffff;
-    g_xf_max = 0;
+    g_vs_calls = 0;
+    g_vs_vec4s = 0;
+    g_vs_classified = 0;
+    g_vs = VsMatchAgg{};
+    memset(g_vs_reg_hits, 0, sizeof(g_vs_reg_hits));
     g_vp_calls = 0;
     g_rect_n = 0;
     g_vpf_min = 0xffffffff;
@@ -872,7 +1109,8 @@ void install()
                   (void *)MC2_RENDERSHELL_RENDERFRAME, (unsigned)rf.error().type);
     } else {
         g_renderframe_mid = std::move(*rf);
-        MC2VR_LOG("S1: installed RenderFrame-entry MidHook @ %p", (void *)MC2_RENDERSHELL_RENDERFRAME);
+        MC2VR_LOG("S1: installed RenderFrame-entry MidHook @ %p",
+                  (void *)MC2_RENDERSHELL_RENDERFRAME);
     }
 }
 

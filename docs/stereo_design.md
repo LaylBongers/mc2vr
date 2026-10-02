@@ -157,6 +157,76 @@ spec (all behavior-preserving):
   and the two live primary subobjects (ptrs at block +0x74) are also scanned
   for SetTransform matches ("ctx+off" / "subN+off" tags).
 
+### S1 run results (2026-10-02, one gameplay run: cutscene → boat, incl. satellite designation) — answers + one instrumentation bug
+
+1. **S1.1 ANSWERED (main branch)**: countersA advances between the pre-VM site
+   and RenderFrame entry in 80–100% of frames, in every window → **the VM'd
+   call at `0x004c99f9` consumes the ring at pipeline time**; clone-at-stage
+   S3 is structurally valid. Additional advance RenderFrame-entry → first
+   stream cmd (most frames): consumption also spills into RenderFrame's setup
+   walk; the bulk of the per-frame advance actually lands between slot-4 and
+   the next pipeline (counter semantics below) — the interpreter is likely
+   invoked from more sites than the pipeline one.
+2. **Counter decode REVISED (S0 was wrong)**: queue `+0x10` is a 32-bit
+   cumulative monotonic counter (dword delta 213/frame at menu; poller saw it
+   grow to ~40M during satellite), NOT packed u16 consumer/producer halves;
+   `+0x14` reads 0 for whole windows (2 at boot). The doc's ring-position
+   formulas are invalid; S1b logs raw `A`/`B` dwords at all 4 bracket points
+   for the first 60 world-view frames ("S1 raw:" lines) to re-derive offline.
+3. **Element format CONFIRMED at runtime**: captured elements are
+   `{u32 size, ptr-to-live-data}` serialization descriptors — one captured
+   non-world element = header `{17, 0x00ed870c}` + pairs `{0x1f0,ptr}×4` +
+   `{0x10}` + `{0x50}` + `{0x80}` (0x1f0-stride blocks at 0x01669xxx). The
+   world-view `{0x30, 0x810, 0x680}` element was NOT captured — the one-shot
+   dumps fired at boot, before world views existed (S1b re-arms them on
+   world-view frames and dumps forward of the consumer position).
+4. **S1.2 NEGATIVE RESULT (important)**: SetTransform (44) is NEVER called
+   (calls=0 the entire run) — the engine is shader-driven; the draw camera
+   reaches the GPU via **vertex shader constants**. SetViewport (47) fires
+   ~876–3638×/frame with mipmap-cascade rects (2560x1440 → … → 1x1, plus
+   1024x1024@0/1024/2048/3072 pages) — per-draw viewport/RT switching,
+   runtime-confirmed (S0's per-record RT finding).
+5. **S1.3 INCONCLUSIVE — the patch hit a dead entry**: head view 0 (type 2,
+   flags 5ad8) is an ALL-ZERO template (M3 ViewDump at patch time: every
+   matrix zero) — a dormant view that leads the list during cutscene/menu
+   phases. No nudge + no match proves nothing about live-entry deref. During
+   real gameplay the head is idx 65 (submitted in 602/602 frames; idx 14
+   likewise — main-camera candidates for S3 duplication).
+6. **S1.4 CONFIRMED + bug**: satellite frames present (t2 max 667/581,
+   98k–118k submits/10s window) but `satelliteFrames=0` — the detector used
+   the capped 64-record list count. Fixed in S1b (uncapped per-frame total).
+   View lists: gameplay 14–44 type-2 views/frame, ALL flags f5ad8 (flags are
+   not discriminative); list heads observed: 0 (cutscene), 1/14 (boat), 65
+   (gameplay), 71/74 (satellite designation).
+7. **Stability**: 0 FATALs, no Reset, all hooks survived sustained ~200
+   views/frame — the mechanism set is robust at load.
+
+### S1b — follow-up run (camera-channel re-instrumentation; IMPLEMENTED 2026-10-02, pending run)
+
+- **SetVertexShaderConstantF (device slot 94, per d3d9.h order that matches
+  every runtime-pinned slot) VmtHook** — the S1.2 replacement channel. Every
+  GPU-bound 4-float group (bulk upload path) and every row-wise float4 upload
+  (register cache, assembled when 4 consecutive registers fill) is classified
+  against the live ViewEntry matrices (exact + transposed), the frame-ctx
+  0x680 block, and the two live primary subobjects; tags like `e65.m1`,
+  `ctx+0x1ec`; per-register hit counts reported per window (`S1 vsreg:`).
+- **Residency patch v2** on a LIVE head (precondition: nonzero m[0]
+  translation — kills the view-0 template case): window A patches m[1][3] for
+  5 frames; after a ~2s gap (so the two nudges are separately visible), window
+  B patches the camera STAGING SLOT pos[0] (`frameCtx+0xc2110+head*0x30`) for
+  5 frames. Nudge A = draw camera reads the live entry m[1]; nudge B = draw
+  camera reads the staging slot at consume time; neither (plus VS-constant
+  `none` tags) = the camera comes from elsewhere (candidate: the 0x28-stride
+  camera-record ring at `this+0xcb110`) — S1c would bracket that.
+- Element dumps re-armed on world-view frames, dumped forward of the
+  consumer position; counter reads are 32-bit ("S1 raw:" series over the
+  first 60 world-view frames for offline re-derivation); satellite detection
+  fixed (uncapped totals).
+- Expected evidence per this run: two distinct ~5-frame nudges ~2s apart
+  (or their absence), `S1 vsmat:` matrix-classification details, a
+  `{0x30,0x810,0x680}` world element in the `@consPos` dumps, and the
+  `S1 vsreg:` register table naming the camera registers.
+
 Static work hit the SecuROM wall at the consumer; S1 settles the open semantics at
 runtime, all via proven mechanisms (no new hook species):
 
@@ -290,7 +360,8 @@ slot-5 hook (S4). No new mechanism — this doc ends at visual VR.
 | SubmitWorldPackets element staging `0x0048ef71` (count `[ESP+0x19a00]`, array `[ESP+0x79a0]`, cap 768) | MidHook | S3 clone-at-stage | S0-mapped, pending install |
 | SubmitWorldPackets iterator reload `0x0048f013` (ESI=`*(entry+4)`; EIP→`0x0048e9d0` re-runs view) / back-edge `0x0048f01f` | MidHook (+context EIP redirect) | S3 fallback re-emit | S0-mapped |
 | Pipeline pre-VM-stub `0x004c99f9` + RenderFrame entry `0x00855690` | MidHook / MidHook at first instruction | S1 consumer bracket | **installed (S1)** — plus taps at first stream opcode and slot-4 for a 4-point bracket |
-| Device `SetTransform` (44) / `SetViewport` (47) | VmtHook (proven device clone) | S1 camera attribution | **installed (S1)** |
+| Device `SetTransform` (44) / `SetViewport` (47) | VmtHook (proven device clone) | S1 camera attribution | **installed (S1)** — SetTransform proved UNUSED by the run (kept as the per-run deadness check) |
+| Device `SetVertexShaderConstantF` (94) | VmtHook (proven device clone) | S1b camera attribution (real channel) | **installed (S1b)** |
 | `ViewEntry` camera fields | shadow copies (S2), never in-place on live entries | S2/S3 | S0 design settled |
 | device `Present` (slot 17) | VmtHook | S4 compositor | installed (M2) |
 | device `Reset` (slot 16) | VmtHook | S4 param changes | installed (M2) |
@@ -304,9 +375,11 @@ suspected consumer lives there; bracket it from the plaintext call sites instead
 
 - ~~Primary sub-objects `g_RenderShell+0xFDC` (count 2)~~ — **RESOLVED (S0)**: per-frame
   frame-ctx copies, not per-view, not eye slots.
-- Which of the nine matrices feeds the actual draw (m[1] worldToView expected) and
-  whether the draw camera comes from the ViewEntry or the 0x680 ctx block — S1.2
-  (SetTransform/SetViewport logging) answers.
+- ~~Which of the nine matrices feeds the actual draw~~ — S1.2 REFRAMED: the engine
+  never calls SetTransform (shader-driven); the question is now WHICH VS constant
+  registers carry the camera matrices and whether they match a live ViewEntry
+  matrix, a ctx-block value, or a derived product — S1b answers (window A/B nudges
+  discriminate m[1] vs staging-slot provenance).
 - Does the VM consumer iterate the ring elements (duplication works) or re-walk the
   active list itself via the ctx head (duplication bypassed — consumer-side fallback
   needed)? S1.1/S1.3 answer; this is the last structural risk to the producer-side plan.

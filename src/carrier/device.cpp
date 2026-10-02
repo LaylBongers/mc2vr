@@ -34,6 +34,12 @@ constexpr size_t SLOT_EndScene = 42;
 // §S1.2; the SetRenderState@57 anchor that pinned the Present region pins these).
 constexpr size_t SLOT_SetTransform = 44;
 constexpr size_t SLOT_SetViewport = 47;
+// S1b camera channel: SetVertexShaderConstantF (slot 94 per the d3d9.h method
+// order, which agrees with every runtime-pinned slot: Reset 16 / Present 17 /
+// BeginScene 41 / EndScene 42 / SetTransform 44 / SetViewport 47 /
+// SetRenderState 57). S1 run result: SetTransform is NEVER called — the
+// engine is shader-driven, so the draw camera reaches the GPU as VS constants.
+constexpr size_t SLOT_SetVertexShaderConstantF = 94;
 // IDirect3DSwapChain9::GetPresentParameters
 constexpr size_t SLOT_SC_GetPresentParameters = 9;
 
@@ -48,6 +54,7 @@ using GetSwapChain_t = HRESULT(__stdcall *)(void *, UINT, void **);
 using GetPresentParams_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
 using SetTransform_t = HRESULT(__stdcall *)(void *, DWORD, const D3DMATRIX *);
 using SetViewport_t = HRESULT(__stdcall *)(void *, const D3DVIEWPORT9 *);
+using SetVertexShaderConstantF_t = HRESULT(__stdcall *)(void *, UINT, const float *, UINT);
 
 // Leaked by design (see device.hpp).
 safetyhook::VmtHook *g_vmt_hook = nullptr;
@@ -57,6 +64,7 @@ safetyhook::VmHook *g_endscene_hook = nullptr;
 safetyhook::VmHook *g_reset_hook = nullptr;
 safetyhook::VmHook *g_settransform_hook = nullptr;
 safetyhook::VmHook *g_setviewport_hook = nullptr;
+safetyhook::VmHook *g_setvsconstf_hook = nullptr;
 
 void *g_device = nullptr;
 bool g_params_logged = false;
@@ -251,6 +259,25 @@ HRESULT __stdcall setviewport_hook(void *self, const D3DVIEWPORT9 *vp)
     return g_setviewport_hook->stdcall<HRESULT>(self, vp);
 }
 
+// ---- S1b: SetVertexShaderConstantF — the REAL camera attribution channel ------
+
+uint64_t g_setvsconst_calls = 0;
+
+HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UINT count)
+{
+    g_setvsconst_calls++;
+    if (g_setvsconst_calls <= BURST_LOG_CALLS) {
+        char caller[96];
+        describe_code_address(__builtin_return_address(0), caller, sizeof(caller));
+        MC2VR_LOG("D3D: SetVertexShaderConstantF call #%llu: start=c%u count=%u "
+                  "frame=%llu | caller=%s",
+                  (unsigned long long)g_setvsconst_calls, (unsigned)start,
+                  (unsigned)count, (unsigned long long)hooks::frame_count(), caller);
+    }
+    s1::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
+    return g_setvsconstf_hook->stdcall<HRESULT>(self, start, data, count);
+}
+
 
 } // namespace
 
@@ -296,6 +323,8 @@ bool capture_and_hook()
         {SLOT_Reset, (void *)&reset_hook, &g_reset_hook, "Reset"},
         {SLOT_SetTransform, (void *)&settransform_hook, &g_settransform_hook, "SetTransform"},
         {SLOT_SetViewport, (void *)&setviewport_hook, &g_setviewport_hook, "SetViewport"},
+        {SLOT_SetVertexShaderConstantF, (void *)&setvsconstf_hook, &g_setvsconstf_hook,
+         "SetVertexShaderConstantF"},
     };
 
     for (const SlotSpec &spec : slots) {
@@ -310,7 +339,8 @@ bool capture_and_hook()
     }
 
     MC2VR_LOG("D3D: VmtHook installed — Present/BeginScene/EndScene/Reset pinned "
-              "(M2) + SetTransform/SetViewport (S1 camera attribution)");
+              "(M2) + SetTransform/SetViewport (S1) + SetVertexShaderConstantF "
+              "slot %u (S1b camera channel)", (unsigned)SLOT_SetVertexShaderConstantF);
     return true;
 }
 

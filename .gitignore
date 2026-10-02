@@ -1,5 +1,6 @@
 /backups
 /ghidra
 /build
+__pycache__
 launch.conf
 opencode.json
