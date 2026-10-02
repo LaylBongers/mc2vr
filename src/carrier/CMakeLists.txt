@@ -7,6 +7,7 @@ add_library(mc2vr_carrier SHARED
     hooks.cpp
     device.cpp
     probes.cpp
+    render_dump.cpp
     log.cpp
     sha256.c
 )

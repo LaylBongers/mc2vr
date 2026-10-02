@@ -8,6 +8,7 @@
 #include "hooks.hpp"
 #include "log.hpp"
 #include "probes.hpp"
+#include "render_dump.hpp"
 #include "sha256.h"
 
 namespace mc2vr {
@@ -115,6 +116,10 @@ void init()
     // M2: device capture + VmtHook (Present/BeginScene/EndScene/Reset).
     // Best-effort: a failure here keeps the game and FrameTick hook alive.
     device::capture_and_hook();
+
+    // M3: view-table dump + command histogram + slot claim test + queue poll.
+    // Best-effort per component.
+    render::install();
 
     MC2VR_LOG("init complete");
 }

@@ -43,10 +43,10 @@ Keep until M3/M4 planning is done, then fold into `initial_analysis.md`/`render_
 | `GetD3DDevice` thunk | `0x0047f2f0` | direct call | DONE (M2): device capture at init (device pre-exists; thunk is hot-path — don't hook it) |
 | device vtable | runtime | VmtHook | DONE (M2): Present 17 / BeginScene 41 / EndScene 42 / Reset 16 — slots pinned (SetRenderState@57 anchor + runtime 1:1 call-pattern confirmation); present params via swapchain `GetPresentParameters` (slot 9) on first Present; Reset logs new params |
 | `LtiRenderer_BeginSubmit` entry | `0x0074aaa0` | MidHook probe | DONE (M2.5): answered driver + vtable questions; one-shot, currently dormant |
-| `RenderCmd_ExecuteStream` | `0x008569d0` | InlineHook + MidHook at opcode switch | M3: command histogram |
-| `RenderQueue_SubmitWorldPackets` | `0x0048e620` | MidHook in per-view loop | M3: dump view/portal table (`0x012865e0`, stride `0x810`) |
-| `g_RenderShell` slots 4/5 (`EndOfFrameHook`/`PostUpdateHook`) | base vtable `0x00bd38e8` (LIVE; derived `0x00be84c0` never runs) | cloned-vtable swap on `g_RenderShell` (`0x017ceaf0`) | M3+: confirm slots are callable NoOps, then claim for VR frame hooks |
-| `g_RenderQueue` counters | `0x00ff3618` | memory poll from carrier thread | M3: producer/consumer rhythm |
+| `RenderCmd_ExecuteStream` | `0x008569d0` | MidHook at opcode cmp `0x008569f5` (EAX=opcode, 27 ops) | M3: command histogram — **IMPLEMENTED, pending run** |
+| `RenderQueue_SubmitWorldPackets` | `0x0048e620` | MidHook at view-loop lea `0x0048e9ea` (ESI=idx, ECX=type, EAX=off; entry+0x7e4 = per-view object; 3rd table `0x014095e0` stride 0x20) | M3: view aggregation + one-shot entry dumps — **IMPLEMENTED, pending run**; needs gameplay (menu may not submit world views) |
+| `g_RenderShell` slots 4/5 (`EndOfFrameHook`/`PostUpdateHook`) | live vtable = base `LtiRenderer_vtbl` `0x00bd38e8`; object `0x017ceaf0` (=`*g_RenderShellPtr` `0x00dfb2f8`) | cloned-vtable swap (VmtHook), counting no-op handlers | M3 claim test — **IMPLEMENTED, pending run**. Risk: the `0x00a7d950` reinit fragment reinstalls the original vtable — if slot call counts stop after device-lost, re-claim (or re-install the swap on device-lost) |
+| `g_RenderQueue` counters | `0x00ff3618` | poller thread (250ms), 10s window reports | M3 producer rhythm — **IMPLEMENTED, pending run** |
 
 Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device vtable is the one sanctioned vtable patch (via clone).
 
@@ -55,7 +55,7 @@ Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device
 - M0 (toolchain, launcher, injection, carrier attach) — DONE.
 - M1 (FrameTick stability; probes: `.data` write+restore, VM-stub call) — DONE. SecuROM live-patching caveat DISCHARGED.
 - M2 (device capture, VmtHook, Present/EndScene/Reset pinning, present params) + M2.5 (BeginSubmit probe: frame driver + live vtable) — DONE. Per-frame submit chain is fully plaintext; see `render_path.md` "Frame driver chain".
-- M3 (pending): view-table dump + command histogram → input for stereo submission design (separate plan). Note: view table is likely only populated in gameplay, not at menu — verify in-mission.
+- M3 (implemented, pending run): view-table dump + command histogram → input for stereo submission design (separate plan). Note: view table is likely only populated in gameplay, not at menu — verify in-mission. Report lines: `M3 views:` / `M3 view list:` / `M3 cmds:` / `M3 slots:` every 10s; one-shot `M3 ViewDump` hex dumps (≤12 entries × 65 lines) on first sight of each view index.
 - M4 (future): first redirects. Device already exists at injection (creation params unchangeable post-boot); use device-lost path (`DAT_01174a94`) + `Reset` VmtHook for present-param changes, or Present-hook interop blit (needs neither).
 
 ## Motion-control / logic-mod track (long-term)
