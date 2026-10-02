@@ -31,6 +31,15 @@
 // timing sanity, install ack.
 #define MC2_GAMESHELL_FRAMETICK ((uintptr_t)0x00630e10u)
 
+// LtiRenderer_BeginSubmit (0x0074aaa0, plaintext .text, vtable slot 15 of
+// LtiRenderer_vtbl 0x00bd38e8) — thiscall (this in ECX). Every frame:
+// Present(prev frame) then BeginScene (M2 runtime evidence). An M2.5 MidHook
+// probe at its entry reads ECX (this) and [ESP] (return address) to answer
+// two open questions: which vtable the live object holds (base vs the
+// derived RenderShell override 'Flush') and who drives the frame (the
+// encrypted thunk_FUN_0256b6f0 is the suspect).
+#define MC2_LTI_BEGINSUBMIT ((uintptr_t)0x0074aaa0u)
+
 // GetD3DDevice — thunk (6 bytes, jmp into a SecuROM VM stub), void* (void),
 // 12 call sites. Hooking VM stubs is forbidden; CALLING them is fine (probe).
 #define MC2_GETD3DDEVICE_THUNK ((uintptr_t)0x0047f2f0u)

@@ -35,10 +35,11 @@ Per-address facts (names, chain, vtables, queue layout) are stored in the Ghidra
 
 ## Open items
 
-- `thunk_FUN_0256b6f0` (called after every frame, both normal and device-lost branches) — SecuROM-encrypted body; suspected render submit/flip. Needs runtime confirmation.
+- ~~`thunk_FUN_0256b6f0` (called after every frame, both normal and device-lost branches) — SecuROM-encrypted body; suspected render submit/flip. Needs runtime confirmation.~~ **REVISED (M2, 2026-10-02)**: it is NOT the direct D3D caller — Present/BeginScene/EndScene are all called from plaintext LTI (`LtiRenderer_BeginSubmit` 0x0074aaa0 / `LtiRenderer_Dx9_Present` 0x00748fb0 / `LtiRenderer_EndSubmit` 0x0074ac30; runtime burst evidence, annotated in Ghidra). Remaining: whether the encrypted thunk drives BeginSubmit/Flush via virtual dispatch — carrier BeginSubmit MidHook probe (ECX = this/vtable, [ESP] = caller) answers this in the next run.
+- ~~`Present`/`EndScene` call sites (encrypted region below `RenderCmd_ExecuteStream`) — find at runtime by breaking on the device vtable.~~ **CLOSED (M2)**: call sites are the plaintext LTI functions above. Frame chain per runtime: BeginSubmit → Present(prev frame) → BeginScene → frame pipeline → EndSubmit → EndScene. BeginSubmit is virtual (LtiRenderer_vtbl slot 15; derived RenderShell vtable 0x00be84c0 overrides with `Flush` — which object is live at runtime is the M2.5 probe question).
 - Producer counter semantics in `g_RenderQueue` (`countersA`/`countersB`, packed 16-bit pairs; producers increment both halves and spin-wait on `(A+B) % capacity`) — exact consumer-progress tracking not fully derived; re-check at runtime.
-- `Present`/`EndScene` call sites (encrypted region below `RenderCmd_ExecuteStream`) — find at runtime by breaking on the device vtable.
 - `g_RenderQueue2` (`0x00ff3650`) consumer and purpose — submissions seen from loading-screen path (`FUN_004c9580`), `FUN_00429510`, `FUN_00403720`; likely 2D/overlay queue. Unconfirmed.
 - `GameState3_Update` / `GameState2_Frontend_Update` internals — named by position, semantics still unexplored.
-- View/portal table layout at `0x012865e0` (stride `0x810`, count `DAT_00d29e60`) — field map not yet extracted; needed before stereo view injection.
+- View/portal table layout at `0x012865e0` (stride `0x810`, count `DAT_00d29e60`) — field map not yet extracted; needed before stereo view injection (M3).
 - `0x0117527c` adapter remap table / multi-adapter handling in `RenderSystem_Init` — not explored (single-GPU assumption for now).
+- Which vtable the live per-frame renderer object holds — base `LtiRenderer_vtbl` (0x00bd38e8) vs derived `RenderShell_vtbl` (0x00be84c0, slot 15 → `Flush`) — M2.5 MidHook probe answers this (and whether `vt[4]`/`vt[5]` NoOp slots are callable claim points) in the next run.

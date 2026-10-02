@@ -40,6 +40,31 @@ void log_init()
     }
 }
 
+void describe_code_address(void *addr, char *out, size_t out_size)
+{
+    HMODULE module = nullptr;
+    if (!addr || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                         GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                     (LPCWSTR)addr, &module)) {
+        _snprintf(out, out_size, "unknown:%p", addr);
+        out[out_size - 1] = '\0';
+        return;
+    }
+
+    wchar_t path[MAX_PATH] = {};
+    GetModuleFileNameW(module, path, MAX_PATH);
+
+    const wchar_t *basename = wcsrchr(path, L'\\');
+    basename = basename ? basename + 1 : path;
+
+    char name[64] = {};
+    WideCharToMultiByte(CP_UTF8, 0, basename, -1, name, sizeof(name) - 1, nullptr, nullptr);
+
+    _snprintf(out, out_size, "%s+0x%08x", name,
+              (unsigned)((uintptr_t)addr - (uintptr_t)module));
+    out[out_size - 1] = '\0';
+}
+
 void log_write(const char *fmt, ...)
 {
     if (g_log_file == INVALID_HANDLE_VALUE) {

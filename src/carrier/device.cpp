@@ -54,52 +54,26 @@ bool g_params_logged = false;
 
 // Per-call statistics. Present/BeginScene/EndScene/Reset all fire on the
 // main thread only (render threading model, render_path.md) — no atomics.
-constexpr uint32_t BURST_LOG_CALLS = 3;       // full detail for the first calls
+// `total` drives the one-shot diagnostic burst (first calls of the process
+// lifetime, not per report window); `window` drives the 10s pattern reports.
+constexpr uint32_t BURST_LOG_CALLS = 3;
 constexpr double REPORT_INTERVAL_SEC = 10.0;
 
 struct CallStat {
-    uint64_t count = 0;
-    LARGE_INTEGER window_start = {};
+    uint64_t total = 0;
+    uint64_t window = 0;
 };
 
 CallStat g_present, g_beginscene, g_endscene, g_reset;
 LARGE_INTEGER g_qpc_freq = {};
 
 // ---- Diagnostics ----------------------------------------------------------
-
-// "<module>.dll+0x<offset>" for a code address; lets the audit tell whether a
-// Present call site is the game's plaintext .text, the SecuROM region
-// (>= 0x01a48000 of Mercenaries2.exe — the thunk_FUN_0256b6f0 open item), or
-// DXVK internals.
-void describe_address(void *addr, char *out, size_t out_size)
-{
-    HMODULE module = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            (LPCWSTR)addr, &module)) {
-        _snprintf(out, out_size, "unknown:%p", addr);
-        out[out_size - 1] = '\0';
-        return;
-    }
-
-    wchar_t path[MAX_PATH] = {};
-    GetModuleFileNameW(module, path, MAX_PATH);
-
-    const wchar_t *basename = wcsrchr(path, L'\\');
-    basename = basename ? basename + 1 : path;
-
-    char name[64] = {};
-    WideCharToMultiByte(CP_UTF8, 0, basename, -1, name, sizeof(name) - 1, nullptr, nullptr);
-
-    _snprintf(out, out_size, "%s+0x%08x", name,
-              (unsigned)((uintptr_t)addr - (uintptr_t)module));
-    out[out_size - 1] = '\0';
-}
+// (address description lives in log.cpp: mc2vr::describe_code_address)
 
 void burst_log(const char *what, uint64_t n, const char *extra)
 {
     char caller[96];
-    describe_address(__builtin_return_address(0), caller, sizeof(caller));
+    describe_code_address(__builtin_return_address(0), caller, sizeof(caller));
     MC2VR_LOG("D3D: %s call #%llu: frame=%llu %s | caller=%s",
               what, (unsigned long long)n,
               (unsigned long long)hooks::frame_count(), extra, caller);
@@ -140,17 +114,20 @@ void log_present_params()
 
 // ---- Hook handlers ----------------------------------------------------------
 
+LARGE_INTEGER g_window_start = {};
+
 HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
                                HWND hwnd, const RGNDATA *dirty)
 {
-    g_present.count++;
+    g_present.total++;
+    g_present.window++;
 
-    if (g_present.count <= BURST_LOG_CALLS) {
+    if (g_present.total <= BURST_LOG_CALLS) {
         char extra[96];
         _snprintf(extra, sizeof(extra), "args src=%p dst=%p hwnd=%p dirty=%p",
                   src, dst, hwnd, dirty);
         extra[sizeof(extra) - 1] = '\0';
-        burst_log("Present", g_present.count, extra);
+        burst_log("Present", g_present.total, extra);
     }
 
     if (!g_params_logged) {
@@ -161,25 +138,25 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
     // EndScene / BeginScene counts must track the FrameTick frame count 1:1.
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    if (g_present.window_start.QuadPart == 0) {
-        g_present.window_start = now;
-    } else if ((double)(now.QuadPart - g_present.window_start.QuadPart) /
+    if (g_window_start.QuadPart == 0) {
+        g_window_start = now;
+    } else if ((double)(now.QuadPart - g_window_start.QuadPart) /
                    (double)g_qpc_freq.QuadPart >= REPORT_INTERVAL_SEC) {
         double window_sec =
-            (double)(now.QuadPart - g_present.window_start.QuadPart) / (double)g_qpc_freq.QuadPart;
+            (double)(now.QuadPart - g_window_start.QuadPart) / (double)g_qpc_freq.QuadPart;
         MC2VR_LOG("D3D: calls in %.1fs: Present=%llu BeginScene=%llu EndScene=%llu Reset=%llu "
                   "| frames=%llu",
-                  window_sec, (unsigned long long)g_present.count,
-                  (unsigned long long)g_beginscene.count,
-                  (unsigned long long)g_endscene.count,
-                  (unsigned long long)g_reset.count,
+                  window_sec, (unsigned long long)g_present.window,
+                  (unsigned long long)g_beginscene.window,
+                  (unsigned long long)g_endscene.window,
+                  (unsigned long long)g_reset.window,
                   (unsigned long long)hooks::frame_count());
 
-        g_present.count = 0;
-        g_beginscene.count = 0;
-        g_endscene.count = 0;
-        g_reset.count = 0;
-        g_present.window_start = now;
+        g_present.window = 0;
+        g_beginscene.window = 0;
+        g_endscene.window = 0;
+        g_reset.window = 0;
+        g_window_start = now;
     }
 
     return g_present_hook->stdcall<HRESULT>(self, src, dst, hwnd, dirty);
@@ -187,38 +164,41 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
 
 HRESULT __stdcall beginscene_hook(void *self)
 {
-    g_beginscene.count++;
-    if (g_beginscene.count <= BURST_LOG_CALLS) {
-        burst_log("BeginScene", g_beginscene.count, "");
+    g_beginscene.total++;
+    g_beginscene.window++;
+    if (g_beginscene.total <= BURST_LOG_CALLS) {
+        burst_log("BeginScene", g_beginscene.total, "");
     }
     return g_beginscene_hook->stdcall<HRESULT>(self);
 }
 
 HRESULT __stdcall endscene_hook(void *self)
 {
-    g_endscene.count++;
-    if (g_endscene.count <= BURST_LOG_CALLS) {
-        burst_log("EndScene", g_endscene.count, "");
+    g_endscene.total++;
+    g_endscene.window++;
+    if (g_endscene.total <= BURST_LOG_CALLS) {
+        burst_log("EndScene", g_endscene.total, "");
     }
     return g_endscene_hook->stdcall<HRESULT>(self);
 }
 
 HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
 {
-    g_reset.count++;
+    g_reset.total++;
+    g_reset.window++;
 
     // Reset carries the NEW present parameters — the M4-relevant data. Log
     // every Reset (they're rare).
     if (pp) {
         MC2VR_LOG("D3D: Reset call #%llu: new params %ux%u fmt=%u count=%u windowed=%u "
                   "swapeffect=%u refresh=%u interval=0x%08x | frame=%llu",
-                  (unsigned long long)g_reset.count, pp->BackBufferWidth, pp->BackBufferHeight,
+                  (unsigned long long)g_reset.total, pp->BackBufferWidth, pp->BackBufferHeight,
                   pp->BackBufferFormat, pp->BackBufferCount, pp->Windowed, pp->SwapEffect,
                   pp->FullScreen_RefreshRateInHz, pp->PresentationInterval,
                   (unsigned long long)hooks::frame_count());
     } else {
         MC2VR_LOG("D3D: Reset call #%llu: NULL params | frame=%llu",
-                  (unsigned long long)g_reset.count, (unsigned long long)hooks::frame_count());
+                  (unsigned long long)g_reset.total, (unsigned long long)hooks::frame_count());
     }
 
     return g_reset_hook->stdcall<HRESULT>(self, pp);
@@ -241,7 +221,7 @@ bool capture_and_hook()
 
     void **vt = *(void ***)g_device;
     char vtable_desc[96];
-    describe_address(vt[0], vtable_desc, sizeof(vtable_desc));
+    describe_code_address(vt[0], vtable_desc, sizeof(vtable_desc));
     MC2VR_LOG("D3D: device captured @ %p (vtable in %s)", g_device, vtable_desc);
 
     // VmtHook clones the object's vtable and swaps the vptr — DXVK's original
