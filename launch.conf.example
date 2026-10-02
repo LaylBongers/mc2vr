@@ -1,0 +1,12 @@
+# MC2VR launcher configuration
+
+# Location of the game
+GAME_DIR="FILL THIS IN"
+GAME_EXE="Mercenaries2.exe"
+
+# Wine prefix / Proton compatdata directory
+COMPAT_DATA_PATH="FILL THIS IN"
+
+# Steam installation
+STEAM_HOME="$HOME/.local/share/Steam"
+PROTON_NAME="Proton - Experimental"
