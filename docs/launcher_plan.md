@@ -12,9 +12,22 @@ Temporary plan — delete once the injector works and lessons are folded back in
 
 ## Build setup
 
-- Cross toolchain `i686-w64-mingw32-g++` — NOT yet installed (setup item; host GCC 16 + CMake 4.4 are fine).
-- SafetyHook: FetchContent or the amalgamated `safetyhook.{hpp,cpp}` pair; needs a modern C++ compiler; MIT.
-- CMake project, two targets: launcher (C is fine) + carrier (C++, links SafetyHook).
+- Cross toolchain `i686-w64-mingw32-g++` (GCC 16.2) — installed; configure with
+  `cmake -B build/win32 -DCMAKE_TOOLCHAIN_FILE=cmake/i686-w64-mingw32.cmake`.
+- SafetyHook v0.7.0 — vendored (amalgamated `safetyhook.{hpp,cpp}` + `Zydis.{c,h}`) in
+  `vendor/safetyhook/` (BSL-1.0; C++23, fine on GCC 16).
+- CMake project, two targets: launcher (`src/launcher/`, C) + carrier (`src/carrier/`, C++,
+  links SafetyHook). Output: `build/win32/bin/`. `launch.sh` deploys both to
+  `<GAME_DIR>/mc2vr/` and runs the launcher under Proton.
+- Build lock: carrier verifies the game exe (size + SHA-256, hashed on disk at startup)
+  against `src/carrier/build_lock.h` and refuses to hook on mismatch.
+  Regenerate after re-RE: `tools/gen-build-lock.sh <exe>`.
+- `tools/selftest/run.sh`: end-to-end chain test under plain Wine with a sleeper stand-in
+  (mimics base 0x400000 + ticking frame counter at the literal VA). Verified 2026-10-02:
+  path resolution, remote module-base check, boot-counter poll, CreateRemoteThread+
+  LoadLibraryW injection, carrier attach logging, and build-lock refusal all work.
+  This discharges the "verify injection early" risk for Wine; Proton itself is still
+  exercised first in M0 via `./launch.sh`.
 
 ## Launch sequence (launcher)
 
@@ -42,9 +55,12 @@ Temporary plan — delete once the injector works and lessons are folded back in
 
 ## Milestones
 
-- **M0** — toolchain builds; launcher starts game, injects carrier; carrier logs "attached". No hooks.
+- **M0** — toolchain builds; launcher starts game, injects carrier; carrier logs "attached". No hooks. *(Status: **COMPLETE 2026-10-02** — verified three ways: launcher log (full chain: start → base check → boot poll → inject), carrier log (attached, base verified, build-lock hash match on the real exe), and the game's own `d3d.log` (full D3D9 device init + `shell_mainmenu.bik` → main menu reached with carrier resident — SecuROM inert under DLL injection + cross-process reads). Chain also regression-tested headless via `tools/selftest/run.sh`.)*
+
+  Post-run hardening folded in: boot gate now requires TWO counter changes (a single early write during init could fake it) and logs observed values (`counter %016llx -> %016llx`) so the next real run confirms the address behaves as the per-frame counter; launcher's carrier-ack now waits for the "attached" log line (plain file-existence raced an empty dump). Follow-up for the next real run: sanity-check the logged counter values show small steady increments at ~frame rate.
 - **M1** — FrameTick hook logs stable for minutes; confirms SecuROM inert under live patching (AGENTS caveat discharged or escalated). Extend with two motion-control pre-probes in the same run: (a) write+restore a `.data` byte from the carrier (logic modding writes game structures constantly), (b) direct-call a benign VM-stub thunk (e.g. `GetD3DDevice` at `0x0047f2f0`) with correct convention — verifies mod code may *call* SecuROM-virtualized functions even though they can never be *hooked*.
 - **M2** — device captured + VmtHook: Present/EndScene/Reset pinned, present params logged. Closes render-path open items 2–3.
+  Runtime note (verified in the M0 run): this prefix renders through **DXVK** (game `d3d.log` reports "AMD Radeon RX 7800 XT (RADV NAVI32)", D3D9 → Vulkan → RADV). The captured `IDirect3DDevice9*` and every vtable slot we hook will be DXVK's implementation — same COM contract, but expect DXVK quirk-level differences in behavior/timing, and keep it in mind for the later Present-hook interop blit (M4).
 - **M3** — view-table dump + command histogram. Input for stereo submission design (separate plan after this).
 - **M4** — first redirects (eye duplication etc.) — out of scope here. Known caveat for that phase: post-boot hooks cannot alter device/swapchain *creation* parameters (device already exists); use the game's own device-lost path (`DAT_01174a94`) + `Reset` VmtHook to modify present params, or the pre-render-init install window noted in step 3. A `Present`-hook interop-blit approach needs neither.
 
