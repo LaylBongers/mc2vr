@@ -12,19 +12,17 @@ Per-address facts (names, prototypes, loop addresses, vtable layouts, globals, s
 
 ## VR hook plan (strategy)
 
-- Preferred frame hook: `GameShell_FrameTick` — single call site, covers update → render → present ordering every frame. Alternative injection slots: the two empty `RenderShell_vtable` hooks (`vt[4]`/`vt[5]`), which nothing else uses; confirm at runtime no subclass overrides them.
+- Preferred frame hook: `GameShell_FrameTick` — **DONE (M1, live)**: carrier InlineHook, per-frame counting + 10s timing reports. Alternative frame-level slots: `g_RenderShell` vtable slots 4/5 (`EndOfFrameHook`/`PostUpdateHook`, +0x10/+0x14, NoOp on the live base vtable — see `render_path.md`).
 - Reuse existing timing: `g_FrameDeltaSec` (raw QPC dt) and `g_Dt` (managed, post-framerate-policy dt) are already computed per frame — don't re-derive.
 - Frame pacing for VR should bypass/neutralize the adaptive framerate path (`g_FrameratePolicy` / `AdaptiveFramerate_Govern`, ini `[framerate]` presets) so the HMD drives the cadence.
 - Input injection has no dedicated input-update call: input flows through the state stack (`GameStateStack_Update`) and buffers cleared on the idle-reset path.
-- Hook statically by VA, never via the SecuROM wrapper pointers — they are runtime-only. Launcher-style inline patching (external process + hooking lib writing trampolines) is viable as-is: image base is fixed (no ASLR, relocs stripped — see `initial_analysis.md`), so Ghidra VAs are literal runtime addresses. Patch `.text` callers, never the encrypted regions.
-- Attaching a debugger: break at `WinMain` or `GameShell_Run`, not at the PE entry (SecuROM stub — see `initial_analysis.md`). Same timing rule for a launcher: if patching a suspended process before the SecuROM stub runs misbehaves, defer patching until after the stub (e.g., first `GameShell_FrameTick`).
+- Mechanism (proven, see `launcher_plan.md`): carrier (in-process SafetyHook) installs hooks statically by literal VA — image base fixed (no ASLR, relocs stripped, `initial_analysis.md`). Never hook via the SecuROM wrapper pointers (runtime-only) or inside `0x01a48000+`.
+- Boot gate: carrier is injected when the per-frame counter at `0x011755bc` moves (main loop alive, SecuROM startup stub finished by construction). The pre-D3D loop spins uncapped (~1400 Hz); the D3D device already exists by carrier-init time.
 
 ## Open items
 
-- True class name of the shell singleton (`g_RenderShell`) unknown — no Pangea RTTI.
-- ~~Actual render call site inside a state's `update(dt)` not yet traced~~ RESOLVED:RESOLVED: toptop state `g_InGameShellState``g_InGameShellState` →→ frame pipeline →frame pipeline → render packet submit; full chainpacket submit; full chain in the `GameShell_FrameTick``GameShell_FrameTick` plate comment, see `render_path.md`plate comment, see `render_path.md`.
-- ~~`DAT_01175288` singleton unidentified~~unidentified~~ RESOLVED: LTI `RenderSystem` singleton (created in `RenderSystem_Init`, owns the D3D9 state layer;RESOLVED: LTI `RenderSystem` singleton (created in `RenderSystem_Init`, owns the D3D9 state layer; `+0x5bc` sub-objectsub-object receivesreceives initialinitial state callsstate calls).
-- Runtime confirmation that `vt[4]`/`vt[5]` remain no-ops (static analysis says the base+derived vtables both install `VirtHook_NoOp`).
-- Purpose of the pointer array at `0x017d30e8` (count `0x017d30dc`) and the `0x1000`-byte buffer at `0x00f7fb90`, both cleared on idle reset — unknown.
+- True class name of the shell singleton (`g_RenderShell` = `0x017ceaf0`, holds base `LtiRenderer_vtbl` at frame time) unknown — no Pangea RTTI.
+- Purpose of the pointer array at `0x017d30e8` (count `0x017d30dc`) and the `0x1000`-byte buffer at `0x00f7fb90`, both cleared on idle reset — suspected input event buffer; resolve before designing input injection.
 - Roles of the two task tables (`g_TaskTable1`/`g_TaskTable2`) — one may be a shutdown table.
 - Full mapping of ini `[framerate]` preset strings ("Strict Adaptive", "Hybrid", ...) to `AdaptiveFramerate_Govern` branches.
+- `GameState3_Update` / `GameState2_Frontend_Update` internals — named by position, semantics unexplored.

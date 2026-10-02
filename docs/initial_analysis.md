@@ -44,7 +44,7 @@ Bypassed and inert. Details:
 
 - Anti-tamper/anti-debug machinery is present in the SecuROM regions: name strings for `IsDebuggerPresent`, `NtQuerySystemInformation`, `ReadProcessMemory`, `FindWindow`, `CreateToolhelp32Snapshot`; CRC32 tables (reflected poly `0xEDB88320`) in `Sdata`/`Sidata` around `0x02455560`. `.securom`'s first 4 KB is high-entropy (VM payload).
 - Capability ≠ activity: whether/when a check runs is VM bytecode — not cheaply decidable statically, and not worth reversing. The game booting only proves the licensing gate passed; do NOT assume the tamper layer is neutered.
-- Startup-phase checks are irrelevant to us by design (hooks go in after the boot poll). The only open question — post-boot re-verification — is discharged empirically by the carrier's first hook test (`launcher_plan.md` M1): plain in-process memory writes, no debugger.
+- Startup-phase checks are irrelevant to us by design (hooks go in after the boot poll). The one open question — post-boot re-verification — is **DISCHARGED (M1, passed)**: multi-minute live runs with inline `.text` patches, in-process `.data` write/restores, and direct VM-stub calls produced zero reaction.
 - Never attach a debugger to the live game (anti-debug APIs would confound results and may kill the process). All runtime experiments go through the carrier.
 
 ## Symbols
