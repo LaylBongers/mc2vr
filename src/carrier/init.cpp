@@ -6,6 +6,7 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
+#include "probes.hpp"
 #include "sha256.h"
 
 namespace mc2vr {
@@ -101,6 +102,12 @@ void init()
         MC2VR_LOG("init complete — build lock FAILED, staying resident but idle");
         return;
     }
+
+    // M1 SecuROM pre-probes, before any hook touches .text: each step logs,
+    // so a crash is attributable to exactly one action (probes first — the
+    // FrameTick patch below is the higher-risk live-.text test).
+    probes::data_write_restore();
+    probes::call_vm_thunk();
 
     hooks::install();
 

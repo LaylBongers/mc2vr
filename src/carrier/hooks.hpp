@@ -2,14 +2,18 @@
 // the mechanism discipline (docs/launcher_plan.md) has a single choke point:
 //   - inline/Mid hooks via SafetyHook, plaintext .text only
 //   - never patch inside 0x01a48000+ (SecuROM) or VM-stub thunks
-//   - the one exception: VmtHook on the captured IDirect3DDevice9
+//   - the one exception: VmtHook on the captured IDirect3DDevice9 (M2+)
 //
-// Planned sites (instrumentation first, redirect later):
-//   GameShell_FrameTick          0x00630e10  InlineHook   frame counter/ack (M1)
-//   GetD3DDevice thunk          0x0047f2f0  InlineHook   capture device     (M2)
-//   RenderCmd_ExecuteStream     0x008569d0  Inline+Mid   cmd histogram      (M3)
-//   RenderQueue_SubmitWorldPkt  0x0048e620  MidHook      view-table dump    (M3)
-//   RenderShell vtable +0x10/+0x14  0x00be84c0  ptr store  NoOp confirm      (M3)
+// Installed sites:
+//   GameShell_FrameTick  0x00630e10  InlineHook  M1 — frame counter, timing
+//   sanity, install ack; also observes the D3D device pointer once it exists
+//   (M2 pre-work).
+//
+// Planned (M2/M3): GetD3DDevice thunk 0x0047f2f0 (InlineHook, capture
+// device), device VmtHook (Present/EndScene/Reset pinning),
+// RenderCmd_ExecuteStream 0x008569d0 (cmd histogram),
+// RenderQueue_SubmitWorldPackets 0x0048e620 (view-table dump),
+// RenderShell vtable +0x10/+0x14 @ 0x00be84c0 (direct pointer store).
 #pragma once
 
 namespace mc2vr::hooks {

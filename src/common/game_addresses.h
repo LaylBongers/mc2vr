@@ -22,3 +22,22 @@
 // Optional strict "render ready" gate for later milestones: non-zero once
 // g_D3D9 exists.
 #define MC2_G_D3D9 ((uintptr_t)0x01175284u)
+
+// ---- M1 hook/probe sites (all plaintext .text/.data, well below the ----
+// ---- SecuROM region at 0x01a48000; see docs/launcher_plan.md hook list) --
+
+// GameShell_FrameTick — void (void), called once per main-loop iteration from
+// GameShell_Run (single call site). The main M1 inline hook: frame counting,
+// timing sanity, install ack.
+#define MC2_GAMESHELL_FRAMETICK ((uintptr_t)0x00630e10u)
+
+// GetD3DDevice — thunk (6 bytes, jmp into a SecuROM VM stub), void* (void),
+// 12 call sites. Hooking VM stubs is forbidden; CALLING them is fine (probe).
+#define MC2_GETD3DDEVICE_THUNK ((uintptr_t)0x0047f2f0u)
+
+// Probe (a) target: the OTHER per-frame counter (.data, bumped in
+// GameTimeAccumulate_Update). Deliberately not 0x011755bc — that one is what
+// the launcher polls; keep the probe off it so its evidence stays clean.
+// The counter is diagnostic-only, so a tick landing mid-probe corrupting it
+// by one increment is acceptable (logged, never "fixed").
+#define MC2_PROBE_DATA_BYTE ((uintptr_t)0x017bad00u)

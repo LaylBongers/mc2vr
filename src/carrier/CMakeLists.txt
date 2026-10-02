@@ -5,6 +5,7 @@ add_library(mc2vr_carrier SHARED
     dllmain.cpp
     init.cpp
     hooks.cpp
+    probes.cpp
     log.cpp
     sha256.c
 )
