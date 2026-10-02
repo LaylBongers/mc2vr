@@ -2,5 +2,9 @@
 /ghidra
 /build
 __pycache__
-launch.conf
+
+# Agent local configurations
 opencode.json
+/.zed
+
+launch.conf

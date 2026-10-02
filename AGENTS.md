@@ -5,6 +5,7 @@ The goal is to add full-featured VR support, including motion controls.
 
 ## Quick Reference
 
+- Read `docs/ghidra-reva.md` on how to use reva MCP correctly.
 - Target: `Mercenaries2.exe` (PE32 i386, ~52 MB), path from `launch.conf`. Ghidra program: `/Mercenaries2.exe` in `ghidra/mc2re.gpr` (gitignored). ReVa MCP tools: `ghidra-reva` namespace.
 - SecuROM v7's enforcement layer is bypassed and inert (no license/anti-tamper/anti-debug response — proven M0–M3) — treat it as a non-issue for hooking safety. But the VM still EXECUTES, in TWO distinct forms — do not conflate them: (a) **VM-virtualized functions** — semantics compiled into bytecode, genuinely opaque, no plaintext successor (e.g. the `GetD3DDevice` thunk `0x0047f2f0`, and — per S0 — the render-packet interpreter, stub `0x0050f660`, called at `0x004c99f9`); (b) **SecuROM call gates** — a plaintext stub JMPs into injected gate code which continues at a PLAINTEXT body (often adjacent to the stub) — fully recoverable statically; follow the flow before writing a call off as opaque (proven example: `Dx9_SetPixelShaderConstantF` `0x0084f150` → gate `0x004f56e6` → core `0x0084f15a`). Never analyze or hook the gate/VM code itself either way — hook the plaintext callers/neighbors. Ignore the `Stext`/`Sitext`/`Srdata`/`Sdata`/`Sidata`/`.securom` sections (VM bytecode region: opaque). Only if live debugging/hooking misbehaves, suspect leftover anti-tamper there (see the doc; details: `docs/pandemic_engine.md` § SecuROM/VM boundary).
 - The binary has rich embedded MSVC symbols (Pandemic "G" engine).
