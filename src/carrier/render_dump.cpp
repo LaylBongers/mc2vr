@@ -17,11 +17,13 @@ namespace {
 // ---- state (MidHook handlers: main thread; poller: own thread) ----------
 
 constexpr uint32_t OPCODE_COUNT = 27; // cmp eax,0x1a
-constexpr uint32_t VIEW_AGG_MAX = 24;
+constexpr uint32_t VIEW_AGG_MAX = 96; // indices observed up to 82+ at runtime
 constexpr uint32_t ENTRY_DUMP_MAX = 12;
 constexpr uint32_t VIEW_STRIDE = 0x810;
 constexpr uint32_t POLL_MS = 250;
 constexpr uint32_t REPORT_POLLS = 10 * 1000 / POLL_MS;
+constexpr uint32_t REFRESH_EVERY_WINDOWS = 6;  // re-dump one entry ~once a minute
+constexpr uint32_t REFRESH_MAX = 8;            // steady-state re-dumps per run
 
 // Leaked by design (same teardown reasoning as the device hooks).
 SafetyHookMid g_opcode_mid;
@@ -44,15 +46,22 @@ struct ViewAgg {
 };
 ViewAgg g_views[VIEW_AGG_MAX] = {};
 uint32_t g_view_distinct = 0;
-uint64_t g_view_submits = 0;
-uint64_t g_view_frames = 0; // frames with >=1 view submission
+uint64_t g_view_submits = 0;      // total loop iterations
+uint64_t g_view_frames = 0;       // frames with >=1 view submission
 uint64_t g_agg_frame = UINT64_MAX;
 uint32_t g_vpf_cur = 0;
 uint32_t g_vpf_min = 0;
 uint32_t g_vpf_max = 0;
-uint32_t g_loop_count_last = 0;
+uint32_t g_table_count = 0;       // DAT_00d29e60, sampled per frame
 uint32_t g_dumps_done = 0;
 uint32_t g_dumped_idx[ENTRY_DUMP_MAX] = {};
+
+// Steady-state re-dumps: first-wave dumps fire on view activation (loading
+// phase — entries pre-populated). The poller requests one re-dump per minute
+// (rotating through observed indices); the MidHook performs it so the entry
+// read happens mid-loop on the main thread.
+volatile LONG g_refresh_target = -1;
+uint32_t g_refresh_done = 0;
 
 // g_RenderShell slot 4/5 claim test.
 uint64_t g_slot4_calls = 0;
@@ -60,12 +69,15 @@ uint64_t g_slot5_calls = 0;
 bool g_slot4_logged = false;
 bool g_slot5_logged = false;
 
-// Queue counters (poller).
+// Queue counters (poller). prodA (base+0x10) is a RING POSITION, not a
+// cumulative counter: observed values wrap inside 0..capacity-1 — track
+// raw min/max/last per window, no delta arithmetic. prodB (base+0x14) read
+// raw (observed constant 0 in gameplay so far).
 uint32_t g_queue_elem = 0;
 uint32_t g_queue_cap = 0;
-uint32_t g_prod_a = 0, g_prod_b = 0;         // current
-uint32_t g_prod_a_delta = 0, g_prod_b_delta = 0; // window
-uint64_t g_queue_snapshots = 0;              // polls with non-identical counters
+uint32_t g_prod_a_last = 0, g_prod_a_min = 0xffffffff, g_prod_a_max = 0;
+uint32_t g_prod_b_last = 0;
+uint64_t g_queue_changed_polls = 0;
 
 // ---- one-shot entry dumps (main thread, mid-loop: entry is stable) ------
 
@@ -84,20 +96,22 @@ void dump_bytes(const char *tag, uint32_t base_off, const uint8_t *bytes, uint32
     }
 }
 
-void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry)
+void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry, bool track)
 {
     // Per-view object pointer at entry+0x7e4 (verified in disassembly).
     const uint32_t obj_ptr = *(const uint32_t *)(entry + MC2_VIEW_OBJ_PTR_OFF);
     const uint8_t t3 = *(const uint8_t *)(MC2_VIEW_TABLE3 + idx * 0x20 + 0x18);
 
-    MC2VR_LOG("M3 ViewDump idx=%u type=%u entry=%p obj=%p t3=%02x (dump %u/%u)",
-              idx, type, entry, (const void *)(uintptr_t)obj_ptr, t3,
-              g_dumps_done + 1, ENTRY_DUMP_MAX);
+    MC2VR_LOG("M3 ViewDump%s idx=%u type=%u entry=%p obj=%p t3=%02x (%s)",
+              track ? "" : " (refresh)", idx, type, entry, (const void *)(uintptr_t)obj_ptr,
+              t3, track ? "first" : "steady-state");
     dump_bytes("M3 entry", 0, entry, VIEW_STRIDE);
     if (obj_ptr) {
         dump_bytes("M3 obj", 0, (const uint8_t *)(uintptr_t)obj_ptr, 0x40);
     }
-    g_dumped_idx[g_dumps_done++] = idx;
+    if (track) {
+        g_dumped_idx[g_dumps_done++] = idx;
+    }
 }
 
 // ---- MidHook handlers -----------------------------------------------------
@@ -130,8 +144,7 @@ void view_midhook(safetyhook::Context &ctx)
         }
         g_agg_frame = frame;
         g_vpf_cur = 0;
-        const uintptr_t shell = *(const uintptr_t *)MC2_G_RENDERSHELLPTR;
-        g_loop_count_last = shell ? *(const uint16_t *)(shell + 0x2b90) : 0;
+        g_table_count = *(const uint32_t *)0x00d29e60u; // view-table entry count
     }
     g_vpf_cur++;
     if (g_vpf_cur > g_vpf_max) {
@@ -166,8 +179,16 @@ void view_midhook(safetyhook::Context &ctx)
             }
         }
         if (!seen) {
-            dump_view_entry(idx, type, entry);
+            dump_view_entry(idx, type, entry, true);
         }
+    }
+
+    // Steady-state re-dump requested by the poller (runs here so the entry
+    // read stays on the main thread, mid-loop).
+    if (g_refresh_target == (LONG)idx && g_refresh_done < REFRESH_MAX) {
+        g_refresh_target = -1;
+        g_refresh_done++;
+        dump_view_entry(idx, type, entry, false);
     }
 }
 
@@ -204,13 +225,13 @@ void report_window()
 {
     // Views line.
     MC2VR_LOG("M3 views: submits=%llu frames-with-views=%llu views/frame min=%u max=%u "
-              "loopCount=%u distinct=%u",
+              "tableCount=%u distinct=%u",
               (unsigned long long)g_view_submits, (unsigned long long)g_view_frames,
-              g_vpf_min, g_vpf_max, g_loop_count_last, g_view_distinct);
+              g_vpf_min, g_vpf_max, g_table_count, g_view_distinct);
     if (g_view_distinct > 0) {
-        char list[512];
+        char list[640];
         int n = 0;
-        uint32_t shown = g_view_distinct < 8 ? g_view_distinct : 8;
+        uint32_t shown = g_view_distinct < 12 ? g_view_distinct : 12;
         for (uint32_t i = 0; i < shown && n < (int)sizeof(list) - 32; i++) {
             n += _snprintf(list + n, sizeof(list) - n, " idx%u:t%u:%llu", g_views[i].idx,
                            g_views[i].type, (unsigned long long)g_views[i].count);
@@ -241,12 +262,12 @@ void report_window()
                   nonzero ? hist : " (stream empty — no world packets?)");
     }
 
-    // Slots + queue line.
+    // Slots + queue line. prodA is a ring position: raw window stats only.
     MC2VR_LOG("M3 slots: endOfFrame=%llu postUpdate=%llu | queue: elem=%u cap=%u "
-              "prodA=%u(+%u) prodB=%u(+%u) samples=%llu",
+              "prodA last=%u min=%u max=%u prodB=%u changedPolls=%llu",
               (unsigned long long)g_slot4_calls, (unsigned long long)g_slot5_calls,
-              g_queue_elem, g_queue_cap, g_prod_a, g_prod_a_delta, g_prod_b,
-              g_prod_b_delta, (unsigned long long)g_queue_snapshots);
+              g_queue_elem, g_queue_cap, g_prod_a_last, g_prod_a_min, g_prod_a_max,
+              g_prod_b_last, (unsigned long long)g_queue_changed_polls);
 
     // Reset window aggregates.
     for (uint32_t op = 0; op < OPCODE_COUNT; op++) {
@@ -261,9 +282,9 @@ void report_window()
         g_views[i] = {0, 0, 0};
     }
     g_view_distinct = 0;
-    g_prod_a_delta = 0;
-    g_prod_b_delta = 0;
-    g_queue_snapshots = 0;
+    g_prod_a_min = 0xffffffff;
+    g_prod_a_max = 0;
+    g_queue_changed_polls = 0;
 }
 
 DWORD WINAPI poller_thread(LPVOID)
@@ -272,23 +293,40 @@ DWORD WINAPI poller_thread(LPVOID)
     g_queue_elem = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x4);
     g_queue_cap = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x8);
     uint32_t polls = 0;
+    uint32_t windows = 0;
+    uint32_t refresh_rotor = 0;
 
     while (InterlockedCompareExchange(&g_poller_run, 1, 1)) {
         Sleep(POLL_MS);
 
         const uint32_t a = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x10);
         const uint32_t b = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x14);
-        if (a != g_prod_a || b != g_prod_b) {
-            g_queue_snapshots++;
+        if (a != g_prod_a_last || b != g_prod_b_last) {
+            g_queue_changed_polls++;
         }
-        g_prod_a_delta += a - g_prod_a;
-        g_prod_b_delta += b - g_prod_b;
-        g_prod_a = a;
-        g_prod_b = b;
+        g_prod_a_last = a;
+        g_prod_b_last = b;
+        if (a < g_prod_a_min) {
+            g_prod_a_min = a;
+        }
+        if (a > g_prod_a_max) {
+            g_prod_a_max = a;
+        }
 
         if (++polls >= REPORT_POLLS) {
             polls = 0;
             report_window();
+            windows++;
+
+            // Request one steady-state re-dump per REFRESH_EVERY_WINDOWS,
+            // rotating through observed view indices.
+            if (windows % REFRESH_EVERY_WINDOWS == 0 && g_refresh_done < REFRESH_MAX) {
+                uint32_t distinct = g_view_distinct; // approximate cross-thread read
+                if (distinct > 0) {
+                    const uint32_t pick = g_views[refresh_rotor++ % distinct].idx;
+                    InterlockedExchange(&g_refresh_target, (LONG)pick);
+                }
+            }
         }
     }
     return 0;

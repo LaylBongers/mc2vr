@@ -48,9 +48,9 @@ Header layout validated by the anchor: game applies render state via `+0xe4` = s
 
 ## Open items
 
-- `vt[4]`/`vt[5]`: confirm anything actually CALLS them (claim-worthiness) once M3 instruments the frame cycle. Slots are NoOp statically on the live base vtable.
-- Producer counter semantics in `g_RenderQueue` (`countersA`/`countersB`, packed 16-bit pairs; producers increment both halves and spin-wait on `(A+B) % capacity`) — exact consumer-progress tracking not fully derived; re-check at runtime.
+- Producer counter semantics in `g_RenderQueue` — **partially resolved (M3 runtime)**: field at queue+0x10 is a RING POSITION (values wrap within 0..capacity-1, non-monotonic; capacity 4096, elementSize 96 in this install), not a cumulative producer counter; queue+0x14 stayed 0 during gameplay (read position lives elsewhere or is unused on this path). The old "producer counters, packed 16-bit pairs, spin-wait on (A+B) % capacity" model needs re-derivation against these observations.
 - `g_RenderQueue2` (`0x00ff3650`) consumer and purpose — submissions seen from loading-screen path (`FUN_004c9580`), `FUN_00429510`, `FUN_00403720`; likely 2D/overlay queue. Unconfirmed.
 - `GameState3_Update` / `GameState2_Frontend_Update` internals — named by position, semantics unexplored.
-- View/portal table layout at `0x012865e0` (stride `0x810`, count `DAT_00d29e60`) — field map not yet extracted; needed before stereo view injection (M3). Likely only populated in gameplay, not menu.
+- View/portal table layout at `0x012865e0` — **first-pass field map derived from M3 runtime dumps** (see `launcher_plan.md` M3 entry; position floats at entry+0x7c4, ViewRef pointers at entry+0x7e4; entries mostly template — steady-state re-dumps pending). Remaining: steady-state entry contents, type-4 view anatomy, camera-matrix fields in the `g_RenderShellPtr+idx*0x3a0` sub-objects.
 - `0x0117527c` adapter remap table / multi-adapter handling in `RenderSystem_Init` — not explored (single-GPU assumption).
+- `vt[4]`/`vt[5]`: ~~confirm anything actually CALLS them~~ **RESOLVED (M3)**: both slots called exactly once per frame by `GameShell_FrameTick` (claimable, mechanism proven via cloned vtable; survived alt-tabs/cutscene/mission load).
