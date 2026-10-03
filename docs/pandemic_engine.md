@@ -33,7 +33,7 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
   INDICES (`materialIdx/viewIdx/envIdx/viewContextIdx/screenIdx`). Singly-linked submit list
   (base/head/next-table in the `g_PrimitiveBase` plate; next entries are {6-byte sort key,
   ushort next}, `0xffff` terminates). Lifecycle: Reset → VM'd build/AssignKeys →
-  `PgPrimitive_SortList` → SubmitToGPU = `RenderShell_RenderFrame`.
+  `PgPrimitive_SortList` → SubmitToGPU (`0x00855690`, formerly mislabeled RenderShell_RenderFrame).
 - **`PgMaterial`** (0x190): NAMED material ("OcclusionMaterial", "PgPrimitiveSubmitToGPU") —
   texture-projection transform `rows[6][4]` × view scale/offset goes to **pixel**-shader constants
   (texgen). Rule of thumb: PS-constant transform + textures + blend flags = material, not camera.

@@ -21,7 +21,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
   `GameShell_FrameTick` → frame pipeline → `RenderQueue_SubmitWorldPackets`
   (`0x0048e620`, walks active `ViewEntry`s, publishes packet elements into the
   `g_RenderQueue` ring) → [SecuROM-VM'd packet interpreter, stub `0x0050f660`
-  at `0x004c99f9`] → `RenderShell_RenderFrame` (`0x00855690`) → `BeginSubmit` →
+  at `0x004c99f9`] → `PgPrimitive_SubmitToGPU` (`0x00855690`) → `BeginSubmit` →
   `RenderCmd_ExecuteStream` (`0x008569d0`, 27-opcode plaintext interpreter,
   ~1.5–3.4k cmds/frame) → `EndSubmit`.
 - **The draw camera is external to the view system.** The plaintext consumer
@@ -193,14 +193,15 @@ data. **Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
 - **Material texgen stays mono for eye 2**: `PgMaterial` texture-projection
   transforms (water/sky reflections, blob shadows, shadow cascades' fitted
   matrices) are derived CPU-side by VM'd code from the mono camera and uploaded
-  via `SetPixelShaderConstantF` (matViewMat, wrapper slot 109 / device 110) and
-  material VS consts; PS `cameraPos` (c92 in material PSes) is likewise mono.
+  via `SetPixelShaderConstantF` (matViewMat; device slot 109) and
+  material VS consts; PS `cameraPos` (c92 in material PSes) is likewise mono. The pass object also uploads the whole `g_ViewContextTable` record to the PS (`Dx9_SetPixelShaderConstantF(pViewContext)`, pass pair +0xDC/gate +0xE0; PS register/count are runtime values) — so VP/camPos data reaching the PS is unshifted too (open).
   The view rewrite touches VS camera rows only. No visible issue at 0.05
   units; at IPD scale and for the periphery, re-check. A later
   `SetPixelShaderConstantF` hook could shift camera-derived rows by the eye
   delta (the derivation is VM'd, so correctness is not guaranteed).
 - `g_RenderQueue2` consumption timing relative to Present (the compositor needs
   the 2D stream's frame timing) — add queue2 counters when S4 starts.
+- GPU sync: every frame begins by waiting for all prior GPU work (event-query spin in `LtiRenderer_BeginSubmit`, see `render_path.md`). Per-eye passes inherit it; the pacing design must account for it (S2c replay happens after this point).
 - Frame pacing: game vsync-locked 60 Hz; HMD typically 90 Hz. A Present-hook
   compositor can run at HMD cadence independently (pose extrapolation via the
   HMD runtime). Decide in S4.

@@ -1,3 +1,4 @@
 # Ghidra / ReVa MCP notes
 
 - Renaming a function that already has a custom primary name: use `set-function-prototype` with the new name in the signature (`createIfNotExists: false`) as the FIRST call — `create-label` + `setAsPrimary: true` can silently leave the label secondary, and that leftover secondary label then blocks `set-function-prototype` with "symbol already exists at this address" (no MCP tool deletes labels; recovery requires deleting the label in the GUI and re-running `set-function-prototype`).
+- `parse-c-structure` on an existing name replaces the struct in place (fields rebuilt, dependent structs/typed globals keep working) — the way to correct a wrong layout. `set-comment` replaces the whole comment of that type at the address, so re-read it first and resend the full text.
