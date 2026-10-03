@@ -25,18 +25,31 @@ chain: `docs/render_path.md`.
   camera (those are derived copies feeding streaming/culling only). The
   camera crosses plaintext code only as interpreter-issued D3D constant
   uploads — **the GPU boundary is the only per-eye injection point**.
-- **The view channel (S2, validated run 22 2026-10-03)**: the visible view
+- **The view channel (S2, validated run 22; layout-corrected 2026-10-03)**: the visible view
   lives in the VS constant `viewContextData` — a 4–5 register block the
   engine resolves per technique from the per-view render-context record:
 
   ```
-  count-5 block = [camPos (w==1.0) | VP row0 | VP row1 | VP row2 | VP row3]
-  count-4 block = [VP row0..row3]                       (no camPos row)
-  row-major, clip_i = dot(VP_row_i, worldpos)           (proof: shader bytecode)
+  count-4 block = [VP row0..row3]
+  count-5 block = [VP row0..row3 | camPos (w==1.0)]
+  count-6 block = [VP row0..row3 | camPos | extra row (role unclassified)]
+  row-major, clip_i = dot(VP_row_i, worldpos)   (proof: shader bytecode —
+  count-4 `0x28c8`, count-5 `0x1fd3f8`, count-6 `0x1de598`)
   ```
 
+  (Corrected 2026-10-03: the earlier "camPos first" layout was wrong for
+  count 5/6 — ~half the shaders — which left VP row0 and camPos unshifted
+  and made objects pan unevenly/smear. Count 6 is the most common.)
+  Confirmed by the MidHook's own map: `ViewProj` (count 4) sits at the SAME
+  register as `viewContextData` in every technique (c0/c0, c7/c7, c17/c17),
+  i.e. the VP rows are the block's first four. After the fix (plus the
+  scratch-copy rewrite below) the pan is "almost completely" correct in
+  gameplay at `view_row_amp=0.05`: objects move together and the smearing is
+  gone. The two earlier symptoms had one cause — rows 0 and camPos skipped
+  in count-5/6 blocks, so clip.x disagreed with clip.y/z/w per material.
+
   Rewriting exactly those registers *in the upload buffer* (device VmtHook
-  slot 94) pans the camera correctly. Consistent camera pan by world-space
+  slot 94; rewritten on a scratch copy, never the game's buffer) pans the camera correctly. Consistent camera pan by world-space
   offset `D = (dx,dy,dz)`:
   - camPos row: `xyz += D`                (per-pixel effects follow the eye)
   - every VP row: `w -= dot(row.xyz, D)`  (rigid world shift on screen)
@@ -146,7 +159,8 @@ was removed from the carrier at closeout — only the S2 channel remains.
    S2b work: replace the test pulse with real per-eye offsets from HMD pose
    (S4): `D = ±right·IPD/2` (≈0.032m — ~100× smaller than the ±4-unit
    verification pulse, well inside the artifact budget).
-3. **Verification pass at game scale (pending, cheap)**: run 22's pulse
+3. **Verification pass at game scale (DONE 2026-10-03, run 23: almost
+   completely fixed; residual items below)**: run 22's pulse
    amplitude was intentionally unmistakable (clips through terrain by
    design). Re-run with a small amplitude (e.g. `PATCH_DELTA` 0.03–0.1, or
    a `view_row_amp` conf key) and audit for residual artifacts
@@ -203,7 +217,7 @@ first). Pose marshal point is the slot-5 hook (S4).
 
 | Site | Mechanism | Phase | Status |
 |---|---|---|---|
-| Device `SetVertexShaderConstantF` (slot 94) | VmtHook | **S2 per-eye injection** | installed; in-buffer modification verified visible (runs 16–17) and camera-moving (run 22) |
+| Device `SetVertexShaderConstantF` (slot 94) | VmtHook | **S2 per-eye injection** | installed; scratch-copy rewrite; camera-moving (run 22), layout-corrected and near-correct at game scale (run 23) |
 | Upload gate `MC2_VCD_UPLOAD_CMP` 0x00855a78 | MidHook | S2 exact-register map | installed; publishes the technique's resolved `viewContextData`/`ViewProj` (reg,count) to the rewriter |
 | `RenderCmd_ExecuteStream` opcode `0x008569f5` | MidHook | M3 histogram + **S2c stream tap** | installed (M3) |
 | Device `Present` (17) / `Reset` (16) | VmtHook | S4 compositor / params | installed (M2) |
@@ -222,6 +236,21 @@ vsclock/vspose controls.
 
 ## Open questions
 
+- **Residual after the layout fix**: (a) the count-6 extra row (`c22` in
+  shader `0x1de598`, `dp4 r1, r0, c22`) is left unshifted and has never
+  appeared in the `S1 vrow: count-6 extra row` log despite count-6
+  techniques being published (c17/6) — either it is not uploaded through
+  slot 94 with the block, or is uploaded elsewhere; classify before
+  touching it (a world-fixed row needs no shift, a view-derived one does).
+  (b) Shaders with no `viewContextData` are not rewritten: explicit
+  `g_ViewProjMtx` (c0-3, `0x9fb8`: same per-row `w` shift), `LocalToProj`
+  (`0x6cc8`: view folded in per object — needs the view-space eye offset,
+  `clip.x -= P00*e.x`, P00 derivable from the cached VP rows), `Mvp`/`TexGen`
+  (`0x200278`), rain (`0x1fe198`). Expect billboards/rain/quads to lag the
+  pan; check which remain visibly wrong before implementing.
+  (c) Rewrites now apply to a scratch copy returned from
+  `on_set_vs_constant` — the game's upload buffer is never mutated (it may
+  alias the persistent per-view record).
 - **Material texgen stays mono for eye 2**: `PgMaterial` texture-projection
   transforms (shadow cascades, water/sky reflections, blob shadows) are
   derived CPU-side by VM'd code from the mono camera and uploaded via

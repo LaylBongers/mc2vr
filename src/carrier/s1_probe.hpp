@@ -1,7 +1,7 @@
 // S2 channel module: the GPU-boundary per-eye injection mechanism.
 //
 // S1 (draw-camera hunt) is COMPLETE (2026-10-02, 17 runs — evidence
-distilled into docs/stereo_design.md). All S1 probing code has been
+// distilled into docs/stereo_design.md). All S1 probing code has been
 // REMOVED: patch windows A–O, consumer brackets, pose captures, matrix
 // classification, exfil, vsclock/vspose controls, telemetry taps. What
 // remains is only what S2 builds on:
@@ -25,9 +25,10 @@ namespace mc2vr::s1 {
 void install();
 
 // Tap from device.cpp's SetVertexShaderConstantF handler. Runs on the main
-// thread, before the driver call — buffer modifications are what the draw
-// consumes.
-void on_set_vs_constant(uint32_t start_register, const float *data,
+// thread, before the driver call. Returns the pointer the driver call must
+// use: `data` itself, or a scratch copy carrying the rewrites (the game's
+// buffer is never modified).
+const float *on_set_vs_constant(uint32_t start_register, const float *data,
                         uint32_t vec4_count);
 
 // Ambient rewrite mode (mc2vr.conf gpu_boundary_rewrite=off|on|pulse).

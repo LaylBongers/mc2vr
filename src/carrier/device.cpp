@@ -229,8 +229,8 @@ HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UI
                   (unsigned long long)g_setvsconst_calls, (unsigned)start,
                   (unsigned)count, (unsigned long long)hooks::frame_count(), caller);
     }
-    s1::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
-    return g_setvsconstf_hook->stdcall<HRESULT>(self, start, data, count);
+    const float *out = s1::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
+    return g_setvsconstf_hook->stdcall<HRESULT>(self, start, out, count);
 }
 
 

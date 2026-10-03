@@ -177,6 +177,23 @@ void log_once_vrow(uint32_t reg, const float *pos, float delta)
               (double)delta);
 }
 
+// Count-6 blocks carry an extra row after camPos whose role is unclassified
+// (shader 0x1de598: `dp4 r1, r0, c22`). One-shot log of it beside VP row0 so
+// a world-fixed row (no shift needed) can be told from a view-derived one.
+bool g_extra_logged = false;
+void log_extra_row(uint32_t reg, const float *vp0, const float *row, bool ok)
+{
+    if (g_extra_logged || !ok) {
+        return;
+    }
+    g_extra_logged = true;
+    MC2VR_LOG("S1 vrow: count-6 extra row c%u = (%g,%g,%g,%g); VP row0 = "
+              "(%g,%g,%g,%g) — left unshifted",
+              reg, (double)row[0], (double)row[1], (double)row[2],
+              (double)row[3], (double)vp0[0], (double)vp0[1], (double)vp0[2],
+              (double)vp0[3]);
+}
+
 // Diagnostic removed with the run-21 prev-frame oracle (shape matching is
 // obsolete — exact registers come from the MidHook).
 
@@ -254,12 +271,12 @@ void set_view_row_amp(float amp)
     }
 }
 
-void on_set_vs_constant(uint32_t start_register, const float *data,
-                        uint32_t vec4_count)
+const float *on_set_vs_constant(uint32_t start_register, const float *data,
+                                uint32_t vec4_count)
 {
     g_vs_calls++;
     if (!data || vec4_count == 0) {
-        return;
+        return data;
     }
     g_vs_vec4s += vec4_count;
     const uint64_t frame = hooks::frame_count();
@@ -279,75 +296,72 @@ void on_set_vs_constant(uint32_t start_register, const float *data,
         }
     }
 
-    // Ambient GPU-boundary rewrite (the verified S2 mechanism — S1 runs
-    // 16–17): every world-position constant row (w == 1.0, |x| > 5) in THIS
-    // upload gets x shifted IN THE UPLOAD BUFFER before the driver call —
-    // the draw consumes the modification directly. The game's own data is
-    // never touched. Moves EFFECTS, not the camera (run 17).
-    //
-    // viewContextData rewrite: the exact-register camera pan (run 22,
-    // validated — stereo_design.md §S2); the block and register map come
-    // from the upload-gate MidHook, applied below.
+    // Rewrites happen on a scratch COPY (returned to the caller for the
+    // driver call): `data` may point straight into the game's persistent
+    // per-view record, and editing that in place would re-apply the shift on
+    // every draw that re-uploads it.
     const float delta_owin = rewrite_delta(g_ambient_rewrite, PATCH_DELTA);
     const float delta_vrow = rewrite_delta(g_view_rewrite, g_vrow_amp);
     if (delta_owin == 0.0f && delta_vrow == 0.0f) {
-        return;
+        return data;
     }
-    float *rows = (float *)data;
-    for (uint32_t i = 0; i < vec4_count; i++) {
-        float *row = rows + i * 4;
-        const uint32_t reg = start_register + i;
-        if (row[3] != 1.0f) {
-            continue;
-        }
-        if (delta_owin != 0.0f && (row[0] > 5.0f || row[0] < -5.0f)) {
-            row[0] += delta_owin;
-            g_owin_rewrites++;
-            log_once_owin(reg, row, delta_owin);
+    static float scratch[VS_ROWS * 4];
+    if (vec4_count > VS_ROWS) {
+        return data;  // not a real constant upload; pass through
+    }
+    memcpy(scratch, data, vec4_count * 16);
+    float *rows = scratch;
+
+    // Ambient rewrite (S1 runs 16-17): world-position rows (w == 1.0,
+    // |x| > 5). Moves EFFECTS, not the camera.
+    if (delta_owin != 0.0f) {
+        for (uint32_t i = 0; i < vec4_count; i++) {
+            float *row = rows + i * 4;
+            if (row[3] == 1.0f && (row[0] > 5.0f || row[0] < -5.0f)) {
+                row[0] += delta_owin;
+                g_owin_rewrites++;
+                log_once_owin(start_register + i, row, delta_owin);
+            }
         }
     }
     if (delta_vrow == 0.0f) {
-        return;
+        return scratch;
     }
 
-    // viewContextData rewrite — run 22, EXACT-REGISTER form: the MidHook at
-    // the upload gate published the CURRENT technique's resolved register
-    // map (no shape matching, no cross-technique conflation, no missed
-    // count-4 VP-only blocks). Layout: count-5 = [camPos(w==1) | VP rows
-    // 0..3]; count-4 = VP only. Consistent pan by D=(delta,0,0):
-    // pos row x += delta; VP rows w -= row.x*delta. Shape checks are only
-    // fail-safes against a stale/garbage map.
+    // viewContextData rewrite, EXACT-REGISTER form. Block layout (proven
+    // from shader bytecode, stereo_design.md §S2): VP rows 0..3 FIRST, then
+    // camPos (count >= 5), then a count-6 extra row (left alone). Register
+    // map comes from the upload-gate MidHook. Consistent pan by
+    // D=(delta,0,0): VP rows w -= row.x*delta; camPos x += delta.
     const uint32_t vcd_reg = g_tech_vcd_reg;
     const uint32_t vcd_count = g_tech_vcd_count;
     const uint32_t vp_reg = g_tech_vp_reg;
     const uint32_t vp_count = g_tech_vp_count;
-    if (vcd_reg == VCD_REG_INVALID) {
-        return;  // MidHook not fired / technique has no viewContextData
-    }
     for (uint32_t i = 0; i < vec4_count; i++) {
         float *row = rows + i * 4;
         const uint32_t reg = start_register + i;
         if (reg >= VS_ROWS) {
             break;
         }
-        if (vcd_count == 5 && reg == vcd_reg) {
-            // camPos row (first register of a count-5 block).
-            if (pos_row_shape(row)) {
-                row[0] += delta_vrow;
-                g_vrow_rewrites++;
-                log_once_vrow(reg, row, delta_vrow);
-            }
-            continue;
-        }
-        const bool in_vcd = reg > vcd_reg && reg < vcd_reg + vcd_count;
-        const bool in_vp = vp_reg != VCD_REG_INVALID && vp_count > 0 &&
-                           reg >= vp_reg && reg < vp_reg + vp_count;
-        if ((in_vcd || in_vp) && row[3] != 1.0f) {
-            // VP row: consistent rigid shift w -= row.x * delta.
+        const bool have_vcd = vcd_reg != VCD_REG_INVALID;
+        const uint32_t vcd_off = reg - vcd_reg;  // wraps when reg < vcd_reg
+        const bool is_vp =
+            (have_vcd && vcd_count >= 4 && vcd_off < 4) ||
+            (vp_reg != VCD_REG_INVALID && reg >= vp_reg &&
+             reg < vp_reg + vp_count);
+        const bool is_pos = have_vcd && vcd_count >= 5 && vcd_off == 4;
+        if (is_vp && row[3] != 1.0f) {
             row[3] -= row[0] * delta_vrow;
             g_vrow_rewrites++;
+        } else if (is_pos && pos_row_shape(row)) {
+            row[0] += delta_vrow;
+            g_vrow_rewrites++;
+            log_once_vrow(reg, row, delta_vrow);
+        } else if (have_vcd && vcd_count >= 6 && vcd_off == 5) {
+            log_extra_row(reg, g_vs_rows[vcd_reg], row, g_vs_valid[vcd_reg] != 0);
         }
     }
+    return scratch;
 }
 
 void report_window()
@@ -389,7 +403,7 @@ void install()
     MC2VR_LOG("S1: active channel: SetVertexShaderConstantF (device VmtHook "
               "slot 94) + ambient rewrite (gpu_boundary_rewrite) + "
               "exact-register viewContextData rewrite (view_row_rewrite) "
-              "— stereo_design.md §S2 (run 22)",
+              "— stereo_design.md §S2 (run 22)");
 }
 
 } // namespace mc2vr::s1
