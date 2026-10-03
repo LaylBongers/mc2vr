@@ -84,6 +84,18 @@ uint32_t g_vrow_log_n = 0;
 // the MidHook these are only sanity checks (fail-safe against a stale/garbage
 // technique pointer), not the matcher.
 
+// ---- pass gate (RT0 size) ----------------------------------------------------
+uint32_t g_main_w = 0, g_main_h = 0;
+uint32_t g_rt_w = 0, g_rt_h = 0;
+uint32_t g_rt_seen[16][2];  // distinct RT0 sizes (log once each)
+uint32_t g_rt_seen_n = 0;
+
+bool pass_is_main()
+{
+    // Unknown main size (params not yet read): don't gate.
+    return g_main_w == 0 || (g_rt_w == g_main_w && g_rt_h == g_main_h);
+}
+
 bool pos_row_shape(const float *r)
 {
     return r[3] == 1.0f;
@@ -199,6 +211,33 @@ void log_extra_row(uint32_t reg, const float *vp0, const float *row, bool ok)
 
 } // namespace
 
+void set_main_rt_size(uint32_t w, uint32_t h)
+{
+    g_main_w = w;
+    g_main_h = h;
+    MC2VR_LOG("S1 pass gate: main scene RT size = %ux%u", w, h);
+}
+
+void on_set_render_target(uint32_t w, uint32_t h)
+{
+    g_rt_w = w;
+    g_rt_h = h;
+    for (uint32_t k = 0; k < g_rt_seen_n; k++) {
+        if (g_rt_seen[k][0] == w && g_rt_seen[k][1] == h) {
+            return;
+        }
+    }
+    if (g_rt_seen_n < 16) {
+        g_rt_seen[g_rt_seen_n][0] = w;
+        g_rt_seen[g_rt_seen_n][1] = h;
+        g_rt_seen_n++;
+        MC2VR_LOG("S1 pass gate: new RT0 size %ux%u (%s)", w, h,
+                  (g_main_w == 0 || (w == g_main_w && h == g_main_h))
+                      ? "main — view rewrite applies"
+                      : "off-screen pass — NOT rewritten");
+    }
+}
+
 RewriteMode parse_rewrite_mode(const char *value, bool *ok)
 {
     *ok = true;
@@ -301,7 +340,8 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     // per-view record, and editing that in place would re-apply the shift on
     // every draw that re-uploads it.
     const float delta_owin = rewrite_delta(g_ambient_rewrite, PATCH_DELTA);
-    const float delta_vrow = rewrite_delta(g_view_rewrite, g_vrow_amp);
+    const float delta_vrow =
+        pass_is_main() ? rewrite_delta(g_view_rewrite, g_vrow_amp) : 0.0f;
     if (delta_owin == 0.0f && delta_vrow == 0.0f) {
         return data;
     }

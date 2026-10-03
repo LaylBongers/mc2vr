@@ -31,6 +31,13 @@ void install();
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
                         uint32_t vec4_count);
 
+// Render-target tracking (device.cpp's SetRenderTarget observer): the view
+// rewrite applies only while RT0 has the main scene size (the backbuffer
+// size); shadow-map / reflection / offscreen passes upload their own
+// viewContextData and are left untouched. w=h=0: no RT0.
+void on_set_render_target(uint32_t w, uint32_t h);
+void set_main_rt_size(uint32_t w, uint32_t h);
+
 // Ambient rewrite mode (mc2vr.conf gpu_boundary_rewrite=off|on|pulse).
 // off restores pass-through. Returns false on unrecognized values.
 bool set_ambient_rewrite(const char *value);

@@ -37,6 +37,11 @@ constexpr size_t SLOT_EndScene = 42;
 // shader-driven; S1 run-1 result). The SetTransform/SetViewport slots from
 // S1 attribution have been removed with the rest of the S1 instrumentation.
 constexpr size_t SLOT_SetVertexShaderConstantF = 94;
+// Observed (never altered) so the S2 rewrite knows which pass is drawing:
+// shadow-map / reflection / other RT passes upload their own viewContextData
+// and must not receive the eye shift.
+constexpr size_t SLOT_SetRenderTarget = 37;
+constexpr size_t SLOT_Surface_GetDesc = 12;
 // IDirect3DSwapChain9::GetPresentParameters
 constexpr size_t SLOT_SC_GetPresentParameters = 9;
 
@@ -49,6 +54,7 @@ using BeginScene_t = HRESULT(__stdcall *)(void *);
 using Reset_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
 using GetSwapChain_t = HRESULT(__stdcall *)(void *, UINT, void **);
 using GetPresentParams_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
+using SetRenderTarget_t = HRESULT(__stdcall *)(void *, DWORD, void *);
 using SetVertexShaderConstantF_t = HRESULT(__stdcall *)(void *, UINT, const float *, UINT);
 
 // Leaked by design (see device.hpp).
@@ -58,6 +64,7 @@ safetyhook::VmHook *g_beginscene_hook = nullptr;
 safetyhook::VmHook *g_endscene_hook = nullptr;
 safetyhook::VmHook *g_reset_hook = nullptr;
 safetyhook::VmHook *g_setvsconstf_hook = nullptr;
+safetyhook::VmHook *g_setrt_hook = nullptr;
 
 void *g_device = nullptr;
 bool g_params_logged = false;
@@ -114,6 +121,7 @@ void log_present_params()
         return;
     }
 
+    s1::set_main_rt_size(pp.BackBufferWidth, pp.BackBufferHeight);
     MC2VR_LOG("D3D: present params: %ux%u fmt=%u count=%u windowed=%u swapeffect=%u "
               "refresh=%u interval=0x%08x hdeviceWindow=%p",
               pp.BackBufferWidth, pp.BackBufferHeight, pp.BackBufferFormat,
@@ -218,6 +226,25 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
 
 uint64_t g_setvsconst_calls = 0;
 
+HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
+{
+    const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, surface);
+    if (index == 0) {
+        UINT w = 0, h = 0;
+        if (surface) {
+            D3DSURFACE_DESC desc = {};
+            auto get_desc = (HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *))
+                (*(void ***)surface)[SLOT_Surface_GetDesc];
+            if (SUCCEEDED(get_desc(surface, &desc))) {
+                w = desc.Width;
+                h = desc.Height;
+            }
+        }
+        s1::on_set_render_target(w, h);
+    }
+    return hr;
+}
+
 HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UINT count)
 {
     g_setvsconst_calls++;
@@ -278,6 +305,8 @@ bool capture_and_hook()
         {SLOT_Reset, (void *)&reset_hook, &g_reset_hook, "Reset"},
         {SLOT_SetVertexShaderConstantF, (void *)&setvsconstf_hook, &g_setvsconstf_hook,
          "SetVertexShaderConstantF"},
+        {SLOT_SetRenderTarget, (void *)&setrendertarget_hook, &g_setrt_hook,
+         "SetRenderTarget"},
     };
 
     for (const SlotSpec &spec : slots) {

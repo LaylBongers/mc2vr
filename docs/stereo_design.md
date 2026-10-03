@@ -217,7 +217,7 @@ first). Pose marshal point is the slot-5 hook (S4).
 
 | Site | Mechanism | Phase | Status |
 |---|---|---|---|
-| Device `SetVertexShaderConstantF` (slot 94) | VmtHook | **S2 per-eye injection** | installed; scratch-copy rewrite; camera-moving (run 22), layout-corrected and near-correct at game scale (run 23) |
+| Device `SetVertexShaderConstantF` (slot 94) | VmtHook | **S2 per-eye injection** | installed; scratch-copy rewrite; camera-moving (run 22), layout-corrected (run 23), RT0-gated (run 24) — visually clean at game scale |
 | Upload gate `MC2_VCD_UPLOAD_CMP` 0x00855a78 | MidHook | S2 exact-register map | installed; publishes the technique's resolved `viewContextData`/`ViewProj` (reg,count) to the rewriter |
 | `RenderCmd_ExecuteStream` opcode `0x008569f5` | MidHook | M3 histogram + **S2c stream tap** | installed (M3) |
 | Device `Present` (17) / `Reset` (16) | VmtHook | S4 compositor / params | installed (M2) |
@@ -236,12 +236,7 @@ vsclock/vspose controls.
 
 ## Open questions
 
-- **Residual after the layout fix**: (a) the count-6 extra row (`c22` in
-  shader `0x1de598`, `dp4 r1, r0, c22`) is left unshifted and has never
-  appeared in the `S1 vrow: count-6 extra row` log despite count-6
-  techniques being published (c17/6) — either it is not uploaded through
-  slot 94 with the block, or is uploaded elsewhere; classify before
-  touching it (a world-fixed row needs no shift, a view-derived one does).
+- **Residual after the layout fix**: (a) count-6 extra row: world-fixed, no action (see below).
   (b) Shaders with no `viewContextData` are not rewritten: explicit
   `g_ViewProjMtx` (c0-3, `0x9fb8`: same per-row `w` shift), `LocalToProj`
   (`0x6cc8`: view folded in per object — needs the view-space eye offset,
@@ -251,6 +246,21 @@ vsclock/vspose controls.
   (c) Rewrites now apply to a scratch copy returned from
   `on_set_vs_constant` — the game's upload buffer is never mutated (it may
   alias the persistent per-view record).
+- **Shadow fade-in/out under camera pan — FIXED (run 24, 2026-10-03)**: the
+  rewrite had applied to EVERY pass uploading `viewContextData`, including
+  the shadow-map pass (camera = the light) and other off-screen RT passes,
+  shifting the shadow map relative to its receivers. Fix: observe device
+  `SetRenderTarget` (slot 37) and apply the view rewrite only while RT0 ==
+  backbuffer size. Visually confirmed fully fixed. Seen RT0 sizes (2560x1440
+  main; skipped: 1024x4096 shadow atlas, 512², 128², 64²; 1280x720→1x1
+  downsample chain, 853x480). Caveat: gate keys on size, so an off-screen
+  pass with exactly the backbuffer size would be shifted (none seen); if the
+  render resolution ever differs from the backbuffer, key on RT identity.
+  Receiver lookup is world-space (VS passes world pos), eye-invariant.
+- **Count-6 extra row classified (run 24)**: logged `c22 = (1.7e-7, -0.137,
+  0.991, -2779.8)` vs VP row0 `(-1.34, 0, 2.3e-7, -1975.9)` — unit-length
+  xyz with no relation to the VP rows: a world-fixed plane (height/fog/light
+  depth). Correctly left unshifted; no action needed.
 - **Material texgen stays mono for eye 2**: `PgMaterial` texture-projection
   transforms (shadow cascades, water/sky reflections, blob shadows) are
   derived CPU-side by VM'd code from the mono camera and uploaded via
