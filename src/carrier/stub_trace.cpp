@@ -84,7 +84,6 @@ struct Stats {
     uint64_t by_phase[PHASE_COUNT];
     uint64_t by_region[REGION_COUNT];
     uint64_t prot_in_stub;       // protected-region caller while STUB
-    uint64_t prot_total;         // protected-region caller, any phase
     uint32_t ret_seen[PHASE_COUNT][RET_SEEN_MAX];
     uint32_t ret_seen_n[PHASE_COUNT];
 };
@@ -116,11 +115,8 @@ void on_entry(size_t idx, safetyhook::Context &ctx)
     const uint32_t phase = g_phase;
     st.by_phase[phase]++;
     st.by_region[region]++;
-    if (region != R_TEXT) {
-        st.prot_total++;
-        if (phase == STUB) {
-            st.prot_in_stub++;
-        }
+    if (region != R_TEXT && phase == STUB) {
+        st.prot_in_stub++;
     }
 
     // One-shot per distinct (target, phase, return address).
@@ -262,7 +258,6 @@ void report_window()
         memset(st.by_phase, 0, sizeof(st.by_phase));
         memset(st.by_region, 0, sizeof(st.by_region));
         st.prot_in_stub = 0;
-        st.prot_total = 0;
     }
     g_stub_calls = 0;
     g_stub_returns = 0;

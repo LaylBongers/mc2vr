@@ -17,6 +17,8 @@ Per-address facts (names, chain, vtables, queue layout) are stored in the Ghidra
 - Device-lost branch (`DAT_01174a94 == 1`) gave the RenderShell slot semantics: `slot01` invalidate → `slot03` timed render → `slot02` restore.
 - Runtime caller-attribution trick (carrier): `__builtin_return_address(0)` + module lookup in hook bursts, or a MidHook at entry reading `ECX`/`[ESP]` for thiscall/virtual sites.
 
+**Diagram:** `docs/render_diagram.svg` — frame flow, the opaque VM stub and its callbacks, and every MC2VR hook point (installed / optional / planned). Keep it in sync when hooks change.
+
 ## Frame driver chain (runtime-confirmed via carrier hooks, M2/M2.5; S0 static additions 2026-10-02)
 
 ```

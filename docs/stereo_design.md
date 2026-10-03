@@ -4,7 +4,7 @@ Design for dual-eye world rendering + HMD presentation. Per-address facts live
 in Ghidra plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`,
 `g_ViewContextTable`, `g_PrimitiveBase`, `RenderQueue_SubmitWorldPackets`).
 Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
-`docs/render_path.md`. Code: `src/carrier/view_rewrite.cpp`.
+`docs/render_path.md`; overview diagram: `docs/render_diagram.svg`. Code: `src/carrier/view_rewrite.cpp`.
 
 ## Status
 

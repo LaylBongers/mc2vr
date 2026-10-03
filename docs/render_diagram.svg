@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="1380" viewBox="0 0 1420 1380" font-family="DejaVu Sans, Verdana, sans-serif">
+<defs>
+<marker id="a" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#44506a"/></marker>
+<marker id="r" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#d6336c"/></marker>
+<marker id="o" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#e8590c"/></marker>
+<pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="#2b2f3a"/><line x1="0" y1="0" x2="0" y2="8" stroke="#3c4252" stroke-width="4"/></pattern>
+</defs>
+<rect width="1420" height="1380" fill="#ffffff"/>
+<text x="710.0" y="34" text-anchor="middle" font-size="22" fill="#10182b" font-weight="bold">Mercenaries 2 renderer — frame flow and MC2VR hook points</text>
+<text x="710.0" y="56" text-anchor="middle" font-size="13" fill="#5b6b8a">one main thread · D3D9 (DXVK) · producer → opaque VM stub → plaintext consumer · camera exists only as GPU constants</text>
+<rect x="24" y="78" width="640" height="880" rx="8" fill="#f8fbf8" stroke="#9bb59b" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="344.0" y="522.3333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433"></text>
+<text x="344" y="100" text-anchor="middle" font-size="13" fill="#3b6b3b" font-weight="bold">FRAME PRODUCER  (InGameShellState_RunFrame)</text>
+<rect x="700" y="78" width="696" height="880" rx="8" fill="#f8f9fd" stroke="#9ba8c9" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="1048.0" y="522.3333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433"></text>
+<text x="1048" y="100" text-anchor="middle" font-size="13" fill="#2f4a8a" font-weight="bold">FRAME CONSUMER  (render task → D3D device calls)</text>
+<rect x="60" y="116" width="570" height="48" rx="8" fill="#eaf4ea" stroke="#5b8a5b" stroke-width="1.5"/>
+<text x="345.0" y="135.83333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">GameShell_FrameTick   0x00630e10</text>
+<text x="345.0" y="152.83333333333334" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">main loop tick · GameStateStack_Update → InGameShellState_Update → RunFrame</text>
+<rect x="470" y="106" width="195.5" height="20" rx="10" fill="#2f9e44"/>
+<text x="567.75" y="120" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">InlineHook: frame counter</text>
+<polyline points="345,164 345,184" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="60" y="184" width="570" height="50" rx="8" fill="#eaf4ea" stroke="#5b8a5b" stroke-width="1.5"/>
+<text x="345.0" y="204.83333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">InGameShellState_FramePipeline   0x004c96f0</text>
+<text x="345.0" y="221.83333333333334" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">~114 subsystem updates: world · physics · audio · UI · tasks</text>
+<polyline points="195,234 195,254" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="60" y="254" width="270" height="62" rx="8" fill="#f3f0e6" stroke="#a08a4a" stroke-width="1.5"/>
+<text x="195.0" y="273.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">Pose store → ViewEntry</text>
+<text x="195.0" y="289.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">PoseStore_GetPoseByHandle  (427 callers)</text>
+<text x="195.0" y="305.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">ViewManager / DeriveMatrices: DERIVED state</text>
+<text x="342" y="276" text-anchor="start" font-size="11" fill="#8a6d1f">derived copies:</text>
+<text x="342" y="290" text-anchor="start" font-size="11" fill="#8a6d1f">patching them never</text>
+<text x="342" y="304" text-anchor="start" font-size="11" fill="#8a6d1f">moves the camera</text>
+<polyline points="560,234 560,356" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="60" y="356" width="570" height="56" rx="8" fill="#eaf4ea" stroke="#5b8a5b" stroke-width="1.5"/>
+<text x="345.0" y="379.8333333333333" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">RenderQueue_SubmitWorldPackets   0x0048e620</text>
+<text x="345.0" y="396.8333333333333" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">walks active-view list → 1 element per view {camera staging · ViewEntry* · frame ctx}</text>
+<rect x="455" y="346" width="195.5" height="20" rx="10" fill="#1c7ed6"/>
+<text x="552.75" y="360" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">MidHook: view aggregation</text>
+<polyline points="345,412 345,436" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="60" y="436" width="570" height="40" rx="8" fill="#eef1f6" stroke="#7a869f" stroke-width="1.5"/>
+<text x="345.0" y="452.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">g_RenderQueue ring   (96 B × 4096)</text>
+<text x="345.0" y="468.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">consumer reads it AFTER the walk</text>
+<polyline points="345,476 345,506" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="60" y="506" width="570" height="86" rx="8" fill="url(#hatch)" stroke="#111" stroke-width="2"/>
+<text x="345.0" y="553.3333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433"></text>
+<text x="345" y="540" text-anchor="middle" font-size="15" font-weight="bold" fill="#ffffff">SecuROM VM stub   call 0x004c99f9 → 0x0050f660</text>
+<text x="345" y="562" text-anchor="middle" font-size="12" fill="#d0d4e0">opaque: builds draw records · view contexts · materials · command streams</text>
+<text x="345" y="580" text-anchor="middle" font-size="12" fill="#d0d4e0">native glue in Stext calls plaintext (callbacks) — never hook the stub itself</text>
+<rect x="470" y="496" width="223.89999999999998" height="20" rx="10" fill="#e8590c"/>
+<text x="581.95" y="510" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">MidHooks bracket (stub_trace)</text>
+<rect x="60" y="612" width="270" height="58" rx="8" fill="#fff4e6" stroke="#e8590c" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="195.0" y="629.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">FUN_0050c106 (SecuROM-mutated)</text>
+<text x="195.0" y="645.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">recursive handle-tree walk · called</text>
+<text x="195.0" y="661.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">from Stext 0x024f22b6 inside the stub</text>
+<polyline points="200,592 200,612" fill="none" stroke="#e8590c" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#o)"/>
+<rect x="360" y="612" width="270" height="58" rx="8" fill="#fff4e6" stroke="#e8590c" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="495.0" y="629.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">Pose / handle store (plaintext)</text>
+<text x="495.0" y="645.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">PoseStore_ResolveHandle · Pose_Copy ·</text>
+<text x="495.0" y="661.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">PgMaterial_ctor  ← also called by Stext</text>
+<polyline points="330,641 360,641" fill="none" stroke="#e8590c" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#o)"/>
+<rect x="390" y="673" width="195.5" height="20" rx="10" fill="#e8590c"/>
+<text x="487.75" y="687" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">entry MidHooks (optional)</text>
+<polyline points="345,592 345,602" fill="none" stroke="#111" stroke-width="0.01" marker-end="url(#a)"/>
+<text x="345" y="700" text-anchor="middle" font-size="12" fill="#44506a" font-weight="bold">stub OUTPUTS (plaintext data)</text>
+<rect x="60" y="712" width="180" height="70" rx="8" fill="#eef1f6" stroke="#7a869f" stroke-width="1.5"/>
+<text x="150.0" y="735.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">g_PrimitiveBase</text>
+<text x="150.0" y="751.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">PgPrimitive × N (0x58 B)</text>
+<text x="150.0" y="767.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">indices + draw params only</text>
+<rect x="255" y="712" width="200" height="70" rx="8" fill="#ffe3ec" stroke="#d6336c" stroke-width="2.5"/>
+<text x="355.0" y="735.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">g_ViewContextTable</text>
+<text x="355.0" y="751.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">VP rows 0-3 | camPos | extra</text>
+<text x="355.0" y="767.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">★ THE DRAW CAMERA ★</text>
+<rect x="470" y="712" width="160" height="70" rx="8" fill="#eef1f6" stroke="#7a869f" stroke-width="1.5"/>
+<text x="550.0" y="735.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">Material · Technique</text>
+<text x="550.0" y="751.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">tables · pass objects</text>
+<text x="550.0" y="767.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">command streams</text>
+<polyline points="345,670 345,700" fill="none" stroke="#111" stroke-width="0.01" marker-end="url(#a)"/>
+<polyline points="150,592 150,712" fill="none" stroke="#111" stroke-width="0.01" marker-end="url(#a)"/>
+<rect x="60" y="810" width="570" height="130" rx="8" fill="#fff0f5" stroke="#d6336c" stroke-width="2"/>
+<text x="345.0" y="879.3333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433"></text>
+<text x="345" y="834" text-anchor="middle" font-size="14" fill="#a61e4d" font-weight="bold">PER-EYE INJECTION  (implemented in view_rewrite.cpp)</text>
+<text x="80" y="858" text-anchor="start" font-size="12" fill="#4a1530">on each SetVertexShaderConstantF upload, main pass only (RT0 == backbuffer size):</text>
+<text x="80" y="877" text-anchor="start" font-size="12" fill="#4a1530">  VP rows 0-3:  w -= dot(row.xyz, D)     camPos:  xyz += D     (D = ± right · IPD/2)</text>
+<text x="80" y="896" text-anchor="start" font-size="12" fill="#4a1530">  exact registers from the technique (upload-gate MidHook) · rewrite on a scratch copy</text>
+<text x="80" y="915" text-anchor="start" font-size="12" fill="#4a1530">  shadow / reflection / offscreen passes are NOT shifted (their RT0 size differs)</text>
+<rect x="740" y="116" width="616" height="60" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="141.83333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">RenderTask_RenderFrame   0x0046a290   (registered task)</text>
+<text x="1048.0" y="158.83333333333334" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">→ RenderShell_RenderFrameTimed → PgPrimitive_SubmitToGPU 0x00855690</text>
+<rect x="1145" y="106" width="174.2" height="20" rx="10" fill="#e8590c"/>
+<text x="1232.1" y="120" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">entry MidHook (tracer)</text>
+<polyline points="1048,176 1048,196" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="740" y="196" width="616" height="80" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="231.83333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">LtiRenderer_BeginSubmit   0x0074aaa0</text>
+<text x="1048.0" y="248.83333333333334" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">Present(prev) → BeginScene → GPU EVENT-QUERY SYNC (waits for all prior work) → Clear</text>
+<rect x="1105" y="186" width="160.0" height="20" rx="10" fill="#1c7ed6"/>
+<text x="1185.0" y="200" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">MidHook probe (M2.5)</text>
+<polyline points="1048,276 1048,300" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="724" y="300" width="648" height="498" rx="8" fill="#fbfcff" stroke="#4a6fc0" stroke-width="1.6" stroke-dasharray="2 0"/>
+<text x="1048.0" y="553.3333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433"></text>
+<text x="1048" y="320" text-anchor="middle" font-size="13" fill="#2f4a8a" font-weight="bold">for each PgPrimitive record (g_PrimitiveBase walk)</text>
+<rect x="750" y="336" width="596" height="48" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="356.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">RenderShell_SetViewType · Dx9_SetRenderTarget</text>
+<text x="1048.0" y="372.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">pass changes: main / shadow atlas / reflections / half-res chain</text>
+<rect x="1160" y="326" width="195.5" height="20" rx="10" fill="#2f9e44"/>
+<text x="1257.75" y="340" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">VmtHook slot 37 (observe)</text>
+<polyline points="1048,384 1048,402" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="750" y="402" width="596" height="50" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="423.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">Technique select · constant register resolve</text>
+<text x="1048.0" y="439.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">Technique_ResolveConstantRegisters → viewContextData / ViewProj regs</text>
+<rect x="1146" y="392" width="152.9" height="20" rx="10" fill="#1c7ed6"/>
+<text x="1222.45" y="406" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">MidHook upload gate</text>
+<polyline points="1048,452 1048,474" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="750" y="474" width="596" height="92" rx="8" fill="#ffe3ec" stroke="#d6336c" stroke-width="3"/>
+<text x="1048.0" y="507.3333333333333" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">Dx9_SetVertexShaderConstantF  → device slot 94</text>
+<text x="1048.0" y="524.3333333333333" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">viewContextData [VP|camPos|extra] · objectData · bones · UV · light</text>
+<text x="1048.0" y="541.3333333333333" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">(only re-uploaded when view-context index or technique changes)</text>
+<rect x="1090" y="464" width="238.1" height="20" rx="10" fill="#d6336c"/>
+<text x="1209.05" y="478" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">VmtHook slot 94: CAMERA REWRITE</text>
+<polyline points="1048,566 1048,588" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="750" y="588" width="596" height="58" rx="8" fill="#fff9e6" stroke="#c9a227" stroke-width="1.5"/>
+<text x="1048.0" y="605.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">Dx9_SetPixelShaderConstantF → slot 109</text>
+<text x="1048.0" y="621.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">material texgen matrix · view record · screen consts</text>
+<text x="1048.0" y="637.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">(NOT hooked: PS camera data &amp; texgen stay mono — open item)</text>
+<polyline points="1048,646 1048,668" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="750" y="668" width="596" height="58" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="693.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">RenderCmd_ExecuteStream   0x008569d0  (27 opcodes)</text>
+<text x="1048.0" y="709.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">state · textures · RT switches · direct VS-constant uploads (op 0x02 → slot 94)</text>
+<rect x="1130" y="658" width="145.8" height="20" rx="10" fill="#1c7ed6"/>
+<text x="1202.9" y="672" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">MidHook opcode tap</text>
+<polyline points="1048,726 1048,744" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="750" y="744" width="596" height="44" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="770.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">DrawPrimitive / DrawIndexedPrimitive  (slots 81 / 82)</text>
+<rect x="724" y="806" width="648" height="66" rx="8" fill="#fff" stroke="#7048e8" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1048.0" y="843.3333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433"></text>
+<text x="1048" y="828" text-anchor="middle" font-size="13" fill="#5f3dc4" font-weight="bold">PLANNED (S2c): replay this loop once per eye</text>
+<text x="1048" y="848" text-anchor="middle" font-size="12" fill="#5f3dc4">buffer the command stream · eye render targets · per-eye constants from the rewrite above</text>
+<polyline points="1048,798 1048,806" fill="none" stroke="#7048e8" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#a)"/>
+<polyline points="1048,872 1048,892" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="740" y="892" width="616" height="46" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="910.8333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">LtiRenderer_EndSubmit</text>
+<text x="1048.0" y="927.8333333333334" text-anchor="middle" font-size="12" font-weight="normal" fill="#1c2433">StretchRect RT0 → backbuffer · EndScene</text>
+<polyline points="1048,938 1048,980" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="740" y="980" width="616" height="46" rx="8" fill="#e8eefb" stroke="#4a6fc0" stroke-width="1.5"/>
+<text x="1048.0" y="1007.3333333333334" text-anchor="middle" font-size="13" font-weight="bold" fill="#1c2433">IDirect3DDevice9::Present  (slot 17)</text>
+<rect x="1160" y="970" width="124.5" height="20" rx="10" fill="#2f9e44"/>
+<text x="1222.25" y="984" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">VmtHook slot 17</text>
+<rect x="740" y="1044" width="290" height="52" rx="8" fill="#fff" stroke="#7048e8" stroke-width="1.5" stroke-dasharray="8 5"/>
+<text x="885.0" y="1066.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">HMD compositor  (planned, S4)</text>
+<text x="885.0" y="1082.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">both eye textures → OpenXR</text>
+<rect x="1066" y="1044" width="290" height="52" rx="8" fill="#eef1f6" stroke="#7a869f" stroke-width="1.5"/>
+<text x="1211.0" y="1066.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">monitor window</text>
+<text x="1211.0" y="1082.0" text-anchor="middle" font-size="11" font-weight="normal" fill="#1c2433">game's own Present continues</text>
+<polyline points="1048,1026 885,1044" fill="none" stroke="#7048e8" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#a)"/>
+<polyline points="1048,1026 1211,1044" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<rect x="740" y="1114" width="616" height="40" rx="8" fill="#f1f3f5" stroke="#868e96" stroke-width="1.5"/>
+<text x="1048.0" y="1138.0" text-anchor="middle" font-size="12" font-weight="bold" fill="#1c2433">DXVK → Vulkan (RADV) · Proton</text>
+<polyline points="1048,1096 1048,1114" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
+<polyline points="630,747 700,747 700,520 724,520" fill="none" stroke="#d6336c" stroke-width="2.5" marker-end="url(#r)"/>
+<polyline points="630,875 690,875 690,540 750,525" fill="none" stroke="#d6336c" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#r)"/>
+<text x="40" y="1200" text-anchor="start" font-size="13" fill="#10182b" font-weight="bold">LEGEND</text>
+<rect x="40" y="1214" width="259.4" height="20" rx="10" fill="#2f9e44"/>
+<text x="169.7" y="1228" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">VmtHook (device vtable, installed)</text>
+<rect x="313.4" y="1214" width="231.0" height="20" rx="10" fill="#1c7ed6"/>
+<text x="428.9" y="1228" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">MidHook (plaintext, installed)</text>
+<rect x="558.4" y="1214" width="238.1" height="20" rx="10" fill="#e8590c"/>
+<text x="677.4499999999999" y="1228" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">optional tracer (stub_trace=on)</text>
+<rect x="810.5" y="1214" width="117.39999999999999" height="20" rx="10" fill="#d6336c"/>
+<text x="869.2" y="1228" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">camera rewrite</text>
+<rect x="40" y="1248" width="26" height="14" fill="url(#hatch)" stroke="#111"/>
+<text x="74" y="1260" text-anchor="start" font-size="12" fill="#44506a">opaque SecuROM VM (never hook)</text>
+<rect x="290" y="1248" width="26" height="14" rx="3" fill="#fff4e6" stroke="#e8590c" stroke-dasharray="5 3"/>
+<text x="324" y="1260" text-anchor="start" font-size="12" fill="#44506a">plaintext called back by the stub</text>
+<rect x="560" y="1248" width="26" height="14" rx="3" fill="#fff" stroke="#7048e8" stroke-dasharray="8 5"/>
+<text x="594" y="1260" text-anchor="start" font-size="12" fill="#44506a">planned / not built</text>
+<rect x="780" y="1248" width="26" height="14" rx="3" fill="#fff9e6" stroke="#c9a227"/>
+<text x="814" y="1260" text-anchor="start" font-size="12" fill="#44506a">known gap (mono data)</text>
+<text x="40" y="1296" text-anchor="start" font-size="12" fill="#44506a">Facts: the draw camera never exists in patchable plaintext data — it reaches the GPU only as the viewContextData VS constants, so per-eye injection is at SetVertexShaderConstantF.</text>
+<text x="40" y="1316" text-anchor="start" font-size="12" fill="#44506a">Sources: docs/render_path.md (frame chain, stub callbacks) · docs/stereo_design.md (camera channel, hook inventory) · Ghidra plates on PgPrimitive_SubmitToGPU / g_ViewContextTable.</text>
+</svg>
