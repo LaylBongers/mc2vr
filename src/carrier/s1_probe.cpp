@@ -1,6 +1,7 @@
 // S2 channel module — see s1_probe.hpp for scope. S1 hunt instrumentation
-// removed (S1 complete, 2026-10-02 — docs/s1_camera_hunt.md); this file
-// keeps only the SetVertexShaderConstantF channel + ambient rewrite.
+// removed (S1 complete, 2026-10-02 — evidence distilled into
+// docs/stereo_design.md); this file keeps only the SetVertexShaderConstantF
+// channel + the rewrites.
 
 #include "s1_probe.hpp"
 
@@ -35,11 +36,9 @@ enum class RewriteMode { Off, On, Pulse };
 // gpu_boundary_rewrite: w==1.0 world-position rows (verified visible — S1
 // runs 16–17; moves EFFECTS, not the camera).
 RewriteMode g_ambient_rewrite = RewriteMode::Off;
-// view_row_rewrite: the w!=1.0 view-matrix family rows (run-6 signature —
-// near-identity rotation, translation element, following a w==1.0 position
-// row). next_steps.md #1: the load-bearing unverified assumption that these
-// drive the visible view. Separate key so the verification run can enable
-// ONLY this (the effects wobble from the ambient rewrite would mask it).
+// view_row_rewrite: the exact-register viewContextData rewrite — the camera
+// pan, VALIDATED run 22 (stereo_design.md §S2). Separate key so the camera
+// pan can run with the ambient effects rewrite disabled.
 RewriteMode g_view_rewrite = RewriteMode::Off;
 
 // ---- VS register cache (the S2a identification input) ------------------------
@@ -77,7 +76,7 @@ uint64_t g_vrow_rewrites = 0;
 uint32_t g_vrow_log_regs[24];
 uint32_t g_vrow_log_n = 0;
 
-// ---- viewContextData block shapes (S2a SOLVED — next_steps.md) -----------
+// ---- viewContextData block shapes (S2a SOLVED — stereo_design.md §S2) ----
 // Block = [camPos (w==1.0) | VP row0..row3] (count 5) or VP only (count 4);
 // row-major, clip_i = dot(row_i, worldpos). VP rows are view rows scaled by
 // ~1 projection terms: xyz rotation-like + unit norm, translation in w.
@@ -173,7 +172,7 @@ void log_once_vrow(uint32_t reg, const float *pos, float delta)
     g_vrow_log_regs[g_vrow_log_n++] = reg;
     MC2VR_LOG("S1 vrow: viewContextData block at c%u (pos was (%g,%g,%g,1))"
               " — shifting pos.x and VP rows 0-3 (w -= x*delta), delta=%g "
-              "(S2a-solved block layout; next_steps.md)",
+              "(S2a-solved block layout; stereo_design.md §S2)",
               reg, (double)(pos[0] - delta), (double)pos[1], (double)pos[2],
               (double)delta);
 }
@@ -286,13 +285,9 @@ void on_set_vs_constant(uint32_t start_register, const float *data,
     // the draw consumes the modification directly. The game's own data is
     // never touched. Moves EFFECTS, not the camera (run 17).
     //
-    // View-matrix-row rewrite (next_steps.md #1 — the load-bearing
-    // verification, refined by run 18): rows with w != 1.0 sitting within
-    // +1..+6 registers of the most recent w==1.0 position row (run-6/18
-    // family: rotation xyz | translation in w) get w shifted by
-    // -row.x*delta — the consistent/rigid camera-move form. If the view
-    // moves RIGIDLY with this enabled, S2b is confirmed; if it distorts
-    // again, the family is not a straight world->view transform.
+    // viewContextData rewrite: the exact-register camera pan (run 22,
+    // validated — stereo_design.md §S2); the block and register map come
+    // from the upload-gate MidHook, applied below.
     const float delta_owin = rewrite_delta(g_ambient_rewrite, PATCH_DELTA);
     const float delta_vrow = rewrite_delta(g_view_rewrite, g_vrow_amp);
     if (delta_owin == 0.0f && delta_vrow == 0.0f) {
@@ -394,7 +389,7 @@ void install()
     MC2VR_LOG("S1: active channel: SetVertexShaderConstantF (device VmtHook "
               "slot 94) + ambient rewrite (gpu_boundary_rewrite) + "
               "exact-register viewContextData rewrite (view_row_rewrite) "
-              "— next_steps.md run 22");
+              "— stereo_design.md §S2 (run 22)",
 }
 
 } // namespace mc2vr::s1

@@ -17,7 +17,7 @@
 #   - "S1 owin:" rewritten-register one-shots (the S2a identification input)
 #   - "S1 vs:" 10s window reports (upload/rewrite volume)
 # S1 hunt instrumentation (elem/crec/exfil/vsmat/brackets) was removed with
-# the hunt; the evidence lives in docs/s1_camera_hunt.md.
+# the hunt; the evidence lives in docs/stereo_design.md.
 
 import re
 import struct

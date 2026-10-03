@@ -30,7 +30,7 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
 ## Render data model (consume side, all plaintext; layouts on Ghidra plates)
 
 - **`PgPrimitive`** (0x58): per-draw submit record — draw params, VS, technique, stencil, and table
-  INDICES (`materialIdx/viewIdx/envIdx/lightEnvIdx/screenIdx`). Singly-linked submit list
+  INDICES (`materialIdx/viewIdx/envIdx/viewContextIdx/screenIdx`). Singly-linked submit list
   (base/head/next-table in the `g_PrimitiveBase` plate; next entries are {6-byte sort key,
   ushort next}, `0xffff` terminates). Lifecycle: Reset → VM'd build/AssignKeys →
   `PgPrimitive_SortList` → SubmitToGPU = `RenderShell_RenderFrame`.
