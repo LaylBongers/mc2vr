@@ -9,6 +9,7 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
+#include "stub_trace.hpp"
 #include "view_rewrite.hpp"
 
 namespace mc2vr::render {
@@ -288,6 +289,7 @@ void report_window()
     g_queue_changed_polls = 0;
 
     view::report_window();
+    trace::report_window();
 }
 
 DWORD WINAPI poller_thread(LPVOID)
@@ -396,6 +398,9 @@ void install()
     // View rewrite: upload-gate MidHook (the device-level tap is installed
     // with the device VmtHook, device.cpp).
     view::install();
+
+    // Optional SecuROM-stub callback tracer (mc2vr.conf stub_trace=on).
+    trace::install();
 }
 
 } // namespace mc2vr::render

@@ -9,6 +9,7 @@
 #include "log.hpp"
 #include "probes.hpp"
 #include "render_dump.hpp"
+#include "stub_trace.hpp"
 #include "view_rewrite.hpp"
 #include "sha256.h"
 
@@ -80,6 +81,10 @@ static void load_conf()
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
                           "(use off|on|pulse) — defaulting to off", value);
                 view::set_view_row_rewrite("off");
+            }
+        } else if (strcmp(key, "stub_trace") == 0) {
+            if (!trace::set_enabled(value)) {
+                MC2VR_LOG("conf: stub_trace=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "view_row_amp") == 0) {
             // Pan amplitude in world units (default 4.0). ~0.05 for

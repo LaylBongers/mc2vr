@@ -15,6 +15,26 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S2 per-eye injection | camera pan **done and visually clean at game scale**; real HMD offsets, stream replay (S2c) pending |
 | S4 HMD presentation, S5 motion controls | not started |
 
+## Handover — state and next steps (2026-10-03)
+
+Done and verified in-game: per-view camera pan at the GPU boundary (layout-corrected, scratch-copy
+upload, RT0 pass gate); shadows/materials visually clean at game scale. Ghidra + docs consolidated
+(the `ViewContextRecord`/`ViewEntry`/`ViewRef`/`PgPrimitive` structs, full `Dx9StateWrapper_vtbl`
+names, corrected comments). Tooling: `tools/shader_*.py`, `tools/analyze_dumps.py`, optional stub
+tracer (`stub_trace=on`).
+
+Next, roughly in order:
+1. Real per-eye offsets from the HMD pose (replace the pulse) + asymmetric projection (VP rows).
+2. Shaders without `viewContextData` (billboards/rain/quads) — check which lag, then implement.
+3. PS-side camera data (the pass uploads the view record to the PS; `cameraPos` c92; texgen
+   matrices are mono) — hook slot 109 if reflections/shadows skew at IPD scale.
+4. S2c second draw pass (stream buffering/replay, eye RTs); note the per-frame GPU sync in
+   `LtiRenderer_BeginSubmit` and that rendering runs as a registered task (`RenderTask_RenderFrame`).
+5. S4 compositor (OpenXR via wineopenxr), pacing.
+Open RE items: what the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk,
+see its Ghidra plate); why `ViewManager_Update` never fired in the traced run; `FUN_00858980`,
+`FUN_00852740` (opcode 0x08 draw) etc. still unnamed.
+
 ## Facts this design builds on
 
 - **Frame chain** (producer side all plaintext, main thread only):
@@ -181,6 +201,7 @@ first). Pose marshal point is the slot-5 hook (S4).
 | Device `Present` (17) / `Reset` (16) | VmtHook | S4 compositor / params |
 | `g_RenderShell` slots 4/5 | cloned-vtable claim | S4 orchestration (counting no-op now) |
 | `SubmitWorldPackets` loop head `0x0048e9ea` | MidHook | M3 view aggregation |
+| Stub call `0x004c99f9`/`0x004c99fe` + ~15 plaintext helper entries | MidHook | optional callback tracer (`stub_trace=on`, see `render_path.md`) |
 
 Proven mechanisms: trap-based inline/Mid/Vmt installs (no suspension), device
 VmtHook surviving device-lost + `Reset`, slot 4/5 claim 1:1 with frames,
