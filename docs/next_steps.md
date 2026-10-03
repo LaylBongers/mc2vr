@@ -1,56 +1,104 @@
-# Next Steps — Camera Hunt Follow-Ups (S2 pre-work)
+# S2a/S2b Status — Camera Channel IDENTIFIED + VALIDATED (2026-10-03)
 
-Terse, actionable. Order: #1 first (one run, decisive), #3 in parallel (static, no runs), #2
-follows from whichever way #1 goes. Background: `stereo_design.md` (S2a/S2b), `s1_camera_hunt.md`
-§handoff, plates on `RenderShell_RenderFrame` / `g_PrimitiveBase`. Consume-side naming
-(PgPrimitive/PgMaterial) is done — none of these re-open it.
+Runs 16–22 (evidence below) closed the entire "S2 pre-work" list: #1 verified,
+#2 answered, #3 answered (projection located), S2a identification solved as a
+static lookup, and the S2b mechanism (per-eye rewrite at the GPU boundary)
+validated end-to-end in run 22 — **the camera pans correctly with an
+exact-register rewrite**. Design context: `stereo_design.md` §S2; S1 hunt:
+`s1_camera_hunt.md`; per-address facts: Ghidra plates
+(`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`,
+`g_LightEnvTable`).
 
-## 1. Verify the w≠1.0 rows drive the view — load-bearing unverified assumption
+## The mechanism (validated, run 22)
 
-S1 proved rewriting w==1.0 rows moves EFFECTS, not the camera. The claim that the c23–c26 family
-(near-identity rotation, camera position in translation, w≠1.0; 3–4 consecutive dynamic rows after
-a w==1.0 position row) is the actual view transform is RUN-6 INFERENCE, never verified — the
-current filter doesn't match w≠1.0.
+The view lives in the VS constant `viewContextData` — a 4–5 register block the
+engine resolves per technique and uploads from the per-view light-env record.
+Rewriting exactly those registers *in the upload buffer* (device VmtHook slot
+94) moves the camera:
 
-- How: extend the ambient rewrite filter in `on_set_vs_constant` (`src/carrier/s1_probe.cpp`,
-  `mc2vr.conf gpu_boundary_rewrite=pulse`) to also shift those rows (translation only first — minimal
-  risk). One verification run.
-- View moves → S2b design confirmed; go straight to S2a identification.
-- View doesn't move → the real VP is elsewhere; #2 and #3 become the hunt. Do NOT re-litigate the
-  producer side (s1_camera_hunt runs 4–15).
+```
+count-5 block = [camPos (w==1.0) | VP row0 | VP row1 | VP row2 | VP row3]
+count-4 block = [VP row0..row3]                       (no camPos row)
+row-major, clip_i = dot(VP_row_i, worldpos)           (proof: shader bytecode)
+```
 
-## 2. Characterize `prim->vsConstData` (+0x50, count +0x54)
+Consistent camera pan by world-space offset `D = (delta,0,0)`:
+- camPos row: `x += delta`            (per-pixel effects follow the eye)
+- every VP row: `w -= row.x * delta`  (rigid world shift on screen)
 
-The only unclassified plaintext per-record VS-constant channel: uploaded as
-`(wrapper, technique+0xac reg, prim->vsConstData, prim->vsConstCount * 3)`, gate technique+0xb0
-(call site + plate item 2 on RenderShell_RenderFrame). VM-filled; the `*3` unit is unexplained.
+Implementation: `src/carrier/s1_probe.cpp`, conf
+`view_row_rewrite=off|on|pulse` (SEPARATE from `gpu_boundary_rewrite`, which
+shifts w==1.0 rows and only moves effects — kept as a diagnostic). The exact
+registers come from a MidHook at the upload gate (`MC2_VCD_UPLOAD_CMP`
+0x00855a78; see Hook sites in `launcher_plan.md`) — it publishes the CURRENT
+technique's own resolved map (`+0xd4` viewContextData reg, `+0xd8` count,
+`+0xdc` viewContextData.ViewProj reg, `+0xe0` count) to the rewriter. No
+shape matching anywhere (that failed twice — see lessons).
 
-- How: static layout facts are on the plate already; runtime — attribute uploads by call site via
-  the existing SetVertexShaderConstantF VmtHook (count == vsConstCount*3), dump the float4 blocks
-  per frame, compare against known values (identity? object world matrix? VP?).
-- Outcomes: per-object world matrices (likely — fine for S2c replay) vs. view-projection
-  (game-changer: per-eye rewrite target moves here). Answer also settles the `*3` semantics.
-- Feeds S2c: these re-upload during the eye-2 replay — must know what they are.
+## Static facts (all proven, all in Ghidra/docs)
 
-## 3. Find the projection matrix — genuine hole, required for per-eye
+- **Constant-name → technique-field map** (plate on `Technique_ResolveConstantRegisters`
+  0x0085b260): reg at technique+X, count/gate at +X+4 —
+  objectData +0x94, LocalToWorld +0x9c, PrevLocalToWorld +0xa4,
+  **BoneMatrixArray +0xac** (answers the old `prim->vsConstData` `*3` question:
+  N bones × 3 rows of 3x4 skinning matrices; no view content, fine for S2c
+  replay), InvViewport +0xb4, UVMatrix +0xbc, BlendWeight +0xc4,
+  globalLightData +0xcc, **viewContextData +0xd4**, **ViewProj +0xdc**,
+  atmosphereData +0xe4, Atmos.ScatteringTermMultiplier +0xec, User +0xf4,
+  ObjectIDScaleArray +0xfc, WindMatrix +0x104, shader ptr +0x10c.
+- **There is NO fixed-function projection** — `SetTransform` never fires
+  because there is no FFP matrix path; the projection is folded into
+  `viewContextData` (the engine resolves a `.ViewProj` member). **Per-eye
+  asymmetric projection = rewriting these registers** — same hook, no new
+  mechanism needed.
+- **Source**: the per-view light-env record (`g_LightEnvTable` 0x01169774,
+  0x70 stride, indexed by `prim+0x49`): +0x00 viewContextData, +0x40 PS view
+  consts, +0x60 atmosphereData*, +0x64 globalLightData*. **No plaintext
+  writer** — filled by the SecuROM-VM'd producer; the plaintext code only
+  zeroes it and copies it to the GPU. Confirms S1's structural conclusion:
+  the GPU boundary is the only per-eye injection point.
+- **Shader register-role lookup**: `docs/shader_ctab_map.md` (generated by
+  `tools/shader_ctab.py` — parses the CTAB constant tables embedded in
+  `data/shader*.bin`, 194 VS + 275 PS shaders, every constant named per
+  register; `viewContextData` in 180/194 VS shaders, base slides per shader).
+  `tools/shader_disasm.py` disassembles the vs_3_0 bytecode (the layout
+  oracle — proof shader: `shader3.bin @0x28c8`).
+- VP rows are view rows scaled by ≈1 projection terms (sx, sy, zf/(zf−zn)) —
+  hence unit-norm with camera-magnitude translations in w; VP row 3 = view
+  row 2 = the clip.w source (the repeated `(0,-0.137,0.99|~-2780)` row).
 
-Nobody has located it: SetTransform NEVER fires (S1), and the c23–c26 rows are near-identity
-rotation (no perspective terms). Projection must be folded into shader constants or `vsConstData`.
-Per-eye VR needs it (ideally asymmetric), not just camera position.
+## Run history (runs 16–22, one lesson each)
 
-- How (a) — static, no runs: disassemble the `.sho vertex shaders` from the game dir (D3D9
-  bytecode; constant registers are positional). Map registers holding VP/world/camera per
-  technique; correlate with the technique-table register fields (+0xac/+0xb0/+0xb8/+0xd0/+0xd8/
-  +0xe8/+0xec/+0xf0 gates — RenderFrame plate item 2) and the `PgShader_Register` names. First
-  check the `.sho` container format (likely a small header + raw bytecode).
-- How (b) — analysis of existing S1 capture data: classify all captured VS row families for a
-  perspective signature (non-uniform scale row, w-row with z terms).
-- Outcome: deterministic register-role map per shader — S2a identification becomes a lookup
-  instead of statistics, and the sliding-bases problem becomes predictable.
+| Run | Result | Lesson |
+|---|---|---|
+| 16 | w==1.0 rewrite visible | GPU-boundary rewrite works (moves effects) |
+| 17 | ambient pulse verified | effects move, camera doesn't — w==1.0 rows are per-pixel channels (PS `cameraPos` c92) |
+| 18 | uniform w shift | clip-space translation ≠ camera move — the divide scales it per-vertex (in/out breathing). Rigid form must be per-row: `w -= row.x·D` |
+| 19 | rigid-form shift | visible pan CONFIRMED (w≠1.0 rows drive the view) but over-reach: objectData + texgen copies also matched → mesh distortion |
+| 20 | same-call block match | zero matches — the block arrives SPLIT across upload calls |
+| 21 | prev-frame cache oracle | cross-technique conflation — register bases slide per technique and numbers are reused; shape matching is structurally wrong |
+| 22 | exact registers via upload-gate MidHook | **camera pans correctly** — S2b validated end-to-end |
 
-## Related open questions (do not duplicate here)
+Run 18's observed view rows (S2a anchors, historical): c213 camPos +
+c214–c217 VP rows — values in the run-18 `S1 vrow:` log lines in the carrier
+log of that session.
 
-- Eye-2 material-texgen mono-projection (future SetPixelShaderConstantF hook, wrapper slot 109) —
-  `stereo_design.md` §Open questions.
-- RenderCmd_ExecuteStream opcode map (S2c + last plaintext hop) — `stereo_design.md` S2c,
-  `render_path.md`.
+## Open items (next steps)
+
+1. **Verification pass at game scale (cheap)**: run 22's pulse amplitude is
+   ±4 world units (~2s sine) — intentionally unmistakable; it clips through
+   terrain by design. Re-run with a small amplitude (e.g. `PATCH_DELTA`
+   0.03–0.1, or a `view_row_amp` conf key) and audit for residual artifacts
+   (shadow/reflection copies still shift consistently; sky/material texgen
+   uses `viewContextData` too — check for anything that lags or doubles).
+2. **S2b proper — per-eye injection**: replace the pulse with real per-eye
+   offsets from HMD pose (S4): `D = ±right·IPD/2` (≈0.032m — vs run 22's ±4
+   this is 100x smaller, well inside the artifact budget). The two shift
+   formulas above are the whole implementation; per-eye asymmetric projection
+   edits the VP rows themselves at the same site.
+3. **S2c — second draw pass**: `RenderCmd_ExecuteStream` stream replay
+   (`stereo_design.md` S2c, `render_path.md`); `BoneMatrixArray`/objectData
+   re-upload per object during replay (known, no view content).
+4. **Open questions carried forward**: eye-2 material-texgen mono-projection
+   (SetPixelShaderConstantF hook, wrapper slot 109) — `stereo_design.md`
+   §Open questions.

@@ -33,6 +33,18 @@ void on_set_vs_constant(uint32_t start_register, const float *data,
 // off restores pass-through. Returns false on unrecognized values.
 bool set_ambient_rewrite(const char *value);
 
+// View-matrix-row rewrite mode (mc2vr.conf view_row_rewrite=off|on|pulse)
+// — next_steps.md #1: shifts the translation component of w!=1.0
+// near-identity rows following a w==1.0 position row. Independent of the
+// ambient rewrite so the camera verification can run with effects disabled.
+// off restores pass-through. Returns false on unrecognized values.
+bool set_view_row_rewrite(const char *value);
+
+// viewContextData pan amplitude (mc2vr.conf view_row_amp=<float>;
+// default 4.0 = unmistakable verification pulse; ~0.05 for game-scale
+// checks; 0.032 = IPD scale).
+void set_view_row_amp(float amp);
+
 // 10s window report (called from render_dump.cpp's poller); resets the
 // window aggregates.
 void report_window();

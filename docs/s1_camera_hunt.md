@@ -69,7 +69,11 @@ the evidence lives in this doc + Ghidra. What the carrier keeps:
   (pose record store `DAT_00df8d00[idx>>8] + (idx&0xff)*0x38`; `Pose_Copy`;
   `ViewManager_*`/`ViewEntry_*`; plate comments throughout).
 
-## S2 handoff (identification data from the verification run)
+## S2 handoff (SUPERSEDED 2026-10-03 — see next_steps.md / stereo_design.md §S2)
+
+S2a/S2b are DONE: the w≠1.0 families below are the `viewContextData` VP
+rows (not texgen), identified statically and validated by the run-22
+camera pan. Keep the rest as historical evidence.
 
 - Rewriting w==1.0 rows visibly moves **effects, not the camera**: the
   visible view is driven by the view-matrix rows (c23–c26 family, run 6:
@@ -109,7 +113,10 @@ The follow-up RE of the consumer side retroactively explains three S1 observatio
   c28/c221 family) and the near-identity w≠1.0 matrix families are `PgMaterial`
   texture-projection (texgen) transforms — shadow/reflection/sky materials
   project from the camera, which is why they carry its position but never drive
-  the view.
+  the view. (CORRECTED 2026-10-03: the near-identity w≠1.0 matrix families
+  are NOT texgen — they are the viewContextData VP rows, proven by shader
+  bytecode + the run-22 camera pan; see next_steps.md. The texgen claim
+  stands for the w==1.0 cascade rows only.)
 - "Main camera matrices never appear exactly (derived)" is expected: nothing in
   the plaintext path passes matrices through unchanged; exact matches (satellite
   m[0]/m[6]) are pass-through special cases, the main camera rows are derived by

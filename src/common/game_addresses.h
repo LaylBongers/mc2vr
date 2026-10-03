@@ -72,6 +72,24 @@
 // 12 call sites. Hooking VM stubs is forbidden; CALLING them is fine (probe).
 #define MC2_GETD3DDEVICE_THUNK ((uintptr_t)0x0047f2f0u)
 
+// viewContextData upload gate in PgPrimitive_SubmitToGPU (S2a, 2026-10-03):
+// 0x00855a78 = `cmp dword ptr [edi+0xd8], 0` immediately before the gated
+// call (JLE skips) — `mov edx,[esp+0x18]; push edx; lea eax,[edi+0xd4]; call
+// Dx9_SetVertexShaderConstantF (0x00749200)` which dispatches to the device
+// VmtHook slot 94 (= on_set_vs_constant). At this instruction EDI = the
+// CURRENT technique object (g_LastTechnique is stale here — updated only at
+// the end of the record loop). The technique's resolved constant map (plate
+// on Technique_ResolveConstantRegisters 0x0085b260): +0xd4 viewContextData
+// reg, +0xd8 count, +0xdc viewContextData.ViewProj reg, +0xe0 count. The
+// carrier's MidHook here publishes the exact register map so the
+// GPU-boundary rewrite targets registers, not row shapes (run-21 lesson:
+// shape heuristics conflate techniques sharing register numbers).
+#define MC2_VCD_UPLOAD_CMP ((uintptr_t)0x00855a78u)
+#define MC2_TECH_VCD_REG_OFF ((uintptr_t)0xd4u)
+#define MC2_TECH_VCD_COUNT_OFF ((uintptr_t)0xd8u)
+#define MC2_TECH_VP_REG_OFF ((uintptr_t)0xdcu)
+#define MC2_TECH_VP_COUNT_OFF ((uintptr_t)0xe0u)
+
 // Probe (a) target: the OTHER per-frame counter (.data, bumped in
 // GameTimeAccumulate_Update). Deliberately not 0x011755bc — that one is what
 // the launcher polls; keep the probe off it so its evidence stays clean.

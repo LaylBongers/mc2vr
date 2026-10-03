@@ -84,29 +84,28 @@ elements. Iterator reload `0x0048f013` / back-edge `0x0048f01f` mapped.
 Answer and evidence: `docs/s1_camera_hunt.md`. Producer-side channels are
 exhausted (runs 4–15); the GPU-boundary rewrite is proven (runs 16–17).
 
-### S2 — Per-eye injection at the GPU boundary (CURRENT PHASE — handoff)
+### S2 — Per-eye injection at the GPU boundary (S2a DONE, S2b VALIDATED 2026-10-03)
 
-1. **S2a — camera-row identification**: per frame, identify the camera
-   position row and view-matrix rows in the VS uploads. Known signatures:
-   position row w==1.0 holding the live camera position (c21 in static
-   phases; bases slide per phase); matrix rows follow (c23–c26 family:
-   near-identity rotation, camera position in the translation, w≠1.0).
-   Identification input: the verification run's owin register families
-   (s1_camera_hunt.md §handoff) + the existing register cache/dynamics
-   analysis. Memoize per shader base (bases are phase-stable).
-   Structural prior (post-S1 RE): all plaintext record-walk upload sites
-   (`g_LightEnvTable`/`g_EnvTable40` blocks, `g_ScreenConstsVS`,
-   per-primitive `vsConstData`, `PgMaterial` `vsConsts80`/`vsConst170`) are
-   classified non-camera — caller-attribution of the upload separates them
-   from the interpreter-path camera rows; expect base slides when the
-   active technique/pass/material population shifts.
-2. **S2b — per-eye rewrite**: in `on_set_vs_constant`
-   (`src/carrier/s1_probe.cpp`), during the eye pass, rewrite the
-   identified rows in the upload buffer: `pos ± right·IPD/2`, and the
-   view-matrix translation rows consistently (negated/rotated position per
-   the run-6 signature). Mechanism identical to the proven ambient rewrite
-   (`mc2vr.conf gpu_boundary_rewrite`), narrowed to the camera rows.
-   IPD + pose from the HMD runtime (S4).
+1. **S2a — SOLVED (static; no runtime identification needed).** The view is
+   the VS constant `viewContextData`, a 4–5 register block per technique:
+   count-5 = `[camPos (w==1.0) | VP row0..row3]`, count-4 = VP rows only;
+   row-major, `clip_i = dot(VP_row_i, worldpos)` (proven by shader bytecode,
+   `tools/shader_disasm.py`). Exact (reg,count) per technique comes from the
+   game's own resolver (plate on `Technique_ResolveConstantRegisters`
+   0x0085b260: viewContextData +0xd4/+0xd8, ViewProj +0xdc/+0xe0), published
+   at upload time by the MidHook at the upload gate (0x00855a78,
+   `MC2_VCD_UPLOAD_CMP`) — no shape heuristics (two failed: split-call
+   arrival; per-technique register reuse).
+2. **S2b — VALIDATED (run 22)**: rewriting exactly those registers in the
+   upload buffer pans the camera correctly. Consistent pan formulas:
+   camPos `x += D.x`; every VP row `w -= row.x*D.x` (generalizes to
+   `w -= dot(row.xyz, D)`). Per-eye: `D = ±right*IPD/2` (~0.032m vs the
+   ±4-unit verification pulse). **Per-eye asymmetric projection = editing
+   the VP rows at the same site** (no FFP projection exists — `SetTransform`
+   never fires; the projection is folded into viewContextData). Upstream
+   source is the per-view light-env record (`g_LightEnvTable` 0x01169774,
+   plate) — VM-written, hence the GPU boundary is the injection point
+   (S1 conclusion upheld). IPD + pose from the HMD runtime (S4).
 3. **S2c — the second draw pass**: replay the frame's command stream once
    per eye through the plaintext interpreter `RenderCmd_ExecuteStream`
    (`0x008569d0`, 27 opcodes; the M3 opcode MidHook at `0x008569f5` is
@@ -116,9 +115,12 @@ exhausted (runs 4–15); the GPU-boundary rewrite is proven (runs 16–17).
    2–3.6k×/frame) — the replay redirects draw targets to eye RTs.
    Engineering list: stream buffering, draw-state reapplication on replay,
    RT plumbing. S0 ring/element facts are the replay's timing inputs.
-4. **Verification mode** (already implemented): `mc2vr.conf`
-   `gpu_boundary_rewrite=off|on|pulse` — persistent ambient rewrite for
-   visual verification; `off` restores the instrumented window sequence.
+   Per-object re-uploads during replay are classified (objectData =
+   local→world, BoneMatrixArray = skinning — no view content).
+4. **Verification modes** (`mc2vr.conf`): `gpu_boundary_rewrite=off|on|pulse`
+   (w==1.0 rows — moves effects only; diagnostic) and `view_row_rewrite=
+   off|on|pulse` (the exact-register camera pan — run 22). `off` =
+   pass-through.
 
 ### S3 — (SUPERSEDED) First duplication via clone-at-stage
 

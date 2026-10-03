@@ -13,6 +13,7 @@
 #include "sha256.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace mc2vr {
@@ -78,6 +79,23 @@ static void load_conf()
                 MC2VR_LOG("conf: gpu_boundary_rewrite=%s not recognized "
                           "(use off|on|pulse) — defaulting to off", value);
                 s1::set_ambient_rewrite("off");
+            }
+        } else if (strcmp(key, "view_row_rewrite") == 0) {
+            // The exact-register viewContextData camera pan (run 22).
+            if (!s1::set_view_row_rewrite(value)) {
+                MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
+                          "(use off|on|pulse) — defaulting to off", value);
+                s1::set_view_row_rewrite("off");
+            }
+        } else if (strcmp(key, "view_row_amp") == 0) {
+            // Pan amplitude in world units (default 4.0). ~0.05 for
+            // game-scale checks; 0.032 = IPD scale.
+            char *end = nullptr;
+            const double amp = strtod(value, &end);
+            if (end != value && end[0] == 0) {
+                s1::set_view_row_amp((float)amp);
+            } else {
+                MC2VR_LOG("conf: view_row_amp=%s not a number, ignored", value);
             }
         } else {
             MC2VR_LOG("conf: unknown key '%s' ignored", key);

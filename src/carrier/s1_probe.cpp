@@ -23,45 +23,236 @@ namespace {
 
 constexpr uint32_t VS_ROWS = 256;  // vs_2_0 max registers
 constexpr float PATCH_DELTA = 4.0f;
+// viewContextData pan amplitude (mc2vr.conf view_row_amp, default 4.0 —
+// the unmistakable verification value; use ~0.05 for game-scale checks,
+// 0.032 = IPD scale).
+float g_vrow_amp = PATCH_DELTA;
 
-// ---- ambient rewrite mode (mc2vr.conf gpu_boundary_rewrite) ----------------
+
+
+// ---- ambient rewrite modes (mc2vr.conf) -------------------------------------
 enum class RewriteMode { Off, On, Pulse };
+// gpu_boundary_rewrite: w==1.0 world-position rows (verified visible — S1
+// runs 16–17; moves EFFECTS, not the camera).
 RewriteMode g_ambient_rewrite = RewriteMode::Off;
+// view_row_rewrite: the w!=1.0 view-matrix family rows (run-6 signature —
+// near-identity rotation, translation element, following a w==1.0 position
+// row). next_steps.md #1: the load-bearing unverified assumption that these
+// drive the visible view. Separate key so the verification run can enable
+// ONLY this (the effects wobble from the ambient rewrite would mask it).
+RewriteMode g_view_rewrite = RewriteMode::Off;
 
 // ---- VS register cache (the S2a identification input) ------------------------
-// Last uploaded 4-float row per register + validity. The S1 classification
-// machinery is gone; S2a (camera-row identification) builds on this cache.
+// Last uploaded 4-float row per register + validity (pre-rewrite values).
 float g_vs_rows[VS_ROWS][4];
 uint8_t g_vs_valid[VS_ROWS];
 uint64_t g_vs_frame_key = UINT64_MAX;
+
+// ---- live technique constant map (published by the VCD MidHook) -------------
+// Run-21 lesson: register bases slide PER TECHNIQUE, and different techniques
+// reuse the same register numbers — value-shape heuristics conflate them
+// (objects panned in different directions / not at all). Run-22: the MidHook
+// at the upload gate (MC2_VCD_UPLOAD_CMP, EDI = current technique) publishes
+// the EXACT (reg, count) pairs the engine's own resolver stored
+// (Technique_ResolveConstantRegisters plate):
+//   [edi+0xd4] viewContextData reg      [edi+0xd8] count (4 or 5)
+//   [edi+0xdc] viewContextData.ViewProj reg  [edi+0xe0] count
+// Same thread, fires immediately before the wrapper -> device VmtHook call
+// chain, so on_set_vs_constant always sees the map for the CURRENT upload.
+constexpr uint32_t VCD_REG_INVALID = 0xffffffffu;
+volatile uint32_t g_tech_vcd_reg = VCD_REG_INVALID;
+volatile uint32_t g_tech_vcd_count = 0;
+volatile uint32_t g_tech_vp_reg = VCD_REG_INVALID;
+volatile uint32_t g_tech_vp_count = 0;
+uintptr_t g_tech_seen[32];    // distinct technique objects (log once each)
+uint32_t g_tech_seen_n = 0;
+SafetyHookMid g_vcd_mid;
 
 // ---- window report aggregates -------------------------------------------------
 uint64_t g_vs_calls = 0, g_vs_vec4s = 0;
 uint64_t g_owin_rewrites = 0;
 uint32_t g_owin_log_regs[24]; // one-shot per distinct rewritten register
 uint32_t g_owin_log_n = 0;
+uint64_t g_vrow_rewrites = 0;
+uint32_t g_vrow_log_regs[24];
+uint32_t g_vrow_log_n = 0;
+
+// ---- viewContextData block shapes (S2a SOLVED — next_steps.md) -----------
+// Block = [camPos (w==1.0) | VP row0..row3] (count 5) or VP only (count 4);
+// row-major, clip_i = dot(row_i, worldpos). VP rows are view rows scaled by
+// ~1 projection terms: xyz rotation-like + unit norm, translation in w.
+// VP row3 = view row2 = the clip.w source. With the EXACT register map from
+// the MidHook these are only sanity checks (fail-safe against a stale/garbage
+// technique pointer), not the matcher.
+
+bool pos_row_shape(const float *r)
+{
+    return r[3] == 1.0f;
+}
+
+// MidHook @ MC2_VCD_UPLOAD_CMP (cmp [edi+0xd8],0 at the upload gate):
+// EDI = the CURRENT technique object. Publish its resolved constant map.
+void vcd_midhook(safetyhook::Context &ctx)
+{
+    const uintptr_t tech = (uintptr_t)ctx.edi;
+    bool seen = false;
+    for (uint32_t k = 0; k < g_tech_seen_n; k++) {
+        if (g_tech_seen[k] == tech) {
+            seen = true;
+            break;
+        }
+    }
+    const bool do_log = !seen && g_tech_seen_n < 32;
+    if (do_log) {
+        g_tech_seen[g_tech_seen_n++] = tech;
+    }
+    if (tech == 0) {
+        return;
+    }
+    const uint32_t vcd_reg = *(volatile const uint32_t *)
+        (tech + MC2_TECH_VCD_REG_OFF);
+    const uint32_t vcd_count = *(volatile const uint32_t *)
+        (tech + MC2_TECH_VCD_COUNT_OFF);
+    const uint32_t vp_reg = *(volatile const uint32_t *)
+        (tech + MC2_TECH_VP_REG_OFF);
+    const uint32_t vp_count = *(volatile const uint32_t *)
+        (tech + MC2_TECH_VP_COUNT_OFF);
+    const bool sane = (vcd_reg == VCD_REG_INVALID || vcd_reg < VS_ROWS) &&
+                      vcd_count <= 8 &&
+                      (vp_reg == VCD_REG_INVALID || vp_reg < VS_ROWS) &&
+                      vp_count <= 4;
+    if (!sane) {
+        if (do_log) {
+            MC2VR_LOG("S1 vrow: technique %p implausible constant map "
+                      "(vcd c%u/%u, ViewProj c%u/%u) — publish skipped",
+                      (void *)tech, vcd_reg, vcd_count, vp_reg, vp_count);
+        }
+        return;
+    }
+    g_tech_vcd_reg = vcd_reg;
+    g_tech_vcd_count = vcd_count;
+    g_tech_vp_reg = vp_reg;
+    g_tech_vp_count = vp_count;
+    if (do_log)
+        MC2VR_LOG("S1 vrow: technique %p: viewContextData c%u (count %u), "
+                  "ViewProj c%u (count %u) — exact registers published",
+                  (void *)tech, vcd_reg, vcd_count, vp_reg, vp_count);
+}
+
+// One-shot per-register logs (first rewrite only — the identification
+// input for S2a; echoed by tools/analyze_dumps.py).
+bool already_logged(const uint32_t *regs, uint32_t n, uint32_t reg)
+{
+    for (uint32_t k = 0; k < n; k++) {
+        if (regs[k] == reg) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void log_once_owin(uint32_t reg, const float *row, float delta)
+{
+    if (already_logged(g_owin_log_regs, g_owin_log_n, reg) ||
+        g_owin_log_n >= 24) {
+        return;
+    }
+    g_owin_log_regs[g_owin_log_n++] = reg;
+    MC2VR_LOG("S1 owin: rewriting c%u (was (%g,%g,%g,%g)) — "
+              "world-position row; moves effects, not the camera",
+              reg, (double)(row[0] - delta), (double)row[1],
+              (double)row[2], (double)row[3]);
+}
+
+void log_once_vrow(uint32_t reg, const float *pos, float delta)
+{
+    if (already_logged(g_vrow_log_regs, g_vrow_log_n, reg) ||
+        g_vrow_log_n >= 24) {
+        return;
+    }
+    g_vrow_log_regs[g_vrow_log_n++] = reg;
+    MC2VR_LOG("S1 vrow: viewContextData block at c%u (pos was (%g,%g,%g,1))"
+              " — shifting pos.x and VP rows 0-3 (w -= x*delta), delta=%g "
+              "(S2a-solved block layout; next_steps.md)",
+              reg, (double)(pos[0] - delta), (double)pos[1], (double)pos[2],
+              (double)delta);
+}
+
+// Diagnostic removed with the run-21 prev-frame oracle (shape matching is
+// obsolete — exact registers come from the MidHook).
 
 } // namespace
 
+RewriteMode parse_rewrite_mode(const char *value, bool *ok)
+{
+    *ok = true;
+    if (strcmp(value, "off") == 0) {
+        return RewriteMode::Off;
+    }
+    if (strcmp(value, "on") == 0) {
+        return RewriteMode::On;
+    }
+    if (strcmp(value, "pulse") == 0) {
+        return RewriteMode::Pulse;
+    }
+    *ok = false;
+    return RewriteMode::Off;
+}
+
+float rewrite_delta(RewriteMode mode, float amp)
+{
+    if (mode == RewriteMode::Off) {
+        return 0.0f;
+    }
+    if (mode == RewriteMode::Pulse) {
+        // ~2s sine drift at 60fps — unmistakable, self-reversing.
+        return amp * sinf(6.2831853f * (float)(hooks::frame_count() % 120u) / 120.0f);
+    }
+    return amp;
+}
+
 bool set_ambient_rewrite(const char *value)
 {
-    RewriteMode mode;
-    if (strcmp(value, "off") == 0) {
-        mode = RewriteMode::Off;
-    } else if (strcmp(value, "on") == 0) {
-        mode = RewriteMode::On;
-    } else if (strcmp(value, "pulse") == 0) {
-        mode = RewriteMode::Pulse;
-    } else {
+    bool ok;
+    RewriteMode mode = parse_rewrite_mode(value, &ok);
+    if (!ok) {
         return false;
     }
     g_ambient_rewrite = mode;
     MC2VR_LOG("S1 owin: ambient GPU-boundary rewrite mode = %s%s", value,
               mode != RewriteMode::Off
                   ? " (every world-position VS constant row w==1.0, |x|>5 "
-                    "gets shifted IN THE UPLOAD — camera-row narrowing is S2a)"
+                    "gets shifted IN THE UPLOAD — moves EFFECTS, not the "
+                    "camera)"
                   : " (pass-through)");
     return true;
+}
+
+bool set_view_row_rewrite(const char *value)
+{
+    bool ok;
+    RewriteMode mode = parse_rewrite_mode(value, &ok);
+    if (!ok) {
+        return false;
+    }
+    g_view_rewrite = mode;
+    MC2VR_LOG("S1 vrow: viewContextData rewrite mode = %s%s", value,
+              mode != RewriteMode::Off
+                  ? " (EXACT registers via upload-gate MidHook: pos.x += delta,"
+                    " every VP row w -= row.x*delta = consistent pan; run 22)"
+                  : " (pass-through)");
+    return true;
+}
+
+void set_view_row_amp(float amp)
+{
+    if (amp > 0.0f && amp <= 100.0f) {
+        g_vrow_amp = amp;
+        MC2VR_LOG("S1 vrow: pan amplitude set to %g world units", (double)amp);
+    } else {
+        MC2VR_LOG("S1 vrow: view_row_amp=%g out of range (0,100], keeping %g",
+                  (double)amp, (double)g_vrow_amp);
+    }
 }
 
 void on_set_vs_constant(uint32_t start_register, const float *data,
@@ -93,62 +284,117 @@ void on_set_vs_constant(uint32_t start_register, const float *data,
     // 16–17): every world-position constant row (w == 1.0, |x| > 5) in THIS
     // upload gets x shifted IN THE UPLOAD BUFFER before the driver call —
     // the draw consumes the modification directly. The game's own data is
-    // never touched. NOTE (S2a): the VISIBLE view is driven by the
-    // view-matrix rows (w != 1.0 — not matched by this filter); narrowing
-    // to those rows is the next step (docs/s1_camera_hunt.md §handoff).
-    if (g_ambient_rewrite == RewriteMode::Off) {
+    // never touched. Moves EFFECTS, not the camera (run 17).
+    //
+    // View-matrix-row rewrite (next_steps.md #1 — the load-bearing
+    // verification, refined by run 18): rows with w != 1.0 sitting within
+    // +1..+6 registers of the most recent w==1.0 position row (run-6/18
+    // family: rotation xyz | translation in w) get w shifted by
+    // -row.x*delta — the consistent/rigid camera-move form. If the view
+    // moves RIGIDLY with this enabled, S2b is confirmed; if it distorts
+    // again, the family is not a straight world->view transform.
+    const float delta_owin = rewrite_delta(g_ambient_rewrite, PATCH_DELTA);
+    const float delta_vrow = rewrite_delta(g_view_rewrite, g_vrow_amp);
+    if (delta_owin == 0.0f && delta_vrow == 0.0f) {
         return;
-    }
-    float delta = PATCH_DELTA;
-    if (g_ambient_rewrite == RewriteMode::Pulse) {
-        // ~2s sine drift at 60fps — unmistakable, self-reversing.
-        delta = PATCH_DELTA * sinf(6.2831853f * (float)(frame % 120u) / 120.0f);
     }
     float *rows = (float *)data;
     for (uint32_t i = 0; i < vec4_count; i++) {
         float *row = rows + i * 4;
-        if (row[3] != 1.0f || (row[0] <= 5.0f && row[0] >= -5.0f)) {
+        const uint32_t reg = start_register + i;
+        if (row[3] != 1.0f) {
             continue;
         }
-        row[0] += delta;
-        g_owin_rewrites++;
-        const uint32_t reg = start_register + i;
-        bool logged = false;
-        for (uint32_t k = 0; k < g_owin_log_n; k++) {
-            if (g_owin_log_regs[k] == reg) {
-                logged = true;
-                break;
-            }
+        if (delta_owin != 0.0f && (row[0] > 5.0f || row[0] < -5.0f)) {
+            row[0] += delta_owin;
+            g_owin_rewrites++;
+            log_once_owin(reg, row, delta_owin);
         }
-        if (!logged && g_owin_log_n < 24) {
-            g_owin_log_regs[g_owin_log_n++] = reg;
-            MC2VR_LOG("S1 owin: rewriting c%u (was (%g,%g,%g,%g)) — "
-                      "world-position row; S2a: narrow to the view-matrix "
-                      "rows to move the camera itself",
-                      reg, (double)(row[0] - delta), (double)row[1],
-                      (double)row[2], (double)row[3]);
+    }
+    if (delta_vrow == 0.0f) {
+        return;
+    }
+
+    // viewContextData rewrite — run 22, EXACT-REGISTER form: the MidHook at
+    // the upload gate published the CURRENT technique's resolved register
+    // map (no shape matching, no cross-technique conflation, no missed
+    // count-4 VP-only blocks). Layout: count-5 = [camPos(w==1) | VP rows
+    // 0..3]; count-4 = VP only. Consistent pan by D=(delta,0,0):
+    // pos row x += delta; VP rows w -= row.x*delta. Shape checks are only
+    // fail-safes against a stale/garbage map.
+    const uint32_t vcd_reg = g_tech_vcd_reg;
+    const uint32_t vcd_count = g_tech_vcd_count;
+    const uint32_t vp_reg = g_tech_vp_reg;
+    const uint32_t vp_count = g_tech_vp_count;
+    if (vcd_reg == VCD_REG_INVALID) {
+        return;  // MidHook not fired / technique has no viewContextData
+    }
+    for (uint32_t i = 0; i < vec4_count; i++) {
+        float *row = rows + i * 4;
+        const uint32_t reg = start_register + i;
+        if (reg >= VS_ROWS) {
+            break;
+        }
+        if (vcd_count == 5 && reg == vcd_reg) {
+            // camPos row (first register of a count-5 block).
+            if (pos_row_shape(row)) {
+                row[0] += delta_vrow;
+                g_vrow_rewrites++;
+                log_once_vrow(reg, row, delta_vrow);
+            }
+            continue;
+        }
+        const bool in_vcd = reg > vcd_reg && reg < vcd_reg + vcd_count;
+        const bool in_vp = vp_reg != VCD_REG_INVALID && vp_count > 0 &&
+                           reg >= vp_reg && reg < vp_reg + vp_count;
+        if ((in_vcd || in_vp) && row[3] != 1.0f) {
+            // VP row: consistent rigid shift w -= row.x * delta.
+            row[3] -= row[0] * delta_vrow;
+            g_vrow_rewrites++;
         }
     }
 }
 
 void report_window()
 {
-    MC2VR_LOG("S1 vs: calls=%llu vec4s=%llu | owin rewrites=%llu (mode=%s)",
+    MC2VR_LOG("S1 vs: calls=%llu vec4s=%llu | owin rewrites=%llu (mode=%s) "
+              "| vrow rows=%llu (mode=%s)",
               (unsigned long long)g_vs_calls, (unsigned long long)g_vs_vec4s,
               (unsigned long long)g_owin_rewrites,
               g_ambient_rewrite == RewriteMode::Pulse ? "pulse"
-              : g_ambient_rewrite == RewriteMode::On ? "on" : "off");
+              : g_ambient_rewrite == RewriteMode::On ? "on" : "off",
+              (unsigned long long)g_vrow_rewrites,
+              g_view_rewrite == RewriteMode::Pulse ? "pulse"
+              : g_view_rewrite == RewriteMode::On ? "on" : "off");
     g_vs_calls = 0;
     g_vs_vec4s = 0;
     g_owin_rewrites = 0;
+    g_vrow_rewrites = 0;
 }
 
 void install()
 {
-    MC2VR_LOG("S1: hunt instrumentation removed (S1 complete, 2026-10-02 — "
-              "evidence in docs/s1_camera_hunt.md). Active channel: "
-              "SetVertexShaderConstantF (device VmtHook slot 94) + ambient "
-              "rewrite via mc2vr.conf (gpu_boundary_rewrite=off|on|pulse)");
+    // Run 22: publish the current technique's exact viewContextData register
+    // map at the upload gate (plaintext .text MidHook, same pattern as the
+    // M2.5/M3 MidHooks). Install failure is non-fatal: the rewrite just
+    // stays idle (vcd_reg stays INVALID) — no wild shifts.
+    auto mid = SafetyHookMid::create(
+        reinterpret_cast<uint8_t *>(MC2_VCD_UPLOAD_CMP), vcd_midhook);
+    if (!mid) {
+        MC2VR_LOG("S1 vrow: upload-gate MidHook install failed @ %p "
+                  "(error %u); viewContextData rewrite stays idle",
+                  (void *)MC2_VCD_UPLOAD_CMP, (unsigned)mid.error().type);
+    } else {
+        g_vcd_mid = std::move(*mid);
+        MC2VR_LOG("S1 vrow: installed upload-gate MidHook @ %p (publishes "
+                  "the technique's exact viewContextData register map)",
+                  (void *)MC2_VCD_UPLOAD_CMP);
+    }
+
+    MC2VR_LOG("S1: active channel: SetVertexShaderConstantF (device VmtHook "
+              "slot 94) + ambient rewrite (gpu_boundary_rewrite) + "
+              "exact-register viewContextData rewrite (view_row_rewrite) "
+              "— next_steps.md run 22");
 }
 
 } // namespace mc2vr::s1

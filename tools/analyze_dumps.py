@@ -67,7 +67,7 @@ def words(d, key="data"):
 
 # ---- S1/S1b analysis ---------------------------------------------------------
 
-S1_ECHO = re.compile(r"S1 (owin:|vs:)")
+S1_ECHO = re.compile(r"S1 (owin:|vrow:|vs:)")
 
 
 def report_s1(path):
