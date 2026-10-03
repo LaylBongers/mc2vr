@@ -29,6 +29,7 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 
 - SecuROM is inert under everything we do: live `.text` inline patches, in-process `.data` writes, direct VM-stub thunk calls, DLL injection, cross-process reads. Verified over multi-minute runs. Still: never attach a debugger/ptrace; carrier is the only sanctioned probe.
 - Mod code may CALL VM-stub thunks (`GetD3DDevice` etc.); never HOOK them or anything at `0x01a48000+`.
+- Diagnostic carrier modules (conf, default off): `stub_trace=on` (callback tracer around the render stub, `render_path.md`); `vm_dump=on` (`src/carrier/vm_dump.cpp`, read-only): at attach and again +15s it dumps the live VM chain behind thunk `0x0046ab80` diffed against the on-disk image, then censuses every `jmp [slot]` thunk (slot in `0x01a48000..0x03771f0f`) and writes `<GAME_DIR>/mc2vr/vm_thunks.csv` (file target vs runtime target per thunk; a copy of the 2026-10-03 run is `docs/data/vm_thunks_runtime.csv`). Findings: `pandemic_engine.md` § SecuROM/VM boundary item 4. The deployed conf is never overwritten by `launch.sh` — add the key to the deployed copy.
 - Hook install needs NO thread suspension: SafetyHook v0.7.0 install is trap-based (page guard + VEH IP fixup) — atomic w.r.t. execution. External suspension is FORBIDDEN (v0.7.0 heap-allocates during `create_inline`; suspended thread holding the CRT heap lock would deadlock).
 - VmtHook (cloned-vtable vptr swap) works on DXVK's MinGW-built objects (`VMT_HEADER=2` matches DXVK's Itanium vtables); safe from a foreign thread (aligned pointer store; in-flight calls keep the old valid vtable). Survives device-lost + `Reset` cycles.
 - MidHook = register-context probe at arbitrary instructions — the tool for thiscall/unknown-convention sites (read ECX/ESP from context, no dispatch semantics).
@@ -40,7 +41,7 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 | Site | VA | Type | Status |
 |---|---|---|---|
 | `GameShell_FrameTick` | `0x00630e10` | InlineHook | DONE (M1): frame counter, 10s timing reports, `hooks::frame_count()` |
-| `GetD3DDevice` thunk | `0x0047f2f0` | direct call | DONE (M2): device capture at init (device pre-exists; thunk is hot-path — don't hook it) |
+| `GetD3DDevice` thunk | `0x0047f2f0` | direct call | DONE (M2): device capture at init (device pre-exists; thunk is hot-path — don't hook it). At runtime its slot is patched to native `GetD3DDevice_Impl` `0x00403160` (`g_LtiRenderer->dx9State`) |
 | device vtable | runtime | VmtHook | DONE (M2): Present 17 / BeginScene 41 / EndScene 42 / Reset 16 — slots pinned (SetRenderState@57 anchor + runtime 1:1 call-pattern confirmation); present params via swapchain `GetPresentParameters` (slot 9) on first Present; Reset logs new params. DONE: SetVertexShaderConstantF 94 = the camera channel (`view_rewrite.cpp`; SetTransform is never called — shader-driven); SetRenderTarget 37 observed (pass gate: view rewrite only while RT0 = backbuffer size) |
 | `LtiRenderer_BeginSubmit` entry | `0x0074aaa0` | MidHook probe | DONE (M2.5): answered driver + vtable questions; one-shot, currently dormant |
 | `RenderCmd_ExecuteStream` | `0x008569d0` | MidHook at opcode cmp `0x008569f5` (EAX=opcode, 27 ops) | M3 histogram + S2c stream tap — installed |

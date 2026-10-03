@@ -11,6 +11,7 @@
 #include "render_dump.hpp"
 #include "stub_trace.hpp"
 #include "view_rewrite.hpp"
+#include "vm_dump.hpp"
 #include "sha256.h"
 
 #include <cstdio>
@@ -85,6 +86,10 @@ static void load_conf()
         } else if (strcmp(key, "stub_trace") == 0) {
             if (!trace::set_enabled(value)) {
                 MC2VR_LOG("conf: stub_trace=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "vm_dump") == 0) {
+            if (!vmdump::set_enabled(value)) {
+                MC2VR_LOG("conf: vm_dump=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "view_row_amp") == 0) {
             // Pan amplitude in world units (default 4.0). ~0.05 for
@@ -214,6 +219,9 @@ void init()
     // M3: view-table dump + command histogram + slot claim test + queue poll.
     // Best-effort per component.
     render::install();
+
+    // Read-only live dump of the VM chain behind RenderTask_RenderFrame.
+    vmdump::install();
 
     MC2VR_LOG("init complete");
 }

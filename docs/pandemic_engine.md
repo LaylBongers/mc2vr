@@ -54,7 +54,8 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
 2. **VM-virtualized functions** — genuinely opaque: flow dissolves into bytecode dispatch with no
    plaintext successor. Examples: the packet interpreter (stub `0x0050f660`, fills the `PgPrimitive`
    records, `PgMaterial` rows, technique/pass tables, command streams) and its hidden callees,
-   the `GetD3DDevice` thunk `0x0047f2f0`, the pose-getter `0x0048bf00`.
+   the pose-getter `0x0048bf00` (its mid-function `jmp [0x024cdae4]` at `0x0048bf06` stays unpatched
+   at runtime). NOT `GetD3DDevice` — that was wrong, see item 4.
 
 3. **VM -> plaintext callbacks and SecuROM-mutated plaintext** (found 2026-10-03 with the stub
    tracer, `docs/render_path.md` § VM stub callbacks). The VM is not a closed box: native glue in
@@ -67,6 +68,42 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
    A `.text` return address therefore does not prove "ordinary game code"; classify by behavior.
    Protected routines also call plaintext helpers all the time outside the stub (`.securom`
    callers of `PoseStore_GetPoseByHandle`, `Pose_Copy`, `PgMaterial_ctor`).
+
+4. **Runtime-patched thunk slots — many "VM" thunks are native at runtime** (found 2026-10-03,
+   carrier `vm_dump=on`, `src/carrier/vm_dump.cpp`). The file image of a `jmp [slot]` thunk names a
+   `.securom` VM stub, but the SecuROM loader rewrites the slot at startup. Static analysis of the file
+   therefore shows the DEFAULT target; the live target can differ. Census (~15s after attach, 2448
+   thunks = every `FF 25 <slot in 0x01a48000..0x03771f0f>` in `.text`; per-thunk data in
+   `docs/data/vm_thunks_runtime.csv`): 1887 unpatched (still VM stubs), 155 patched to another
+   address still in the SecuROM range (target role unknown), **406 patched into `.text`** (distinct,
+   native, SecuROM-mutated plaintext: junk-counter prologue `lea ebp/eax,[X]; dec [..]; je`, `push ret;
+   jmp` call sites). Proven cases: `GetD3DDevice` `0x0047f2f0` -> `GetD3DDevice_Impl` `0x00403160`
+   (`return g_LtiRenderer ? g_LtiRenderer->dx9State : NULL`); `RenderTask_RenderFrame`'s follow-up
+   thunk `0x0046ab80` -> `NodeArray_DecrementChildRefs` `0x00518fa0`. Not covered by the census:
+   non-slot stubs like `0x0050f660` (`push esi; ...; push 0x50f677; jmp 0x0085d760`, target is `.text`,
+   untraced). Unaligned thunks are real too (mid-function VM calls, e.g. `0x0048bf06`).
+   Rules: (a) a slot's runtime value is not in the file — read it live (carrier `vm_dump`), do not
+   conclude "opaque" from the `.securom` target; (b) the 406 targets are mostly NOT disassembled in
+   Ghidra yet (create the function at the target; mutated prologues decompile with a junk
+   `DAT_0256xxxx` counter, `push X; jmp [IAT]` / `push X; push Y; ret` call sites stop the decompiler,
+   resolve those by hand and check with `objdump`) — DONE 2026-10-03: functions created at 396 of the
+   406 targets (9 already existed, 1 lands mid-instruction at `0x0040e586`), default `FUN_` names,
+   bookmark category `Analysis`/`VMThunkTarget` on each (lists the thunk(s) that resolve there). Median
+   body is only ~21 bytes: many targets are short mutated trampolines whose real body is a jump/call
+   away (e.g. `0x004cc7a6` -> `FUN_007f321b`), i.e. call-gate-like; 105 have multi-range bodies;
+   four bodies exceed 2 KB because of far side blocks.
+   Flow modeling (`tools/ghidra/VmThunkFlowFix.py`, 2026-10-03): the obfuscated call idioms hide the
+   callee and return point from Ghidra, so decompiles stop at the first one. `push ret; push callee;
+   RET` (P2) CAN be modeled: RET flow override CALL + fall-through override to `ret` + a CALL ref to
+   `callee` persists and gives a correct decompile (93 sites, ~65 functions; `RET` + CALL override).
+   `push ret; jmp X` (P1) CANNOT: the fall-through override on a CALL-overridden `jmp` is cleared by
+   Ghidra within ~1 s of commit, leaving the function falling into junk (garbage decompile) — the
+   first apply run did this and was reverted; always health-check AFTER commit, never only inside
+   the transaction. P1 functions keep a truncated decompile; read them from the listing / `objdump`.
+   Also: Ghidra pre-marks many `jmp <function>` as `CALL_RETURN` (tail call, 294 here), which also
+   drops the return point of a `push ret; jmp` idiom Unaligned-target ones may be split-function
+   blocks rather than whole functions — check before trusting a body as complete; (c) the junk counters (`dec [ebp+off]; je` that
+   reloads a constant and jumps back) are harmless noise.
 
 Rules of thumb:
 - **Follow-the-flow test** before writing a call off: Ghidra resolves a successor (especially a

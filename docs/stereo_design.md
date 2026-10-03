@@ -34,6 +34,17 @@ Next, roughly in order:
 Open RE items: what the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk,
 see its Ghidra plate); why `ViewManager_Update` never fired in the traced run; `FUN_00858980`,
 `FUN_00852740` (opcode 0x08 draw) etc. still unnamed.
+Camera-matrix writer hunt (2026-10-03, after the thunk-target census): NEGATIVE. None of the 405
+runtime-native thunk-target functions references `g_ViewContextTable` (`0x01169774`) or the
+`ViewEntry` table (`0x012865e0`); the view/camera code (`ViewEntry_Activate`, `FUN_0048a3b0`,
+`FUN_00489e50`, `FUN_004d2a50`) still calls thunks that stay VM at runtime; the three native
+`FramePipeline` callees (`0x0057de60`, `0x0059de70`, `0x00624f70`) are handle-table helpers. Writes
+to `g_ViewContextTable` +0x10..+0x48 from the function-less `0x8564xx..0x856dxx` blocks are
+state-cache flags, not VP rows. `FUN_024fe0d0` (`.securom`, readable in Ghidra) maintains the
+active-view list (`ViewEntry` +0x0/+0x4 links, head `DAT_00d29e60`) — not matrices. Static xrefs
+cannot find pointer-based matrix writes; proposed next step: carrier hardware-write watch (debug
+registers + VEH, or PAGE_GUARD) on one live `ViewContextRecord`'s VP rows to log the writer's EIP
+(SecuROM anti-debug is documented inert, but untested for DRx).
 
 ## Facts this design builds on
 

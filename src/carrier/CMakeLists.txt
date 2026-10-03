@@ -10,6 +10,7 @@ add_library(mc2vr_carrier SHARED
     render_dump.cpp
     view_rewrite.cpp
     stub_trace.cpp
+    vm_dump.cpp
     log.cpp
     sha256.c
 )
