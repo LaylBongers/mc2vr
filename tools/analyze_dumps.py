@@ -8,16 +8,12 @@
 #   - nonzero-dword field map per dump (with float interpretation)
 #   - varying-across-dumps region analysis (constant vs per-view fields)
 #
-# Written during M3 field-map derivation; reuse for S1 dump analysis
-# (docs/stereo_design.md). Entry size and dump line format must stay in sync
+# Written during M3 field-map derivation. Entry size and dump line format must stay in sync
 # with src/carrier/render_dump.cpp (dump_bytes: 32 bytes/line, "M3 entry
 # +0xOFF: hex", "M3 obj +0xOFF: hex").
 #
-# S1/S2 support (src/carrier/s1_probe.cpp — the slim post-S1 module):
-#   - "S1 owin:" rewritten-register one-shots (the S2a identification input)
-#   - "S1 vs:" 10s window reports (upload/rewrite volume)
-# S1 hunt instrumentation (elem/crec/exfil/vsmat/brackets) was removed with
-# the hunt; the evidence lives in docs/stereo_design.md.
+# View-rewrite support (src/carrier/view_rewrite.cpp): echoes the "view:"
+# log lines (technique register maps, RT0 pass gate, 10s upload reports).
 
 import re
 import struct
@@ -65,19 +61,19 @@ def words(d, key="data"):
     return [struct.unpack_from("<I", d[key], o)[0] for o in range(0, len(d[key]), 4)]
 
 
-# ---- S1/S1b analysis ---------------------------------------------------------
+# ---- view-rewrite log echo ---------------------------------------------------
 
-S1_ECHO = re.compile(r"S1 (owin:|vrow:|vs:)")
+VIEW_ECHO = re.compile(r"\bview:")
 
 
-def report_s1(path):
-    """Echo the S2-channel evidence lines (S1 owin/vs tokens)."""
+def report_view(path):
+    """Echo the view-rewrite log lines."""
     echoes = []
     for line in open(path, encoding="utf-8", errors="replace"):
-        if S1_ECHO.search(line):
+        if VIEW_ECHO.search(line):
             echoes.append(line.rstrip())
     if echoes:
-        print("\n################ S1/S2 channel evidence ################")
+        print("\n################ view rewrite ################")
         for line in echoes[:80]:
             print("  " + line)
         if len(echoes) > 80:
@@ -93,7 +89,7 @@ def main():
             "Mercenaries 2 World in Flames/mc2vr/mc2vr_carrier.log"
         )
     )
-    report_s1(path)
+    report_view(path)
     dumps = parse(path)
     print(f"parsed {len(dumps)} dumps: {[(d['idx'], d['state']) for d in dumps]}")
     if not dumps:

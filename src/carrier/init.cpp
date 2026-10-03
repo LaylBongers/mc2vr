@@ -9,7 +9,7 @@
 #include "log.hpp"
 #include "probes.hpp"
 #include "render_dump.hpp"
-#include "s1_probe.hpp"
+#include "view_rewrite.hpp"
 #include "sha256.h"
 
 #include <cstdio>
@@ -18,7 +18,7 @@
 
 namespace mc2vr {
 
-// S1i run 16: read <deploy dir>/mc2vr.conf (next to this DLL). Simple
+// Read <deploy dir>/mc2vr.conf (next to this DLL). Simple
 // key=value lines, '#' comments, whitespace-tolerant. Unknown keys are
 // logged and ignored; unknown values leave the default (off).
 static void load_conf()
@@ -45,7 +45,7 @@ static void load_conf()
     FILE *f = _wfopen(wpath, L"rb");
     if (f == nullptr) {
         MC2VR_LOG("conf: no mc2vr.conf next to the DLL — defaults apply "
-                  "(gpu_boundary_rewrite=off)");
+                  "(view_row_rewrite=off)");
         return;
     }
     char line[512];
@@ -74,18 +74,12 @@ static void load_conf()
                                end[-1] == '\r' || end[-1] == '\n')) {
             *--end = '\0';
         }
-        if (strcmp(key, "gpu_boundary_rewrite") == 0) {
-            if (!s1::set_ambient_rewrite(value)) {
-                MC2VR_LOG("conf: gpu_boundary_rewrite=%s not recognized "
-                          "(use off|on|pulse) — defaulting to off", value);
-                s1::set_ambient_rewrite("off");
-            }
-        } else if (strcmp(key, "view_row_rewrite") == 0) {
-            // The exact-register viewContextData camera pan (run 22).
-            if (!s1::set_view_row_rewrite(value)) {
+        if (strcmp(key, "view_row_rewrite") == 0) {
+            // The viewContextData camera pan (view_rewrite.cpp).
+            if (!view::set_view_row_rewrite(value)) {
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
                           "(use off|on|pulse) — defaulting to off", value);
-                s1::set_view_row_rewrite("off");
+                view::set_view_row_rewrite("off");
             }
         } else if (strcmp(key, "view_row_amp") == 0) {
             // Pan amplitude in world units (default 4.0). ~0.05 for
@@ -93,7 +87,7 @@ static void load_conf()
             char *end = nullptr;
             const double amp = strtod(value, &end);
             if (end != value && end[0] == 0) {
-                s1::set_view_row_amp((float)amp);
+                view::set_view_row_amp((float)amp);
             } else {
                 MC2VR_LOG("conf: view_row_amp=%s not a number, ignored", value);
             }
@@ -187,8 +181,7 @@ void init()
     MC2VR_LOG("=== mc2vr carrier attached (pid=%lu) ===", GetCurrentProcessId());
 
     // Config (mc2vr.conf next to the DLL) — before any hook so the mode is
-    // settled first (the ambient GPU-boundary rewrite disables the patch
-    // window machine at its source).
+    // settled first.
     load_conf();
 
     // Gate: no hooks unless this is exactly the RE'd binary at the expected

@@ -1,211 +1,168 @@
 # Stereo Submission Design
 
-Design for M4+: dual-eye world rendering + HMD presentation. Consumes S0
-(loop-body RE) and S1/S2 (draw-camera hunt + GPU-boundary channel; history
-distilled into this doc — per-address facts live in Ghidra plates:
-`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`,
-`g_ViewContextTable`). Mechanism rules: `docs/launcher_plan.md`. Runtime frame
-chain: `docs/render_path.md`.
+Design for dual-eye world rendering + HMD presentation. Per-address facts live
+in Ghidra plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`,
+`g_ViewContextTable`, `g_PrimitiveBase`, `RenderQueue_SubmitWorldPackets`).
+Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
+`docs/render_path.md`. Code: `src/carrier/view_rewrite.cpp`.
+
+## Status
+
+| Phase | State |
+|---|---|
+| S0 loop-body RE | complete |
+| S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
+| S2 per-eye injection | camera pan **done and visually clean at game scale**; real HMD offsets, stream replay (S2c) pending |
+| S4 HMD presentation, S5 motion controls | not started |
 
 ## Facts this design builds on
 
-- Frame chain (producer side all plaintext, main thread only): `GameShell_FrameTick` →
-  frame pipeline → `RenderQueue_SubmitWorldPackets` (`0x0048e620`, walks active
-  `ViewEntry`s, publishes packet elements into the `g_RenderQueue` ring) →
-  [SecuROM-VM'd packet interpreter, stub `0x0050f660` at `0x004c99f9`] →
-  `RenderShell_RenderFrame` (`0x00855690`) → `BeginSubmit` → `RenderCmd_ExecuteStream`
-  (`0x008569d0`, 27-opcode plaintext interpreter, ~1.5–3.4k cmds/frame) → `EndSubmit`.
-- **S1 answer (structural, 17 runs 2026-10-02 — do not re-litigate the producer
-  side)**: the draw camera is external to the view system. The entire plaintext
-  consumer path — the `PgPrimitive` record walk (`0x58` stride, plate on
-  `g_PrimitiveBase` `0x0116977c`) — carries only table indices
-  (material/technique/env/view-context/view-scale/screen) and draw params, no
-  camera data at all. Patching ViewEntry fields, staging slots, the camera
-  ring, frame-ctx blocks, or the pose-record store never moved the draw
-  camera (those are derived copies feeding streaming/culling only). The
-  camera crosses plaintext code only as interpreter-issued D3D constant
-  uploads — **the GPU boundary is the only per-eye injection point**.
-- **The view channel (S2, validated run 22; layout-corrected 2026-10-03)**: the visible view
-  lives in the VS constant `viewContextData` — a 4–5 register block the
-  engine resolves per technique from the per-view render-context record:
-
-  ```
-  count-4 block = [VP row0..row3]
-  count-5 block = [VP row0..row3 | camPos (w==1.0)]
-  count-6 block = [VP row0..row3 | camPos | extra row (role unclassified)]
-  row-major, clip_i = dot(VP_row_i, worldpos)   (proof: shader bytecode —
-  count-4 `0x28c8`, count-5 `0x1fd3f8`, count-6 `0x1de598`)
-  ```
-
-  (Corrected 2026-10-03: the earlier "camPos first" layout was wrong for
-  count 5/6 — ~half the shaders — which left VP row0 and camPos unshifted
-  and made objects pan unevenly/smear. Count 6 is the most common.)
-  Confirmed by the MidHook's own map: `ViewProj` (count 4) sits at the SAME
-  register as `viewContextData` in every technique (c0/c0, c7/c7, c17/c17),
-  i.e. the VP rows are the block's first four. After the fix (plus the
-  scratch-copy rewrite below) the pan is "almost completely" correct in
-  gameplay at `view_row_amp=0.05`: objects move together and the smearing is
-  gone. The two earlier symptoms had one cause — rows 0 and camPos skipped
-  in count-5/6 blocks, so clip.x disagreed with clip.y/z/w per material.
-
-  Rewriting exactly those registers *in the upload buffer* (device VmtHook
-  slot 94; rewritten on a scratch copy, never the game's buffer) pans the camera correctly. Consistent camera pan by world-space
-  offset `D = (dx,dy,dz)`:
-  - camPos row: `xyz += D`                (per-pixel effects follow the eye)
-  - every VP row: `w -= dot(row.xyz, D)`  (rigid world shift on screen)
-
-  A uniform clip-space w shift does NOT work (the divide scales it
-  per-vertex — run 18); the rigid form must be per-row.
-- **There is NO fixed-function projection** — `SetTransform` never fires;
-  the projection is folded into `viewContextData` (the engine resolves a
-  `.ViewProj` member). **Per-eye asymmetric projection = editing the VP
-  rows at the same upload site** — no new mechanism needed.
-- **Exact registers come from the game's own resolver, not shape matching**
-  (shape matching failed twice: the block arrives split across upload calls
-  — run 20; and register bases slide per technique with numbers reused, so
-  cross-technique conflation is structural — run 21). A MidHook at the
-  upload gate (`MC2_VCD_UPLOAD_CMP` `0x00855a78`) publishes the current
-  technique's resolved map (`+0xd4` viewContextData reg, `+0xd8` count,
-  `+0xdc` viewContextData.ViewProj reg, `+0xe0` count) to the rewriter.
+- **Frame chain** (producer side all plaintext, main thread only):
+  `GameShell_FrameTick` → frame pipeline → `RenderQueue_SubmitWorldPackets`
+  (`0x0048e620`, walks active `ViewEntry`s, publishes packet elements into the
+  `g_RenderQueue` ring) → [SecuROM-VM'd packet interpreter, stub `0x0050f660`
+  at `0x004c99f9`] → `RenderShell_RenderFrame` (`0x00855690`) → `BeginSubmit` →
+  `RenderCmd_ExecuteStream` (`0x008569d0`, 27-opcode plaintext interpreter,
+  ~1.5–3.4k cmds/frame) → `EndSubmit`.
+- **The draw camera is external to the view system.** The plaintext consumer
+  path (the `PgPrimitive` record walk, `0x58` stride) carries only table
+  indices (material/technique/env/view-context/view-scale/screen) and draw
+  params. Patching ViewEntry fields, staging slots, the camera ring, frame-ctx
+  blocks or the pose-record store never moved the draw camera (they are
+  derived copies feeding streaming/culling). The camera crosses plaintext code
+  only as interpreter-issued D3D constant uploads — **the GPU boundary is the
+  only per-eye injection point.** Do not re-litigate the producer side.
+- **There is NO fixed-function projection** — `SetTransform` is never called.
+  The projection is folded into the `viewContextData` VP rows, so per-eye
+  asymmetric projection is an edit to the same rows.
+- **Source of `viewContextData`**: the per-view render-context record
+  (`g_ViewContextTable` `0x01169774`, 0x70 stride, indexed by `prim+0x49`):
+  +0x00 viewContextData, +0x40 PS view consts, +0x60 atmosphereData*, +0x64
+  globalLightData*. No plaintext writer — filled by the SecuROM-VM'd
+  producer; plaintext code only zeroes it and copies it to the GPU.
 - **Constant-name → technique-field map** (plate on
   `Technique_ResolveConstantRegisters` `0x0085b260`): reg at technique+X,
   count/gate at +X+4 — objectData +0x94, LocalToWorld +0x9c, PrevLocalToWorld
-  +0xa4, **BoneMatrixArray +0xac** (N bones × 3 rows of 3x4 skinning
-  matrices; no view content, fine for S2c replay), InvViewport +0xb4,
-  UVMatrix +0xbc, BlendWeight +0xc4, globalLightData +0xcc,
-  **viewContextData +0xd4**, **ViewProj +0xdc**, atmosphereData +0xe4,
-  Atmos.ScatteringTermMultiplier +0xec, User +0xf4, ObjectIDScaleArray
-  +0xfc, WindMatrix +0x104, shader ptr +0x10c.
-- **Source of `viewContextData`**: the per-view render-context record
-  (`g_ViewContextTable` `0x01169774`, 0x70 stride, indexed by
-  `prim+0x49` `viewContextIdx`; renamed 2026-10-03 from `g_LightEnvTable` —
-  the old "LightEnv" label was an inference with no symbol backing):
-  +0x00 viewContextData, +0x40 PS view consts, +0x60 atmosphereData*,
-  +0x64 globalLightData*. No plaintext writer — filled by the SecuROM-VM'd
-  producer; plaintext code only zeroes it and copies it to the GPU.
+  +0xa4, BoneMatrixArray +0xac (N bones × 3 rows of 3x4 skinning matrices; no
+  view content), InvViewport +0xb4, UVMatrix +0xbc, BlendWeight +0xc4,
+  globalLightData +0xcc, **viewContextData +0xd4**, **ViewProj +0xdc**,
+  atmosphereData +0xe4, Atmos.ScatteringTermMultiplier +0xec, User +0xf4,
+  ObjectIDScaleArray +0xfc, WindMatrix +0x104, shader ptr +0x10c.
 - **Shader register-role lookup**: `docs/shader_ctab_map.md` (generated by
-  `tools/shader_ctab.py` — parses the CTAB constant tables embedded in
-  `data/shader*.bin`, 194 VS + 275 PS shaders, every constant named per
-  register; `viewContextData` in 180/194 VS shaders, base slides per
-  shader). `tools/shader_disasm.py` disassembles the vs_3_0 bytecode (the
-  layout oracle — proof shader: `shader3.bin @0x28c8`).
-- **Texgen vs view (S1 runs 16–17)**: rewriting w==1.0 world-position rows
-  (|x|>5) in the uploads visibly moves *effects, not the camera* — those are
-  `PgMaterial` texture-projection (texgen) transforms (shadow/LOD cascades,
-  shadow/reflection/sky materials project FROM the camera) plus the PS
-  per-pixel `cameraPos` channel (c92 in material PSes). The view itself is
-  driven only by the w≠1.0 `viewContextData` VP rows.
-- Mechanisms proven at runtime: trap-based inline/Mid/Vmt installs (no
-  suspension), device VmtHook surviving device-lost + `Reset`, `g_RenderShell`
-  slots 4/5 claimable 1:1 with frames, Present-hook caller attribution,
-  SetVertexShaderConstantF interception with in-buffer modification
-  (draws consume the modification).
-- Queue: `g_RenderQueue` ring (elem 96, cap 4096; position = +0x10 low16 % cap).
-  `g_RenderQueue2` carries 2D/overlay submissions.
-- Special cameras (satellite) submit up to 608 views/frame; gameplay tens.
-- S0: active views = intrusive list (head `DAT_00d29e60`, link `ViewEntry+0x4`);
-  per-view element = three `{size, ptr}` pairs ({0x30 staging}, {0x810 entry},
-  {0x680 ctx}); the consumer derefs POST-walk.
+  `tools/shader_ctab.py` from the CTAB tables in `data/shader*.bin`; every
+  constant named per register, `viewContextData` in 180/194 VS shaders, base
+  slides per shader). `tools/shader_disasm.py` disassembles the vs_3_0
+  bytecode and is the layout oracle (its swizzle/writemask decoding is rough —
+  trust register usage, not component masks).
+- Queue: `g_RenderQueue` ring (elem 96, cap 4096; position = +0x10 low16 %
+  cap); `g_RenderQueue2` carries 2D/overlay submissions. Special cameras
+  (satellite) submit up to 608 views/frame; gameplay tens.
+- S0 view walk: active views = intrusive list (head `DAT_00d29e60`, link
+  `ViewEntry+0x4`); per-view element = three `{size, ptr}` pairs
+  ({0x30 staging `ctx+0xc2110+idx*0x30`}, {0x810 live `ViewEntry*`}, {0x680
+  frame-ctx `ctx+0xd2950`}); the VM'd consumer derefs POST-walk, so patching
+  between passes cannot work. Staging cap 768 elements; staging site
+  `0x0048ef71`, iterator reload `0x0048f013`, back-edge `0x0048f01f` (mapped,
+  hooks not needed for the GPU-boundary design).
 - `LtiRenderer_EndSubmit` already StretchRects RT0 → backbuffer
-  (`LtiRenderer+0x3ea4`) whenever they differ (S2; plates on `g_LtiRenderer` /
-  `LtiRenderer_EndSubmit`) — an existing RT→backbuffer copy path the S4
-  compositor can co-opt instead of adding its own blit.
+  (`LtiRenderer+0x3ea4`) whenever they differ — an existing RT→backbuffer copy
+  path the compositor can co-opt.
+
+## The view channel (implemented)
+
+The visible view lives in the VS constant `viewContextData`, a 4–6 register
+block the engine resolves per technique. Layout (proven from shader bytecode:
+count-4 `shader3.bin @0x28c8`, count-5 `@0x1fd3f8`, count-6 `@0x1de598`):
+
+```
+count 4: [VP row0..3]
+count 5: [VP row0..3 | camPos (w==1.0)]
+count 6: [VP row0..3 | camPos | extra row]   (most common)
+row-major, clip_i = dot(VP_row_i, worldpos)
+```
+
+`ViewProj` (count 4) sits at the same register as `viewContextData` in every
+technique, confirming VP-first. The count-6 extra row is a world-fixed plane
+(unit-length xyz unrelated to the VP rows) and is left alone.
+
+**Rewrite** (device VmtHook on `SetVertexShaderConstantF`, slot 94): for a
+world-space pan `D = (dx,dy,dz)` — camPos `xyz += D` (per-pixel effects follow
+the eye) and every VP row `w -= dot(row.xyz, D)` (rigid world shift on screen;
+a uniform clip-w shift does NOT work, the divide scales it per-vertex).
+Rewriting is done on a scratch copy returned to the driver call — the game's
+upload buffer may alias the persistent per-view record and is never modified.
+
+**Exact registers come from the game's own resolver, not shape matching**
+(blocks arrive split across upload calls, and register numbers are reused
+across techniques, so shape heuristics conflate techniques). A MidHook at the
+upload gate (`MC2_VCD_UPLOAD_CMP` `0x00855a78`, EDI = current technique)
+publishes its resolved map (`+0xd4`/`+0xd8` viewContextData reg/count,
+`+0xdc`/`+0xe0` ViewProj reg/count); the device hook runs immediately after on
+the same thread.
+
+**Pass gate**: shadow-map, reflection and other offscreen passes upload their
+own `viewContextData` (the shadow pass's "camera" is the light). Shifting them
+moved shadow maps relative to their receivers (visible shadow fading). The
+rewrite therefore applies only while RT0 (observed via device `SetRenderTarget`,
+slot 37) has the backbuffer size. Seen RT0 sizes: 2560x1440 main; skipped:
+1024x4096 shadow atlas, 512², 128², 64², 853x480, and the 1280x720 → 1x1
+downsample chain. Caveat: an offscreen pass with exactly the backbuffer size
+would be shifted (none seen); if render resolution ever differs from the
+backbuffer, key the gate on RT identity. Shadow *receivers* look up in world
+space (the VS passes world position to the PS), so they are eye-invariant.
+
+**Controls** (`mc2vr.conf`): `view_row_rewrite=off|on|pulse`, `view_row_amp=`
+world units (default 4.0, unmistakable; ~0.05 for game-scale checks, 0.032 =
+IPD scale). The real per-eye offset is `D = ±right·IPD/2` (≈0.032 m).
 
 ## Architecture
 
-**GPU-boundary per-eye injection**: the frame renders once per eye. During
-the eye pass, the `viewContextData` registers in the SetVertexShaderConstantF
-uploads are rewritten per eye (camPos `xyz += D`, VP rows
-`w -= dot(row.xyz, D)`), plus VP-row edits for asymmetric projection. The
-second draw pass replays the frame's command stream through the plaintext
-interpreter. Compositor at `Present` delivers both eye textures to the HMD.
+**GPU-boundary per-eye injection**: the frame renders once per eye. During an
+eye pass the `viewContextData` registers in the uploads are rewritten for that
+eye (pan + asymmetric-projection VP edits). The second draw pass replays the
+frame's command stream through the plaintext interpreter. A compositor at
+`Present` delivers both eye textures to the HMD. (A producer-side design —
+duplicating each view's element with shadow ViewEntry/staging — cannot work:
+the consumer never reads view camera data.)
 
-Supersedes the producer-side design (duplicate each view's element with
-shadow ViewEntry/staging and per-eye camera fields): S1 proved the consumer
-never reads view camera data, so shadow entries cannot carry the eye offset
-to the draw. The S0 staging/clone sites (`0x0048ef71`, `0x0048f013`) remain
-mapped for queue-level duplication if ever needed, but camera control is
-GPU-boundary only.
+## Remaining phases
 
-## Phases
+### S2 — remaining work
 
-### S0 — Loop-body RE — COMPLETE (2026-10-02)
-
-All facts in Ghidra (plate comment on `SubmitWorldPackets` + site comments).
-Summary: intrusive linked-list view walk; one 96-byte element per type-2/4
-view = header + three `{u32 size, ptr}` pairs: `{0x30, ctx+0xc2110+idx*0x30}`
-(camera staging), `{0x810, ViewEntry*}` (live entry by pointer),
-`{0x680, ctx+0xd2950}` (frame-ctx block). Pairs deref POST-walk (consumer
-is VM'd) — patching between passes cannot work. Viewport/RT is not a
-ViewEntry field (per-record targets at consume time). Staging cap 768
-elements. Iterator reload `0x0048f013` / back-edge `0x0048f01f` mapped.
-
-### S1 — Draw-camera source hunt — COMPLETE (2026-10-02)
-
-Answer (see Facts above): no patchable plaintext camera channel exists;
-per-eye injection happens at the GPU boundary (SetVertexShaderConstantF
-uploads). Producer-side channels exhausted (17 runs; all negative);
-GPU-boundary rewrite proven visible (runs 16–17). S1 hunt instrumentation
-was removed from the carrier at closeout — only the S2 channel remains.
-
-### S2 — Per-eye injection at the GPU boundary (S2a SOLVED, S2b VALIDATED 2026-10-03)
-
-1. **S2a — SOLVED (static; no runtime identification needed).** Exact
-   (reg,count) per technique from the game's own resolver via the
-   upload-gate MidHook (see Facts). Block layout proven by shader bytecode
-   (`tools/shader_disasm.py`).
-2. **S2b — VALIDATED (run 22)**: rewriting exactly those registers in the
-   upload buffer pans the camera correctly (formulas in Facts). Remaining
-   S2b work: replace the test pulse with real per-eye offsets from HMD pose
-   (S4): `D = ±right·IPD/2` (≈0.032m — ~100× smaller than the ±4-unit
-   verification pulse, well inside the artifact budget).
-3. **Verification pass at game scale (DONE 2026-10-03, run 23: almost
-   completely fixed; residual items below)**: run 22's pulse
-   amplitude was intentionally unmistakable (clips through terrain by
-   design). Re-run with a small amplitude (e.g. `PATCH_DELTA` 0.03–0.1, or
-   a `view_row_amp` conf key) and audit for residual artifacts
-   (shadow/reflection copies still shift consistently; sky/material texgen
-   uses `viewContextData` too — check for anything that lags or doubles).
-4. **S2c — the second draw pass**: replay the frame's command stream once
-   per eye through the plaintext interpreter `RenderCmd_ExecuteStream`
-   (`0x008569d0`, 27 opcodes; the M3 opcode MidHook at `0x008569f5` is
-   already installed as the stream tap): buffer the frame's stream, replay
-   per eye with that eye's rewritten constants and eye render targets.
-   Per-draw RT/viewport switching already happens (SetViewport fires
-   2–3.6k×/frame) — the replay redirects draw targets to eye RTs.
-   Engineering list: stream buffering, draw-state reapplication on replay,
-   RT plumbing. S0 ring/element facts are the replay's timing inputs.
-   Per-object re-uploads during replay are classified (objectData =
-   local→world, BoneMatrixArray = skinning — no view content).
-5. **Verification modes** (`mc2vr.conf`): `gpu_boundary_rewrite=off|on|pulse`
-   (w==1.0 rows — moves effects only; diagnostic) and `view_row_rewrite=
-   off|on|pulse` (the exact-register camera pan — run 22). `off` =
-   pass-through.
-
-### S3 — (SUPERSEDED) First duplication via clone-at-stage
-
-The S0 design (clone the staged element with shadow ViewEntry/staging)
-assumed the entry was the draw camera source — S1 proved it is not.
-Kept for reference: staging site `0x0048ef71` (count `[ESP+0x19a00]`,
-array `[ESP+0x79a0]`, cap 768), re-emit fallback `0x0048f013` →
-`0x0048e9d0`. The second draw pass now lives in S2c (stream replay).
+1. **Real per-eye offsets from HMD pose** (S4 supplies the pose): replace the
+   test pulse with `±right·IPD/2` and per-eye asymmetric projection.
+2. **Shaders without `viewContextData` are not rewritten** and will lag the
+   pan (not yet observed as visibly wrong — check billboards, rain, particles,
+   quads before implementing): explicit `g_ViewProjMtx` (`c0-3`, `0x9fb8`:
+   same per-row `w` shift); `LocalToProj` (`0x6cc8`: view folded in per object
+   — needs the view-space eye offset, `clip.x -= P00*e.x`, with P00 derivable
+   from cached VP rows); `Mvp`/`TexGen` (`0x200278`); rain (`0x1fe198`).
+3. **S2c — second draw pass**: replay the frame's command stream once per eye
+   through `RenderCmd_ExecuteStream` (the M3 opcode MidHook at `0x008569f5` is
+   already installed as the stream tap): buffer the frame's stream, replay per
+   eye with that eye's rewritten constants and eye render targets. Per-draw
+   RT/viewport switching already happens (SetViewport fires 2–3.6k×/frame) —
+   the replay redirects draw targets to eye RTs. Engineering list: stream
+   buffering, draw-state reapplication on replay, RT plumbing; S0 ring/element
+   facts are the timing inputs. Per-object re-uploads during replay are safe
+   (objectData = local→world, BoneMatrixArray = skinning; no view content).
+   With two passes the RT gate must also distinguish the two eye RTs.
 
 ### S4 — Presentation / HMD runtime
 
-- `Present` VmtHook (proven) as the compositor entry: submit the frame to
-  OpenVR/OpenXR (both eye textures, or the SBS target). Interop blit needs
-  no swapchain changes — the game's Present continues to the monitor
-  untouched (debug-friendly).
+- `Present` VmtHook (proven) as the compositor entry: submit both eye textures
+  (or an SBS target) to OpenVR/OpenXR. Interop blit needs no swapchain changes;
+  the game's Present continues to the monitor untouched.
 - Slot-5 (`PostUpdateHook`) claim as the per-frame VR orchestration point:
-  sample HMD pose, marshal to the main thread before the producer loop,
-  feed S2. Slot-4 (`EndOfFrameHook`) for end-of-frame bookkeeping
-  (timewarp input, frame pacing — see `main_game_loop.md`).
+  sample HMD pose, marshal to the main thread before the producer loop, feed
+  S2. Slot-4 (`EndOfFrameHook`) for end-of-frame bookkeeping (timewarp input,
+  frame pacing — `main_game_loop.md`).
 - OpenXR preferred on Proton/RADV via wineopenxr (present in the prefix;
   verify at integration).
 - UI/2D (`g_RenderQueue2`): render once; composite over both eyes in the
-  compositor. Per-eye rects are compositor-owned (S0: not a producer field).
-- Fallback if per-eye RTs can't differ at the D3D level per view:
-  Present-hook interop blit of the single backbuffer into per-eye targets.
+  compositor. Per-eye rects are compositor-owned.
+- Fallback if per-eye RTs can't differ at the D3D level per view: Present-hook
+  interop blit of the single backbuffer into per-eye targets.
 
 ### S5 — Motion controls (separate track)
 
@@ -213,68 +170,39 @@ Follows the logic-mod track in `docs/launcher_plan.md` (XInput stubs
 `0x00a64d56/0x00a64d5c`, idle-reset buffer pair `0x017d30e8`/`0x00f7fb90`
 first). Pose marshal point is the slot-5 hook (S4).
 
-## Hook inventory (proven mechanisms)
+## Hook inventory
 
-| Site | Mechanism | Phase | Status |
-|---|---|---|---|
-| Device `SetVertexShaderConstantF` (slot 94) | VmtHook | **S2 per-eye injection** | installed; scratch-copy rewrite; camera-moving (run 22), layout-corrected (run 23), RT0-gated (run 24) — visually clean at game scale |
-| Upload gate `MC2_VCD_UPLOAD_CMP` 0x00855a78 | MidHook | S2 exact-register map | installed; publishes the technique's resolved `viewContextData`/`ViewProj` (reg,count) to the rewriter |
-| `RenderCmd_ExecuteStream` opcode `0x008569f5` | MidHook | M3 histogram + **S2c stream tap** | installed (M3) |
-| Device `Present` (17) / `Reset` (16) | VmtHook | S4 compositor / params | installed (M2) |
-| `g_RenderShell` slots 4/5 | cloned-vtable claim | S4 orchestration | installed (M3, counting noop) |
-| `SubmitWorldPackets` loop head `0x0048e9ea` | MidHook | M3 view aggregation | installed (M3) |
-| Element staging `0x0048ef71` / iterator `0x0048f013` | MidHook | (superseded S3) | S0-mapped, uninstalled |
+| Site | Mechanism | Purpose |
+|---|---|---|
+| Device `SetVertexShaderConstantF` (slot 94) | VmtHook | the view rewrite (scratch-copy upload) |
+| Device `SetRenderTarget` (slot 37) | VmtHook (observe only) | main-pass gate |
+| Upload gate `MC2_VCD_UPLOAD_CMP` `0x00855a78` | MidHook | publish the technique's exact viewContextData/ViewProj map |
+| `RenderCmd_ExecuteStream` opcode `0x008569f5` | MidHook | M3 histogram + S2c stream tap |
+| Device `Present` (17) / `Reset` (16) | VmtHook | S4 compositor / params |
+| `g_RenderShell` slots 4/5 | cloned-vtable claim | S4 orchestration (counting no-op now) |
+| `SubmitWorldPackets` loop head `0x0048e9ea` | MidHook | M3 view aggregation |
 
-**Removed with the S1 closeout** (negative-result instruments): the
-patch-window state machine (A–O), consumer brackets, walk-entry hook, pose
-capture family (`Pose_Copy`, f5c0 copy, record getter, VM-getter post-calls,
-framecam), matrix classification, exfil, SetTransform/SetViewport slots,
-vsclock/vspose controls.
-
-**Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
-`0x0048bf00` (plaintext call sites instead), anything at `0x01a48000+`.
+Proven mechanisms: trap-based inline/Mid/Vmt installs (no suspension), device
+VmtHook surviving device-lost + `Reset`, slot 4/5 claim 1:1 with frames,
+in-buffer-style constant interception where the draw consumes the modified
+data. **Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
+`0x0048bf00` (use plaintext call sites), anything at `0x01a48000+`.
 
 ## Open questions
 
-- **Residual after the layout fix**: (a) count-6 extra row: world-fixed, no action (see below).
-  (b) Shaders with no `viewContextData` are not rewritten: explicit
-  `g_ViewProjMtx` (c0-3, `0x9fb8`: same per-row `w` shift), `LocalToProj`
-  (`0x6cc8`: view folded in per object — needs the view-space eye offset,
-  `clip.x -= P00*e.x`, P00 derivable from the cached VP rows), `Mvp`/`TexGen`
-  (`0x200278`), rain (`0x1fe198`). Expect billboards/rain/quads to lag the
-  pan; check which remain visibly wrong before implementing.
-  (c) Rewrites now apply to a scratch copy returned from
-  `on_set_vs_constant` — the game's upload buffer is never mutated (it may
-  alias the persistent per-view record).
-- **Shadow fade-in/out under camera pan — FIXED (run 24, 2026-10-03)**: the
-  rewrite had applied to EVERY pass uploading `viewContextData`, including
-  the shadow-map pass (camera = the light) and other off-screen RT passes,
-  shifting the shadow map relative to its receivers. Fix: observe device
-  `SetRenderTarget` (slot 37) and apply the view rewrite only while RT0 ==
-  backbuffer size. Visually confirmed fully fixed. Seen RT0 sizes (2560x1440
-  main; skipped: 1024x4096 shadow atlas, 512², 128², 64²; 1280x720→1x1
-  downsample chain, 853x480). Caveat: gate keys on size, so an off-screen
-  pass with exactly the backbuffer size would be shifted (none seen); if the
-  render resolution ever differs from the backbuffer, key on RT identity.
-  Receiver lookup is world-space (VS passes world pos), eye-invariant.
-- **Count-6 extra row classified (run 24)**: logged `c22 = (1.7e-7, -0.137,
-  0.991, -2779.8)` vs VP row0 `(-1.34, 0, 2.3e-7, -1975.9)` — unit-length
-  xyz with no relation to the VP rows: a world-fixed plane (height/fog/light
-  depth). Correctly left unshifted; no action needed.
 - **Material texgen stays mono for eye 2**: `PgMaterial` texture-projection
-  transforms (shadow cascades, water/sky reflections, blob shadows) are
-  derived CPU-side by VM'd code from the mono camera and uploaded via
-  SetPixelShaderConstantF (matViewMat, wrapper slot 109 / device 110) +
-  material VS consts. The S2 channel rewrites VS camera rows only, so eye
-  2's projected shadows/reflections keep mono projection (skew grows toward
-  the periphery; geometry itself is correct). Accept initially; a later
-  SetPixelShaderConstantF VmtHook could transform identified camera-derived
-  material rows by the eye delta (affine transforms, but the full
-  derivation is VM'd so correctness is not guaranteed).
-- `g_RenderQueue2` consumption timing relative to Present (compositor needs
+  transforms (water/sky reflections, blob shadows, shadow cascades' fitted
+  matrices) are derived CPU-side by VM'd code from the mono camera and uploaded
+  via `SetPixelShaderConstantF` (matViewMat, wrapper slot 109 / device 110) and
+  material VS consts; PS `cameraPos` (c92 in material PSes) is likewise mono.
+  The view rewrite touches VS camera rows only. No visible issue at 0.05
+  units; at IPD scale and for the periphery, re-check. A later
+  `SetPixelShaderConstantF` hook could shift camera-derived rows by the eye
+  delta (the derivation is VM'd, so correctness is not guaranteed).
+- `g_RenderQueue2` consumption timing relative to Present (the compositor needs
   the 2D stream's frame timing) — add queue2 counters when S4 starts.
-- Frame pacing: game vsync-locked 60 Hz; HMD typically 90 Hz. Present-hook
-  compositor can run at HMD cadence independently (pose extrapolation via
-  the HMD runtime). Decide in S4.
-- Stream replay state (S2c): which of the 27 opcodes carry draw state that
-  must reset between eye passes; RT plumbing for eye targets.
+- Frame pacing: game vsync-locked 60 Hz; HMD typically 90 Hz. A Present-hook
+  compositor can run at HMD cadence independently (pose extrapolation via the
+  HMD runtime). Decide in S4.
+- Stream replay state (S2c): which of the 27 opcodes carry draw state that must
+  reset between eye passes; RT plumbing for eye targets.

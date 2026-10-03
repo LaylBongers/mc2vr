@@ -9,7 +9,7 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
-#include "s1_probe.hpp"
+#include "view_rewrite.hpp"
 
 namespace mc2vr::render {
 
@@ -191,10 +191,6 @@ void view_midhook(safetyhook::Context &ctx)
         g_refresh_done++;
         dump_view_entry(idx, type, entry, false);
     }
-
-    // S1.4 tap: per-frame (idx, type, flags) list + frame-ctx capture. The
-    // flags dword lives at ViewRef+0x14 (low16 = the type the loop checked,
-    // high16 = flags). EBX at this site = the frame-ctx object (S0).
 }
 
 // ---- g_RenderShell slot 4/5 claim test --------------------------------------
@@ -291,8 +287,7 @@ void report_window()
     g_prod_a_max = 0;
     g_queue_changed_polls = 0;
 
-    // S1 window report (bracket + xform/viewport + view-list classification).
-    s1::report_window();
+    view::report_window();
 }
 
 DWORD WINAPI poller_thread(LPVOID)
@@ -398,10 +393,9 @@ void install()
         MC2VR_LOG("M3: FATAL — queue poller thread creation failed (%lu)", GetLastError());
     }
 
-    // S1: consumer bracket MidHooks (pre-VM 0x004c99f9 + RenderFrame entry
-    // 0x00855690); the xform/viewport hooks are installed with the device
-    // VmtHook (device.cpp).
-    s1::install();
+    // View rewrite: upload-gate MidHook (the device-level tap is installed
+    // with the device VmtHook, device.cpp).
+    view::install();
 }
 
 } // namespace mc2vr::render

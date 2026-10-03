@@ -8,7 +8,7 @@ add_library(mc2vr_carrier SHARED
     device.cpp
     probes.cpp
     render_dump.cpp
-    s1_probe.cpp
+    view_rewrite.cpp
     log.cpp
     sha256.c
 )

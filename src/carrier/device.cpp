@@ -10,7 +10,7 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
-#include "s1_probe.hpp"
+#include "view_rewrite.hpp"
 
 namespace mc2vr::device {
 
@@ -30,14 +30,13 @@ constexpr size_t SLOT_Reset = 16;
 constexpr size_t SLOT_Present = 17;
 constexpr size_t SLOT_BeginScene = 41;
 constexpr size_t SLOT_EndScene = 42;
-// S2 channel: SetVertexShaderConstantF (slot 94 per the d3d9.h method
-// order, which agrees with every runtime-pinned slot: Reset 16 / Present 17 /
-// BeginScene 41 / EndScene 42 / SetRenderState 57). The draw camera reaches
-// the GPU as VS constants (SetTransform is never called — engine is
-// shader-driven; S1 run-1 result). The SetTransform/SetViewport slots from
-// S1 attribution have been removed with the rest of the S1 instrumentation.
+// View rewrite channel: SetVertexShaderConstantF (slot 94 per the d3d9.h
+// method order, which agrees with every runtime-pinned slot: Reset 16 /
+// Present 17 / BeginScene 41 / EndScene 42 / SetRenderState 57). The draw
+// camera reaches the GPU as VS constants (the engine is shader-driven;
+// SetTransform is never called).
 constexpr size_t SLOT_SetVertexShaderConstantF = 94;
-// Observed (never altered) so the S2 rewrite knows which pass is drawing:
+// Observed (never altered) so the view rewrite knows which pass is drawing:
 // shadow-map / reflection / other RT passes upload their own viewContextData
 // and must not receive the eye shift.
 constexpr size_t SLOT_SetRenderTarget = 37;
@@ -121,7 +120,7 @@ void log_present_params()
         return;
     }
 
-    s1::set_main_rt_size(pp.BackBufferWidth, pp.BackBufferHeight);
+    view::set_main_rt_size(pp.BackBufferWidth, pp.BackBufferHeight);
     MC2VR_LOG("D3D: present params: %ux%u fmt=%u count=%u windowed=%u swapeffect=%u "
               "refresh=%u interval=0x%08x hdeviceWindow=%p",
               pp.BackBufferWidth, pp.BackBufferHeight, pp.BackBufferFormat,
@@ -222,7 +221,7 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
     return g_reset_hook->stdcall<HRESULT>(self, pp);
 }
 
-// ---- S1b: SetVertexShaderConstantF — the REAL camera attribution channel ------
+// ---- SetVertexShaderConstantF — the camera channel (view_rewrite.cpp) --------
 
 uint64_t g_setvsconst_calls = 0;
 
@@ -240,7 +239,7 @@ HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
                 h = desc.Height;
             }
         }
-        s1::on_set_render_target(w, h);
+        view::on_set_render_target(w, h);
     }
     return hr;
 }
@@ -256,7 +255,7 @@ HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UI
                   (unsigned long long)g_setvsconst_calls, (unsigned)start,
                   (unsigned)count, (unsigned long long)hooks::frame_count(), caller);
     }
-    const float *out = s1::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
+    const float *out = view::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
     return g_setvsconstf_hook->stdcall<HRESULT>(self, start, out, count);
 }
 
