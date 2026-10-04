@@ -12,6 +12,7 @@
 #include "hooks.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
+#include "device.hpp"
 
 namespace mc2vr::eye {
 
@@ -57,22 +58,29 @@ D3DSURFACE_DESC g_main_desc = {};
 void *g_backbuffer = nullptr;
 bool g_backbuffer_failed = false;
 
-// Pass-2 stand-in for the backbuffer (draw-path monitor pin): the game's
-// final composite may be a DRAW into RT0=backbuffer rather than a blit, so
-// pass-2 slot-0 sets of the backbuffer are redirected here. Created lazily
-// from the backbuffer's own desc; dropped on Reset.
-void *g_sink_rt = nullptr;
+// Monitor-pin snapshot: holds pass 1's final backbuffer image (composite +
+// HUD) while pass 2 runs. The pass-2 composite (a DRAW into RT0=backbuffer,
+// proven live 2026-10-04 by bbRtRedirects=1/frame while pinSkips=0) is left
+// UNSUPPRESSED — SwapEffect=DISCARD gives NO backbuffer persistence across
+// Present, so suppressing its write left a stale driver page on screen
+// (observed live: frozen credits frame alternating with the live camera).
+// Instead the backbuffer is snapshotted before pass 2 and restored after, so
+// the game presents the same LEFT image at both per-frame Presents.
+// Created lazily from the backbuffer's own desc; dropped on Reset.
+void *g_snap_rt = nullptr;
 
 // ---- window counters (main thread writes; poller reads+resets) -------------
 
 uint64_t g_redirects = 0;
 uint64_t g_blit_redirects = 0;
-uint64_t g_pin_skips = 0;
-uint64_t g_bb_rt_redirects = 0;     // pass-2 SetRenderTarget(0, backbuffer) -> sink
+uint64_t g_pin_saves = 0;           // backbuffer -> snapshot (1->2 boundary)
+uint64_t g_pin_restores = 0;        // snapshot -> backbuffer (2->0 boundary)
+uint64_t g_bb_rt_sets = 0;          // pass-2 SetRenderTarget(0, backbuffer) —
+                                    // the composite draw; observed 1/frame in
+                                    // gameplay (2026-10-04), NOT redirected
 uint64_t g_update_redirects = 0;    // pass-2 UpdateSurface src==mainRT redirected
-uint64_t g_update_pin_skips = 0;    // pass-2 UpdateSurface into backbuffer skipped
-uint64_t g_update_texture_calls = 0; // pass-2 UpdateTexture (diagnostic; src is a
-                                    // texture and can't be matched vs the RT surface)
+uint64_t g_update_texture_calls = 0; // pass-2 UpdateTexture (diagnostic; src is
+                                    // a texture and can't be matched vs the RT surface)
 uint64_t g_dumps_written = 0;
 uint64_t g_dump_failures = 0;
 uint64_t g_dump_empty = 0;          // empty-surface dump attempts (black loading RT)
@@ -416,12 +424,12 @@ void *backbuffer()
     return g_backbuffer;
 }
 
-// Pass-2 stand-in for the backbuffer (draw-path monitor pin). Same desc as
-// the cached backbuffer (X8R8G8B8-sized, not the fp16 main RT).
-bool ensure_sink_rt()
+// Monitor-pin snapshot surface: same desc as the cached backbuffer
+// (X8R8G8B8-sized, not the fp16 main RT).
+bool ensure_snap_rt()
 {
-    if (g_sink_rt || !g_backbuffer || !g_device) {
-        return g_sink_rt != nullptr;
+    if (g_snap_rt || !g_backbuffer || !g_device) {
+        return g_snap_rt != nullptr;
     }
     D3DSURFACE_DESC desc = {};
     if (FAILED(((SurfaceDesc_t)(*(void ***)g_backbuffer)[SSLOT_GetDesc])(
@@ -438,14 +446,14 @@ bool ensure_sink_rt()
         static bool logged = false;
         if (!logged) {
             logged = true;
-            MC2VR_LOG("eye: sink RT CreateRenderTarget FAILED hr=%08lx — "
-                      "pass-2 backbuffer draws run unredirected",
+            MC2VR_LOG("eye: snapshot RT CreateRenderTarget FAILED hr=%08lx — "
+                      "monitor pin inactive this run",
                       (unsigned long)hr);
         }
         return false;
     }
-    g_sink_rt = rt;
-    MC2VR_LOG("eye: created sink RT %ux%u fmt=%u (pass-2 backbuffer stand-in)",
+    g_snap_rt = rt;
+    MC2VR_LOG("eye: created backbuffer snapshot RT %ux%u fmt=%u (monitor pin)",
               desc.Width, desc.Height, (unsigned)desc.Format);
     return true;
 }
@@ -476,15 +484,12 @@ void *on_set_render_target(void *device, uint32_t index, void *game_surface)
         }
     }
 
-    // Draw-path monitor pin: the gameplay final composite may be a DRAW into
-    // RT0=backbuffer (the 2026-10-04 run showed ZERO pass-2 StretchRects into
-    // the backbuffer during gameplay, yet the monitor still alternated —
-    // so the write is not a blit we can skip). Redirect pass-2 slot-0 sets of
-    // the backbuffer to the sink RT; the backbuffer keeps pass 1's LEFT.
-    if (g_pin_enabled && g_pass == 2 && game_surface == backbuffer() &&
-        ensure_sink_rt()) {
-        g_bb_rt_redirects++;
-        return g_sink_rt;
+    // Diagnostic: pass-2 slot-0 sets of the backbuffer = the gameplay final
+    // composite draw (observed exactly 1/frame in gameplay, 2026-10-04).
+    // NOT redirected anymore — suppression proved wrong (DISCARD semantics;
+    // see the snapshot RT comment). Count only.
+    if (g_pass == 2 && game_surface == backbuffer()) {
+        g_bb_rt_sets++;
     }
 
     if (!g_rt_enabled || g_pass != 2 || game_surface != g_main_rt || !ensure_eye_rt()) {
@@ -498,22 +503,17 @@ void *on_set_render_target(void *device, uint32_t index, void *game_surface)
 void *on_stretch_src(void *game_src, void *dst, bool *skip)
 {
     *skip = false;
-    if (g_pass != 2) {
+    if (g_pass != 2 || !g_rt_enabled) {
         return game_src;
     }
-    // Monitor pin v2: ANY pass-2 blit into the backbuffer is skipped so the
-    // backbuffer keeps pass 1's LEFT image (stable monitor; pass 2's RIGHT
-    // image stays in the eye RT — also the S4 steady state, where the
-    // compositor consumes the eye RT and Present keeps showing pass 1).
-    // v1 required the source to be the redirected main RT, which matched the
-    // menu's EndSubmit copy but never fired in gameplay (final hop comes
-    // from an intermediate post surface or is a draw — see the sink RT path).
-    if (g_pin_enabled && dst == backbuffer()) {
-        g_pin_skips++;
-        *skip = true;
-        return game_src;
-    }
-    if (!g_rt_enabled || game_src != g_main_rt || !g_eye_rt) {
+    // Pass-2 post-effect reads from the main RT must see pass 2's
+    // accumulation (the eye RT), not pass 1's frozen final. Writes into the
+    // backbuffer are NOT suppressed: SwapEffect=DISCARD means a suppressed
+    // backbuffer write leaves a stale driver page on screen (observed live
+    // 2026-10-04); the monitor pin instead snapshots/restores the backbuffer
+    // around pass 2 (see set_pass).
+    (void)dst;
+    if (game_src != g_main_rt || !g_eye_rt) {
         return game_src;
     }
     g_blit_redirects++;
@@ -522,18 +522,12 @@ void *on_stretch_src(void *game_src, void *dst, bool *skip)
 
 void *on_update_surface_src(void *game_src, void *dst, bool *skip)
 {
-    // UpdateSurface (slot 30): same pass-2 rules as StretchRect — pin skips
-    // copies into the backbuffer, main-RT sources read the eye RT instead.
+    // UpdateSurface (slot 30): same pass-2 source rule as StretchRect.
+    // (Never observed live through 2026-10-04 — updRedirects stayed 0 —
+    // kept for completeness of the main-RT redirect.)
     *skip = false;
-    if (g_pass != 2) {
-        return game_src;
-    }
-    if (g_pin_enabled && dst == backbuffer()) {
-        g_update_pin_skips++;
-        *skip = true;
-        return game_src;
-    }
-    if (!g_rt_enabled || game_src != g_main_rt || !g_eye_rt) {
+    (void)dst;
+    if (g_pass != 2 || !g_rt_enabled || game_src != g_main_rt || !g_eye_rt) {
         return game_src;
     }
     g_update_redirects++;
@@ -572,6 +566,17 @@ void set_pass(uint32_t pass)
                   g_dump_frames);
     }
 
+    // Monitor pin: snapshot the backbuffer (pass 1's final image — composite
+    // + HUD) before pass 2 runs, restore it after. The pass-2 composite draw
+    // into the backbuffer runs UNSUPPRESSED (DISCARD semantics demand a fresh
+    // write; see the snapshot RT comment), and the restore makes every
+    // per-frame Present show the same LEFT image.
+    if (g_pin_enabled && g_pass == 1 && pass == 2 && backbuffer() && ensure_snap_rt()) {
+        if (device::blit_surfaces(g_backbuffer, g_snap_rt)) {
+            g_pin_saves++;
+        }
+    }
+
     // Pass boundaries: pass 1 -> 2 = pass 1 finished (dump left = main RT);
     // pass 2 -> 0 = pass 2 finished (dump right = eye RT). A pair counts
     // only when BOTH sides are non-empty (empty = black loading/video frame:
@@ -588,6 +593,12 @@ void set_pass(uint32_t pass)
             }
         }
         left_pending = false;
+    }
+
+    if (g_pin_enabled && g_pass == 2 && pass == 0 && g_snap_rt && backbuffer()) {
+        if (device::blit_surfaces(g_snap_rt, g_backbuffer)) {
+            g_pin_restores++;
+        }
     }
 
     g_pass = pass;
@@ -611,29 +622,29 @@ void on_reset()
         ((Release_t)(*(void ***)g_eye_rt)[SSLOT_Release])(g_eye_rt);
         g_eye_rt = nullptr;
     }
-    if (g_sink_rt) {
-        ((Release_t)(*(void ***)g_sink_rt)[SSLOT_Release])(g_sink_rt);
-        g_sink_rt = nullptr;
+    if (g_snap_rt) {
+        ((Release_t)(*(void ***)g_snap_rt)[SSLOT_Release])(g_snap_rt);
+        g_snap_rt = nullptr;
     }
     g_main_rt = nullptr;
     g_main_desc = {};
-    MC2VR_LOG("eye: Reset — eye/sink RT dropped, main RT recording cleared");
+    MC2VR_LOG("eye: Reset — eye/snapshot RT dropped, main RT recording cleared");
 }
 
 void report_window()
 {
-    if (g_redirects > 0 || g_blit_redirects > 0 || g_pin_skips > 0 ||
-        g_bb_rt_redirects > 0 || g_update_redirects > 0 || g_update_pin_skips > 0 ||
+    if (g_redirects > 0 || g_blit_redirects > 0 || g_pin_saves > 0 ||
+        g_pin_restores > 0 || g_bb_rt_sets > 0 || g_update_redirects > 0 ||
         g_update_texture_calls > 0 || g_dump_failures > 0 || g_dumps_written > 0 ||
         g_dump_empty > 0) {
-        MC2VR_LOG("eye window: rtRedirects=%llu blitRedirects=%llu pinSkips=%llu "
-                  "bbRtRedirects=%llu updRedirects=%llu updPinSkips=%llu updTex=%llu "
+        MC2VR_LOG("eye window: rtRedirects=%llu blitRedirects=%llu pinSaves=%llu "
+                  "pinRestores=%llu bbRtSets=%llu updRedirects=%llu updTex=%llu "
                   "dumps=%llu dumpFails=%llu dumpEmpty=%llu",
                   (unsigned long long)g_redirects, (unsigned long long)g_blit_redirects,
-                  (unsigned long long)g_pin_skips,
-                  (unsigned long long)g_bb_rt_redirects,
+                  (unsigned long long)g_pin_saves,
+                  (unsigned long long)g_pin_restores,
+                  (unsigned long long)g_bb_rt_sets,
                   (unsigned long long)g_update_redirects,
-                  (unsigned long long)g_update_pin_skips,
                   (unsigned long long)g_update_texture_calls,
                   (unsigned long long)g_dumps_written,
                   (unsigned long long)g_dump_failures,
@@ -641,10 +652,10 @@ void report_window()
     }
     g_redirects = 0;
     g_blit_redirects = 0;
-    g_pin_skips = 0;
-    g_bb_rt_redirects = 0;
+    g_pin_saves = 0;
+    g_pin_restores = 0;
+    g_bb_rt_sets = 0;
     g_update_redirects = 0;
-    g_update_pin_skips = 0;
     g_update_texture_calls = 0;
     g_dump_failures = 0;
     g_dump_empty = 0;
@@ -687,10 +698,11 @@ bool set_pin_enabled(const char *value)
     } else {
         return false;
     }
-    MC2VR_LOG("eye: eye_monitor_pin=%s (pass-2 EndSubmit RT->backbuffer copy %s)",
+    MC2VR_LOG("eye: eye_monitor_pin=%s (snapshot backbuffer before pass 2, restore "
+              "after — monitor %s)",
               g_pin_enabled ? "on" : "off",
-              g_pin_enabled ? "SKIPPED — monitor holds pass 1 LEFT" :
-                              "runs — monitor alternates L/R per frame");
+              g_pin_enabled ? "holds pass 1 LEFT every Present" :
+                              "alternates L/R per frame");
     return true;
 }
 

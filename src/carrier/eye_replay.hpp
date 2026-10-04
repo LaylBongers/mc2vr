@@ -13,6 +13,15 @@
 //     to the monitor — L/R alternate per frame unless eye_monitor_pin=on).
 //     The game's caller-side RT cache is untouched — device-level
 //     substitution only.
+//   - eye_monitor_pin=off|on: keep pass 1's LEFT image on the monitor. NOT
+//     by suppressing pass-2 backbuffer writes — SwapEffect=DISCARD gives no
+//     backbuffer persistence across Present, and suppression left a stale
+//     driver page on screen (live-observed 2026-10-04: frozen credits frame
+//     alternating with the live camera). Instead the backbuffer is
+//     SNAPSHOTTED (composite+HUD included) before pass 2 and RESTORED after;
+//     the pass-2 composite draw runs unsuppressed and the game presents the
+//     same LEFT image at both per-frame Presents — the S4 steady state (the
+//     compositor will consume the eye RT instead).
 //   - eye_dump_frames=N: after stream_dump_delay seconds, write BMP pairs
 //     (mc2vr_eye_left/right_frame<N>.bmp) for the parallax check — pairs count
 //     only when NON-EMPTY (black loading/video frames are skipped and retried
@@ -34,13 +43,12 @@ bool set_pass_enabled(const char *value);
 // mc2vr.conf eye_rt=off|on (default off — pass 2 draws wherever the game draws).
 bool set_rt_enabled(const char *value);
 
-// mc2vr.conf eye_monitor_pin=off|on (default off). When on, pass 2 never
-// touches the backbuffer: StretchRect/UpdateSurface writes into it are
-// skipped, and SetRenderTarget(0, backbuffer) is redirected to a carrier
-// sink RT (gameplay's final composite is a DRAW, not a blit — proven by the
-// 2026-10-04 run: zero pass-2 StretchRects into the backbuffer while the
-// monitor still alternated). The monitor keeps pass 1's LEFT image — the S4
-// steady state (the compositor consumes the eye RT).
+// mc2vr.conf eye_monitor_pin=off|on (default off). When on, the backbuffer is
+// snapshotted before pass 2 (pass 1's final image, composite+HUD included)
+// and restored after it, so every per-frame Present shows the same LEFT
+// image — the S4 steady state (the compositor consumes the eye RT).
+// Pass-2 backbuffer writes are NOT suppressed: SwapEffect=DISCARD leaves a
+// stale driver page when they are (live-observed 2026-10-04).
 bool set_pin_enabled(const char *value);
 
 // mc2vr.conf eye_dump_frames=N (0 = never; dumps need eye_rt=on).
@@ -60,16 +68,15 @@ void set_pass(uint32_t pass);
 void *on_set_render_target(void *device, uint32_t index, void *game_surface);
 
 // Called from device.cpp's StretchRect hook BEFORE the original call, for
-// the SOURCE surface. Same substitution rule as on_set_render_target; sets
-// *skip when the monitor pin is active and this blit writes the backbuffer
-// in pass 2 (the hook then returns S_OK without calling the original,
-// keeping pass 1's image on the monitor — any source, not just the main RT:
-// gameplay's final hop comes from an intermediate post surface).
+// the SOURCE surface. Pass-2 main-RT sources read the eye RT instead (post
+// effects must see pass 2's accumulation). `*skip` is never set anymore
+// (parameter kept for signature stability): suppressing backbuffer writes
+// conflicts with SwapEffect=DISCARD — the monitor pin snapshots/restores
+// the backbuffer around pass 2 instead (see set_pass).
 void *on_stretch_src(void *game_src, void *dst, bool *skip);
 
-// Called from device.cpp's UpdateSurface hook (slot 30) — same pass-2 rules
-// as on_stretch_src (pin skips backbuffer writes; main-RT sources read the
-// eye RT instead).
+// Called from device.cpp's UpdateSurface hook (slot 30) — same pass-2 source
+// rule as on_stretch_src (never observed live through 2026-10-04).
 void *on_update_surface_src(void *game_src, void *dst, bool *skip);
 
 // Called from device.cpp's UpdateTexture hook (slot 31) — diagnostic only

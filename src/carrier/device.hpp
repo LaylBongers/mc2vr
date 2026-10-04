@@ -26,4 +26,9 @@ namespace mc2vr::device {
 // (the game keeps running either way; failures are logged).
 bool capture_and_hook();
 
+// Full-surface StretchRect through the ORIGINAL device method (bypasses the
+// hook chain entirely — used by the eye module's monitor pin to snapshot and
+// restore the backbuffer around pass 2; render thread only).
+bool blit_surfaces(void *src, void *dst);
+
 } // namespace mc2vr::device

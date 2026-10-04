@@ -389,4 +389,26 @@ bool capture_and_hook()
     return true;
 }
 
+bool blit_surfaces(void *src, void *dst)
+{
+    if (!g_device || !g_stretchrect_hook || !src || !dst) {
+        return false;
+    }
+    // Full-surface copy, no filtering (both surfaces are the same size).
+    // Through the trampoline, NOT the hooked vtable: the monitor pin's
+    // save/restore blits must not re-enter the pass-2 redirect logic.
+    const HRESULT hr = g_stretchrect_hook->stdcall<HRESULT>(
+        g_device, src, nullptr, dst, nullptr, 0 /* D3DTEXF_NONE */);
+    if (FAILED(hr)) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            MC2VR_LOG("D3D: blit_surfaces StretchRect FAILED hr=%08lx "
+                      "(monitor pin degraded this run)", (unsigned long)hr);
+        }
+        return false;
+    }
+    return true;
+}
+
 } // namespace mc2vr::device

@@ -238,6 +238,46 @@ installed as the stream tap — extend it, don't re-site it.
     are now hooked; window report adds bbRtRedirects / updRedirects /
     updPinSkips / updTex / dumpEmpty so the next audit pinpoints the actual
     gameplay mechanism if the monitor still alternates.
+- **S2c-2 ACCEPTANCE MET (run 3, 2026-10-04 14:11-14:13)**: 5 gameplay BMP
+  pairs (frames 1759-1805, content-gated, clean filenames) and
+  tools/analyze_dumps.py measures a consistent **-7px horizontal parallax**
+  on every pair (SAD 2.16 at best shift vs 3.28 at shift-0 — 34% SAD drop;
+  sign geometrically correct for a right-camera pan: near content shifts
+  left in the right eye's image). Two full per-eye draw passes per frame
+  with distinct view constants + measurable, deterministic parallax =
+  **S2c-2 stereo pair PROVEN**. Same run's counters PROVED the composite
+  mechanism: gameplay shows bbRtRedirects=1 per pass-2 frame (the final
+  composite is a single DRAW with RT0=backbuffer), pinSkips=0 (no pass-2
+  StretchRect ever targets the backbuffer in gameplay), updRedirects/
+  updTex=0 EVERYWHERE (UpdateSurface/UpdateTexture never run in pass 2 —
+  that watch item is CLOSED; the UpdateSurface main-RT redirect stays as
+  cheap insurance, UpdateTexture hook is diagnostic-only).
+- **S2c-2 MONITOR PIN REWORKED (after run 3's stale-page artifact)**: run 3
+  visually alternated the live camera with a frozen frame from the credits
+  skip point ("stale framebuffer"). Root cause: the pin SUPPRESSED pass-2's
+  backbuffer write (blit skips + RT0=backbuffer redirected to a sink RT),
+  but the game presents with SwapEffect=DISCARD (params plated run 2) —
+  backbuffer content after a Present is UNDEFINED, so the page presented at
+  Present#2 kept whatever stale content the driver had (a page last
+  written around the pin's first engagement). LESSON (plated): never
+  suppress backbuffer writes under DISCARD presentation — the presented
+  page must be freshly written every cycle. FIX (implemented 2026-10-04,
+  awaiting next run): pin = SNAPSHOT/RESTORE — at the 1->2 boundary the
+  backbuffer (pass 1's final image: composite+HUD, page-exact) is copied
+  to a carrier snapshot RT (backbuffer-desc) via device::blit_surfaces
+  (original-method trampoline, bypasses our hook chain); pass 2 runs
+  completely UNSUPPRESSED (its composite draw refreshes the page,
+  DISCARD-satisfied); at the 2->0 boundary the snapshot is restored over
+  it, so both per-frame Presents show the same LEFT image. Suppression
+  paths REMOVED (StretchRect/UpdateSurface skips, sink RT redirect);
+  window report now has pinSaves/pinRestores/bbRtSets. Deployed conf for
+  the pin-verification run: eye_dump_frames=0 (pairs already captured),
+  everything else unchanged.
+- **S2c-3 status**: satisfied (deterministic per-frame eye pair,
+  pass1=LEFT pass2=RIGHT via eye_pass=on; parallax-verified). Next
+  milestone is S4: Present-hook OpenVR compositor consuming the eye RT
+  (and the main-RT LEFT); the pin's snapshot/restore is debug-era tooling
+  that S4's compositor replaces.
 - **S2c-2 (staging bullet, historical)**: replay into a second eye RT with the OTHER eye's rewrite active;
   A/B via the existing hold timer driving eye selection, dump both RTs to PNG
   (extend `tools/analyze_dumps.py` if needed) and check parallax geometry.
