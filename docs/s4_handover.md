@@ -39,6 +39,19 @@ D3D11 + IPC server. Design, IPC contract and risks: `docs/stereo_design.md` §S4
    GPU-sync event-query spin in `LtiRenderer_BeginSubmit`).
 5. `docs/ghidra-reva.md` — how to use the ReVa MCP tools correctly.
 
+## Next session — start here
+
+1. S4-0 is DONE and verified on the headset. Start S4-1.
+2. S4-1 (IPC + lifecycle), per the list below. The host currently has no IPC, no launcher
+   spawn, no selftest hook and is not deployed by `launch.sh`. `pose.hpp` (`HmdFrame`/`EyePose`)
+   is the intended payload shape for the shared block.
+3. S4-0 code (`5adba35`) and its docs are committed; the working tree is clean.
+
+Host source map (`src/host/`): `main.cpp` (args `--mock --frames N --xr-debug`, log setup),
+`xr_session.cpp` (instance/session/swapchains/event pump/frame loop, Wine VR registry fixups),
+`mock.cpp` (no-runtime mode), `d3d.cpp` (D3D11 device on runtime LUID), `eyes.cpp` (test pattern),
+`log.cpp`, `pose.hpp`. Host is statically linked; the exe is ~17 MB (unstripped).
+
 ## Current state (2026-10-04 end of day, all live-verified unless noted)
 
 ### The stereo pair exists every frame
@@ -136,7 +149,7 @@ selftested first without the game.
   eye images) so IPC and the selftest work without an HMD. First check: does
   the prefix's 64-bit OpenXR runtime (`ActiveRuntime` → `C:\openxr\wineopenxr64.json`,
   already registered) create a session with a D3D11 binding under SteamVR?
-  **Status (2026-10-04)**: COMPLETE except the VISIBLE/FOCUSED render check. `src/host/` builds to
+  **Status (2026-10-04)**: COMPLETE and user-verified in the headset (red left / blue right pulsing pattern; SYNCHRONIZED→VISIBLE→FOCUSED, ~120 fps frame loop). `src/host/` builds to
   `build/win64/bin/mc2vr_host.exe` (`cmake -B build/win64 -DCMAKE_TOOLCHAIN_FILE=cmake/x86_64-w64-mingw32.cmake`;
   loader built from vendored SDK 1.1.54 in `vendor/openxr-sdk/`). `--mock` verified under plain Wine.
   Real mode verified under `proton run` with SteamVR up: instance (`SteamVR/OpenXR 2.17.10`,
@@ -152,8 +165,7 @@ selftested first without the game.
      vrclient_x64 when an OpenVR app starts; state=2 fails). The host creates/fills these itself.
   3. `--xr-debug` captures loader tracing to `mc2vr_host_xrloader.log`; stdout is lost under
      `proton run`, read `mc2vr_host.log`.
-  OPEN: the session stays SYNCHRONIZED (shouldRender=false after frame 0) for 16 s — never VISIBLE;
-  cause unknown (headset not worn / SteamVR standby / dashboard?).
+  The earlier "stuck in SYNCHRONIZED" was SteamVR itself having crashed; after restarting it the session went VISIBLE in ~3 s and FOCUSED ~5 s later. If it recurs, check SteamVR first.
 - **S4-1 IPC + lifecycle**: shared-memory block + event rings (contract in
   stereo_design.md §S4). Launcher spawns the host before the game and waits
   for its ready line; carrier connects in stage 1 (non-fatal: no host ⇒ the

@@ -13,7 +13,8 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
-| S4 HMD presentation, S5 motion controls | not started — S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
+| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1..S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
+| S5 motion controls | not started |
 
 ## Open RE items
 
@@ -203,8 +204,7 @@ host exe running in the same Wine prefix** with a D3D11 device (the supported
 OpenXR combination) owns the OpenXR instance/session, frame loop and event pump.
 The carrier only captures images and exchanges data. (The prefix already has
 wineopenxr registered for 64-bit: both `ActiveRuntime` keys →
-`C:\openxr\wineopenxr64.json`; to be confirmed in S4-0 that a D3D11 session
-actually comes up.) OpenVR is not used anywhere.
+`C:\openxr\wineopenxr64.json`; S4-0 CONFIRMED a D3D11 session comes up, with the registry/DXVK caveats in `s4_handover.md` S4-0 status.) OpenVR is not used anywhere.
 
 ```
 game (i386, D3D9/DXVK)                              host (x86_64, D3D11/DXVK)
