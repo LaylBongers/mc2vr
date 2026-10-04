@@ -8,14 +8,14 @@
 #   - nonzero-dword field map per dump (with float interpretation)
 #   - varying-across-dumps region analysis (constant vs per-view fields)
 #
-# S2c-0 stream-dump support (src/carrier/stream_capture.cpp): with a second
+# S2c-0 stream-dump support (src/carrier/debug/stream_capture.cpp): with a second
 # argument (a mc2vr_stream_frame<N>.txt file, or a directory containing them,
 # or omitted to auto-discover next to the log) each stream is decoded with the
 # RE'd RenderCmd_ExecuteStream opcode table and a per-frame census printed
 # (per-opcode counts + payload field stats). "S2c" log lines are echoed.
 #
 # Written during M3 field-map derivation. Entry size and dump line format must stay in sync
-# with src/carrier/render_dump.cpp (dump_bytes: 32 bytes/line, "M3 entry
+# with src/carrier/debug/render_dump.cpp (dump_bytes: 32 bytes/line, "M3 entry
 # +0xOFF: hex", "M3 obj +0xOFF: hex").
 
 import glob

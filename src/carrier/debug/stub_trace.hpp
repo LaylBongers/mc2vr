@@ -13,7 +13,7 @@
 //     directly; STUB-phase hits with .text return addresses are nested
 //     (plaintext called by plaintext called by the stub) or direct from
 //     a trampoline — the per-address one-shot log tells which.
-// Controlled by mc2vr.conf stub_trace=on|off (default off).
+// Controlled by mc2vr.conf debug_stub_trace=on|off (default off).
 #pragma once
 
 namespace mc2vr::trace {

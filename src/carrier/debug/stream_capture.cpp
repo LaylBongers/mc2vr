@@ -201,7 +201,7 @@ bool dump_armed()
     if (first.QuadPart == 0) {
         QueryPerformanceCounter(&first);
         MC2VR_LOG("S2c: stream capture started; dump window arms in %.1fs "
-                  "(stream_dump_delay)", (double)g_dump_delay_s);
+                  "(debug_dump_delay)", (double)g_dump_delay_s);
     }
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
@@ -460,7 +460,7 @@ bool set_enabled(const char *value)
     } else {
         return false;
     }
-    MC2VR_LOG("S2c: stream_capture=%s (census %s)", value,
+    MC2VR_LOG("S2c: debug_stream_capture=%s (census %s)", value,
               g_enabled ? "armed" : "idle");
     return true;
 }
@@ -468,13 +468,13 @@ bool set_enabled(const char *value)
 void set_dump_frames(uint32_t n)
 {
     g_dump_frames = n;
-    MC2VR_LOG("S2c: stream_dump_frames=%u", n);
+    MC2VR_LOG("S2c: debug_stream_dump_frames=%u", n);
 }
 
 void set_dump_delay(float seconds)
 {
     g_dump_delay_s = seconds;
-    MC2VR_LOG("S2c: stream_dump_delay=%.1fs", (double)seconds);
+    MC2VR_LOG("S2c: debug_dump_delay=%.1fs", (double)seconds);
 }
 
 bool set_replay_enabled(const char *value)

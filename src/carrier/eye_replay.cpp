@@ -709,13 +709,13 @@ bool set_pin_enabled(const char *value)
 void set_dump_frames(uint32_t n)
 {
     g_dump_frames = n;
-    MC2VR_LOG("eye: eye_dump_frames=%u", n);
+    MC2VR_LOG("eye: debug_eye_dump_frames=%u", n);
 }
 
 void set_dump_delay(float seconds)
 {
     g_dump_delay_s = seconds;
-    MC2VR_LOG("eye: stream_dump_delay=%.1fs (shared with stream dumps)", (double)seconds);
+    MC2VR_LOG("eye: debug_dump_delay=%.1fs (shared with stream dumps)", (double)seconds);
 }
 
 } // namespace mc2vr::eye

@@ -19,14 +19,14 @@
 
 namespace mc2vr::s2c {
 
-// mc2vr.conf stream_capture=off|on (default off — zero overhead when disabled).
+// mc2vr.conf debug_stream_capture=off|on (default off — zero overhead when disabled).
 bool set_enabled(const char *value);
 
-// mc2vr.conf stream_dump_frames=N: after stream_dump_delay seconds of capture,
+// mc2vr.conf debug_stream_dump_frames=N: after debug_dump_delay seconds of capture,
 // dump N consecutive frames' raw streams to mc2vr_stream_frame<N>.txt (0 = never).
 void set_dump_frames(uint32_t n);
 
-// mc2vr.conf stream_dump_delay=S: seconds after the first captured stream
+// mc2vr.conf debug_dump_delay=S: seconds after the first captured stream
 // before the dump window arms (default 15.0 — let the game reach gameplay).
 void set_dump_delay(float seconds);
 

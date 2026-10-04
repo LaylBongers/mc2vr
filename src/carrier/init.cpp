@@ -8,12 +8,12 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
-#include "probes.hpp"
-#include "render_dump.hpp"
-#include "stream_capture.hpp"
-#include "stub_trace.hpp"
+#include "debug/probes.hpp"
+#include "debug/render_dump.hpp"
+#include "debug/stream_capture.hpp"
+#include "debug/stub_trace.hpp"
 #include "view_rewrite.hpp"
-#include "vm_dump.hpp"
+#include "debug/vm_dump.hpp"
 #include "sha256.h"
 
 #include <cstdio>
@@ -25,6 +25,32 @@ namespace mc2vr {
 // Sticky state for the view_asym_x/y conf pair (each key updates one
 // component; both must survive the other's arrival).
 static float g_conf_asym_x = 0.0f, g_conf_asym_y = 0.0f;
+
+// Numeric conf values: true and *out set only on a clean, fully-consumed
+// parse; otherwise logs and leaves the setting alone.
+static bool parse_double(const char *key, const char *value, double *out)
+{
+    char *end = nullptr;
+    const double v = strtod(value, &end);
+    if (end == value || end[0] != 0) {
+        MC2VR_LOG("conf: %s=%s not a number, ignored", key, value);
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+static bool parse_count(const char *key, const char *value, uint32_t *out)
+{
+    char *end = nullptr;
+    const long n = strtol(value, &end, 10);
+    if (end == value || end[0] != 0 || n < 0) {
+        MC2VR_LOG("conf: %s=%s not a count, ignored", key, value);
+        return false;
+    }
+    *out = (uint32_t)n;
+    return true;
+}
 
 // Read <deploy dir>/mc2vr.conf (next to this DLL). Simple
 // key=value lines, '#' comments, whitespace-tolerant. Unknown keys are
@@ -89,19 +115,19 @@ static void load_conf()
                           "(use off|on|pulse|stereo) — defaulting to off", value);
                 view::set_view_row_rewrite("off");
             }
-        } else if (strcmp(key, "stub_trace") == 0) {
+        } else if (strcmp(key, "debug_stub_trace") == 0) {
             if (!trace::set_enabled(value)) {
-                MC2VR_LOG("conf: stub_trace=%s not recognized (use on|off)", value);
+                MC2VR_LOG("conf: debug_stub_trace=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "vm_dump") == 0) {
+        } else if (strcmp(key, "debug_vm_dump") == 0) {
             if (!vmdump::set_enabled(value)) {
-                MC2VR_LOG("conf: vm_dump=%s not recognized (use on|off)", value);
+                MC2VR_LOG("conf: debug_vm_dump=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "stream_capture") == 0) {
+        } else if (strcmp(key, "debug_stream_capture") == 0) {
             // S2c-0: render-command-stream capture + opcode census (read-only;
             // docs/stereo_design.md §S2). Requires the opcode MidHook (M3).
             if (!s2c::set_enabled(value)) {
-                MC2VR_LOG("conf: stream_capture=%s not recognized (use on|off)", value);
+                MC2VR_LOG("conf: debug_stream_capture=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_pass") == 0) {
             // S2c-2: deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
@@ -119,13 +145,10 @@ static void load_conf()
             if (!eye::set_pin_enabled(value)) {
                 MC2VR_LOG("conf: eye_monitor_pin=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "eye_dump_frames") == 0) {
-            char *end = nullptr;
-            const long n = strtol(value, &end, 10);
-            if (end != value && end[0] == 0 && n >= 0) {
-                eye::set_dump_frames((uint32_t)n);
-            } else {
-                MC2VR_LOG("conf: eye_dump_frames=%s not a count, ignored", value);
+        } else if (strcmp(key, "debug_eye_dump_frames") == 0) {
+            uint32_t n;
+            if (parse_count(key, value, &n)) {
+                eye::set_dump_frames(n);
             }
         } else if (strcmp(key, "frame_replay") == 0) {
             // S2c-1: second draw pass — re-invoke PgPrimitive_SubmitToGPU after
@@ -133,68 +156,47 @@ static void load_conf()
             if (!s2c::set_replay_enabled(value)) {
                 MC2VR_LOG("conf: frame_replay=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "stream_dump_frames") == 0) {
-            char *end = nullptr;
-            const long n = strtol(value, &end, 10);
-            if (end != value && end[0] == 0 && n >= 0) {
-                s2c::set_dump_frames((uint32_t)n);
-            } else {
-                MC2VR_LOG("conf: stream_dump_frames=%s not a count, ignored", value);
+        } else if (strcmp(key, "debug_stream_dump_frames") == 0) {
+            uint32_t n;
+            if (parse_count(key, value, &n)) {
+                s2c::set_dump_frames(n);
             }
-        } else if (strcmp(key, "stream_dump_delay") == 0) {
-            char *end = nullptr;
-            const double d = strtod(value, &end);
-            if (end != value && end[0] == 0 && d >= 0.0) {
+        } else if (strcmp(key, "debug_dump_delay") == 0) {
+            double d;
+            if (parse_double(key, value, &d) && d >= 0.0) {
                 s2c::set_dump_delay((float)d);
                 eye::set_dump_delay((float)d);
-            } else {
-                MC2VR_LOG("conf: stream_dump_delay=%s not a number, ignored", value);
             }
         } else if (strcmp(key, "view_row_amp") == 0) {
-            // Pan amplitude in world units (default 4.0). ~0.05 for
-            // game-scale checks; 0.032 = IPD scale.
-            char *end = nullptr;
-            const double amp = strtod(value, &end);
-            if (end != value && end[0] == 0) {
-                view::set_view_row_amp((float)amp);
-            } else {
-                MC2VR_LOG("conf: view_row_amp=%s not a number, ignored", value);
+            // Pan amplitude in world units (default 4.0).
+            double v;
+            if (parse_double(key, value, &v)) {
+                view::set_view_row_amp((float)v);
             }
         } else if (strcmp(key, "view_ipd") == 0) {
-            // Full IPD in world units for view_row_rewrite=stereo (default
-            // 0.065; per-eye offset is half of this).
-            char *end = nullptr;
-            const double ipd = strtod(value, &end);
-            if (end != value && end[0] == 0) {
-                view::set_view_ipd((float)ipd);
-            } else {
-                MC2VR_LOG("conf: view_ipd=%s not a number, ignored", value);
+            // Full IPD in world units (default 0.065; per-eye offset is half).
+            double v;
+            if (parse_double(key, value, &v)) {
+                view::set_view_ipd((float)v);
             }
         } else if (strcmp(key, "view_stereo_hold") == 0) {
             // Seconds each eye is held in stereo A/B mode (default 2.0).
-            char *end = nullptr;
-            const double hold = strtod(value, &end);
-            if (end != value && end[0] == 0) {
-                view::set_view_stereo_hold((float)hold);
-            } else {
-                MC2VR_LOG("conf: view_stereo_hold=%s not a number, ignored", value);
+            double v;
+            if (parse_double(key, value, &v)) {
+                view::set_view_stereo_hold((float)v);
             }
         } else if (strcmp(key, "view_asym_x") == 0 ||
                    strcmp(key, "view_asym_y") == 0) {
             // Per-eye asymmetric-projection centre shift, NDC units. Both
             // keys land in one setter; values are sticky (default 0).
-            char *end = nullptr;
-            const double v = strtod(value, &end);
-            if (end != value && end[0] == 0) {
+            double v;
+            if (parse_double(key, value, &v)) {
                 if (strcmp(key, "view_asym_x") == 0) {
-                    view::set_view_asym((float)v, g_conf_asym_y);
                     g_conf_asym_x = (float)v;
                 } else {
-                    view::set_view_asym(g_conf_asym_x, (float)v);
                     g_conf_asym_y = (float)v;
                 }
-            } else {
-                MC2VR_LOG("conf: %s=%s not a number, ignored", key, value);
+                view::set_view_asym(g_conf_asym_x, g_conf_asym_y);
             }
         } else {
             MC2VR_LOG("conf: unknown key '%s' ignored", key);

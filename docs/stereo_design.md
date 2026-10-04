@@ -12,53 +12,28 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 |---|---|
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
-| S2 per-eye injection | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel in-game verified; S2c second draw pass built on it — deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
+| S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
 | S4 HMD presentation, S5 motion controls | not started — **OpenXR ruled out** (Valve's OpenXR driver has no 32-bit+DX9 support); S4 targets OpenVR/SteamVR |
 
-## Handover — state and next steps (2026-10-03)
+## Open RE items
 
-Done and verified in-game: per-view camera pan at the GPU boundary (layout-corrected, scratch-copy
-upload, RT0 pass gate); shadows/materials visually clean at game scale. Ghidra + docs consolidated
-(the `ViewContextRecord`/`ViewEntry`/`ViewRef`/`PgPrimitive` structs, full `Dx9StateWrapper_vtbl`
-names, corrected comments). Tooling: `tools/shader_*.py`, `tools/analyze_dumps.py`, optional stub
-tracer (`stub_trace=on`).
-
-Next, roughly in order:
-1. Real per-eye offsets from the HMD pose (replace the pulse) + asymmetric projection (VP rows).
-   — **Plumbing done (2026-10-04)**: `view_row_rewrite=stereo` pans along the camera
-   right axis (derived per frame from the raw VP row0 uploads) by ±`view_ipd`/2, with
-   eye A/B alternation every `view_stereo_hold` s until S2c drives per-eye passes, and
-   the asym-projection channel (`view_asym_x/y` NDC shifts into row_k.w) ready for S4's
-   real per-eye tan angles. **VERIFIED in-game 2026-10-04**: log shows the derived
-   right axis unit-length and tracking camera yaw ([1,0,0] → [-1,0,0] through a 180°
-   turn → smooth rotation into [0.01, 0, 0.9999]), flips at 2s, 100k+ rows rewritten per
-   gameplay window; menu flips show right=[0,0,0] (cache unseeded until the first
-   main-pass camera upload — expected). Human-confirmed: the left/right motion tracks
-   camera rotation. The HMD pose source itself is S4 (OpenVR; see below).
-2. Shaders without `viewContextData` (billboards/rain/quads) — check which lag, then implement.
-3. PS-side camera data (the pass uploads the view record to the PS; `cameraPos` c92; texgen
-   matrices are mono) — hook slot 109 if reflections/shadows skew at IPD scale.
-4. S2c second draw pass — **COMPLETE (2026-10-04)**: frame re-submitted
-   twice through PgPrimitive_SubmitToGPU, pass 2 redirected into a
-   carrier eye RT; note the per-frame GPU sync in
-   `LtiRenderer_BeginSubmit` and that rendering runs as a registered task (`RenderTask_RenderFrame`).
-5. S4 compositor — **OpenVR/SteamVR, not OpenXR** (OpenXR ruled out: Valve's
-   OpenXR driver has no 32-bit+DX9 support), pacing.
-Open RE items: what the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk,
-see its Ghidra plate); why `ViewManager_Update` never fired in the traced run. (`FUN_00858980`/
-`FUN_00852740` were named during S2c: `RenderCmd_ResetPassState` / `RenderCmd_SetScreenConstants`,
-opcode 0x08.)
-Camera-matrix writer hunt (2026-10-03, after the thunk-target census): NEGATIVE. None of the 405
-runtime-native thunk-target functions references `g_ViewContextTable` (`0x01169774`) or the
-`ViewEntry` table (`0x012865e0`); the view/camera code (`ViewEntry_Activate`, `FUN_0048a3b0`,
-`FUN_00489e50`, `FUN_004d2a50`) still calls thunks that stay VM at runtime; the three native
-`FramePipeline` callees (`0x0057de60`, `0x0059de70`, `0x00624f70`) are handle-table helpers. Writes
-to `g_ViewContextTable` +0x10..+0x48 from the function-less `0x8564xx..0x856dxx` blocks are
-state-cache flags, not VP rows. `FUN_024fe0d0` (`.securom`, readable in Ghidra) maintains the
-active-view list (`ViewEntry` +0x0/+0x4 links, head `DAT_00d29e60`) — not matrices. Static xrefs
-cannot find pointer-based matrix writes; proposed next step: carrier hardware-write watch (debug
-registers + VEH, or PAGE_GUARD) on one live `ViewContextRecord`'s VP rows to log the writer's EIP
-(SecuROM anti-debug is documented inert, but untested for DRx).
+- What the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk, see its Ghidra
+  plate); why `ViewManager_Update` never fired in the traced run.
+- **Camera-matrix writer hunt (2026-10-03): NEGATIVE so far.** None of the 405 runtime-native
+  thunk-target functions references `g_ViewContextTable` (`0x01169774`) or the `ViewEntry` table
+  (`0x012865e0`); the view/camera code (`ViewEntry_Activate`, `FUN_0048a3b0`, `FUN_00489e50`,
+  `FUN_004d2a50`) still calls thunks that stay VM at runtime; the three native `FramePipeline`
+  callees (`0x0057de60`, `0x0059de70`, `0x00624f70`) are handle-table helpers. Writes to
+  `g_ViewContextTable` +0x10..+0x48 from the function-less `0x8564xx..0x856dxx` blocks are
+  state-cache flags, not VP rows. `FUN_024fe0d0` (`.securom`, readable in Ghidra) maintains the
+  active-view list (`ViewEntry` +0x0/+0x4 links, head `DAT_00d29e60`), not matrices. Static xrefs
+  cannot find pointer-based matrix writes; proposed next step: carrier hardware-write watch (debug
+  registers + VEH, or PAGE_GUARD) on one live `ViewContextRecord`'s VP rows to log the writer's EIP
+  (SecuROM anti-debug is documented inert, but untested for DRx).
+- Verified-in-game record for the `stereo` camera channel (2026-10-04): the derived right axis is
+  unit-length and tracks camera yaw ([1,0,0] → [-1,0,0] through a 180° turn), 100k+ rows rewritten
+  per gameplay window; menu flips show right=[0,0,0] (cache unseeded until the first main-pass
+  camera upload — expected).
 
 ## Facts this design builds on
 
@@ -168,11 +143,7 @@ would be shifted (none seen); if render resolution ever differs from the
 backbuffer, key the gate on RT identity. Shadow *receivers* look up in world
 space (the VS passes world position to the PS), so they are eye-invariant.
 
-**Controls** (`mc2vr.conf`): `view_row_rewrite=off|on|pulse|stereo`,
-`view_row_amp=` world units (default 4.0, unmistakable; ~0.05 for game-scale
-checks), `view_ipd=` (default 0.065; per-eye offset = half),
-`view_stereo_hold=` s per eye (default 2.0), `view_asym_x/y=` NDC (default
-0). The real per-eye offset is `D = ±right·IPD/2` (≈0.032 m).
+**Controls**: `view_row_rewrite`, `view_row_amp`, `view_ipd`, `view_stereo_hold`, `view_asym_x/y` — documented in `conf/mc2vr.conf`. The real per-eye offset is `D = ±right·IPD/2` (≈0.032 m).
 
 ## Architecture
 
@@ -188,57 +159,41 @@ the consumer never reads view camera data.)
 
 ### S2 — remaining work
 
-1. **Real per-eye offsets from HMD pose** (S4 supplies the pose): replace the
-   test pulse with `±right·IPD/2` and per-eye asymmetric projection.
+1. **Real per-eye offsets from HMD pose** (S4 supplies the pose): replace the static
+   `±right·IPD/2` with the pose-derived offset plus per-eye asymmetric projection.
 2. **Shaders without `viewContextData` are not rewritten** and will lag the
    pan (not yet observed as visibly wrong — check billboards, rain, particles,
    quads before implementing): explicit `g_ViewProjMtx` (`c0-3`, `0x9fb8`:
    same per-row `w` shift); `LocalToProj` (`0x6cc8`: view folded in per object
    — needs the view-space eye offset, `clip.x -= P00*e.x`, with P00 derivable
    from cached VP rows); `Mvp`/`TexGen` (`0x200278`); rain (`0x1fe198`).
-3. **S2c — second draw pass**: replay the frame's command stream once per eye
-   through `RenderCmd_ExecuteStream` (the M3 opcode MidHook at `0x008569f5` is
-   already installed as the stream tap): buffer the frame's stream, replay per
-   eye with that eye's rewritten constants and eye render targets. Per-draw
-   RT/viewport switching already happens (SetViewport fires 2–3.6k×/frame) —
-   the replay redirects draw targets to eye RTs. Engineering list: stream
-   buffering, draw-state reapplication on replay, RT plumbing; S0 ring/element
-   facts are the timing inputs. Per-object re-uploads during replay are safe
-   (objectData = local→world, BoneMatrixArray = skinning; no view content).
-   With two passes the RT gate must also distinguish the two eye RTs.
-   **S2c-0 (capture + census) is implemented** (2026-10-04,
-   `src/carrier/stream_capture.cpp`, conf `stream_capture=on`): full opcode
-   table + interpreter facts on the `RenderCmd_ExecuteStream` Ghidra plate
-   (dedupe global `0x011697b8` → replay must use copied pointers; op 0x13 is a
-   2-dword no-op; op 0x02/0x03 constant uploads carry count in EDX; op 0x08
-   screen-constant refresh is viewport/view-dependent). **S2c-1 second pass
-   is implemented** (2026-10-04): streams carry no draws (op 0x0f = Clear), so
-   the per-eye pass re-invokes `PgPrimitive_SubmitToGPU` wholesale
-   (`frame_replay=on`, InlineHook @ entry — the mutated record walk re-runs
-   state + draws; VCD uploads re-issue through the slot-94 rewrite, which is
-   what S2c-2 keys on; live-verified clean 2026-10-04, stable 30 Hz).
-   **S2c-2 implemented** (2026-10-04): `eye_pass` (deterministic per-pass eye,
-   pass1=LEFT pass2=RIGHT) + `eye_rt` (pass-2 device-level SetRenderTarget(0)/
-   StretchRect redirect to a carrier-created backbuffer-sized eye RT,
-   src/carrier/eye_replay.cpp) + `eye_dump_frames` BMP pairs with parallax
-   analysis in tools/analyze_dumps.py. **S2c-2 live-verified 2026-10-04**:
-   both per-eye passes render fully each frame; with the redirect, the two
-   per-frame EndSubmit copies put LEFT then RIGHT into the backbuffer and the
-   two Presents alternate them on the monitor (visually: rapid horizontal
-   camera oscillation = working temporal stereo). Main scene RT is fp16 HDR
-   (D3DFMT_A16B16G16R16F). **S2c-2 ACCEPTANCE MET (run 3, 2026-10-04)**:
-   5 gameplay BMP pairs measure a consistent -7px horizontal parallax
-   (SAD 2.16 vs 3.28 at shift-0) — deterministic per-frame stereo pair
-   PROVEN; gameplay's final composite is a single DRAW into RT0=backbuffer
-   (counter-proven; UpdateSurface/UpdateTexture never fire — watch item
-   closed). Monitor pin = backbuffer SNAPSHOT before pass 2 / RESTORE after
-   (suppressing backbuffer writes is wrong under SwapEffect=DISCARD —
-   stale driver page, live-observed); run-4-verified stable and free
-   (perf identical, ~30 fps inherent to frame_replay: 2 x 16.6 ms passes
-   > 60 Hz vsync budget — S4 pacing owns the fix). Details:
-   `docs/s4_handover.md` (verified state); full run-by-run milestone
-   record in git history (`git log --follow -- docs/s2c_handover.md`).
-   **S2c COMPLETE.**
+3. PS-side camera data (the pass uploads the view record to the PS; `cameraPos` c92; texgen
+   matrices are mono) — hook slot 109 if reflections/shadows skew at IPD scale (see Open questions).
+
+### S2c — second draw pass (COMPLETE 2026-10-04, live-verified)
+
+Streams carry no draws (op 0x0f = Clear), so the per-eye pass re-invokes
+`PgPrimitive_SubmitToGPU` wholesale (`frame_replay`, InlineHook at entry — the record walk
+re-runs state + draws; VCD uploads re-issue through the slot-94 rewrite, which `eye_pass` keys on).
+Code: `src/carrier/debug/stream_capture.cpp` (stream tap + replay hook), `src/carrier/eye_replay.cpp`.
+
+- **S2c-0** capture + census: full opcode table + interpreter facts on the
+  `RenderCmd_ExecuteStream` Ghidra plate (dedupe global `0x011697b8` → replay must use copied
+  pointers; op 0x13 is a 2-dword no-op; op 0x02/0x03 constant uploads carry count in EDX; op 0x08
+  screen-constant refresh is viewport/view-dependent).
+- **S2c-1** second pass: stable 30 Hz (2 × 16.6 ms passes exceed the 60 Hz vsync budget — S4 pacing
+  owns the fix).
+- **S2c-2** `eye_pass` (pass 1 = LEFT, pass 2 = RIGHT) + `eye_rt` (pass-2 device-level
+  SetRenderTarget(0)/StretchRect redirect to a carrier backbuffer-sized eye RT). Main scene RT is
+  fp16 HDR (D3DFMT_A16B16G16R16F). Without the monitor pin the two per-frame EndSubmit copies
+  alternate L/R on the monitor (rapid horizontal oscillation = working temporal stereo).
+- **Acceptance (run 3)**: 5 gameplay BMP pairs measure a consistent −7px horizontal parallax
+  (SAD 2.16 vs 3.28 at shift-0; `debug_eye_dump_frames`, `tools/analyze_dumps.py`). Gameplay's final
+  composite is a single DRAW into RT0=backbuffer (UpdateSurface/UpdateTexture never fire).
+- **Monitor pin** = backbuffer SNAPSHOT before pass 2 / RESTORE after (suppressing backbuffer writes
+  is wrong under SwapEffect=DISCARD — stale driver page, live-observed); stable and free.
+- Details: `docs/s4_handover.md`; run-by-run record in git history
+  (`git log --follow -- docs/s2c_handover.md`).
 
 ### S4 — Presentation / HMD runtime
 
@@ -285,7 +240,7 @@ first). Pose marshal point is the slot-5 hook (S4).
 | Device `Present` (17) / `Reset` (16) | VmtHook | S4 compositor / params |
 | `g_RenderShell` slots 4/5 | cloned-vtable claim | S4 orchestration (counting no-op now) |
 | `SubmitWorldPackets` loop head `0x0048e9ea` | MidHook | M3 view aggregation |
-| Stub call `0x004c99f9`/`0x004c99fe` + ~15 plaintext helper entries | MidHook | optional callback tracer (`stub_trace=on`, see `render_path.md`) |
+| Stub call `0x004c99f9`/`0x004c99fe` + ~15 plaintext helper entries | MidHook | optional callback tracer (`debug_stub_trace`, see `render_path.md`) |
 
 Proven mechanisms: trap-based inline/Mid/Vmt installs (no suspension), device
 VmtHook surviving device-lost + `Reset`, slot 4/5 claim 1:1 with frames,
@@ -310,5 +265,3 @@ data. **Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
 - Frame pacing: game vsync-locked 60 Hz; HMD typically 90 Hz. A Present-hook
   compositor can run at HMD cadence independently (pose extrapolation via the
   HMD runtime). Decide in S4.
-- Stream replay state (S2c): which of the 27 opcodes carry draw state that must
-  reset between eye passes; RT plumbing for eye targets.

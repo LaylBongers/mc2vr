@@ -408,7 +408,7 @@ void install()
     // with the device VmtHook, device.cpp).
     view::install();
 
-    // Optional SecuROM-stub callback tracer (mc2vr.conf stub_trace=on).
+    // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();
 
     // S2c-1: SubmitToGPU frame-replay InlineHook (mc2vr.conf frame_replay=on).

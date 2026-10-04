@@ -70,7 +70,7 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
    callers of `PoseStore_GetPoseByHandle`, `Pose_Copy`, `PgMaterial_ctor`).
 
 4. **Runtime-patched thunk slots — many "VM" thunks are native at runtime** (found 2026-10-03,
-   carrier `vm_dump=on`, `src/carrier/vm_dump.cpp`). The file image of a `jmp [slot]` thunk names a
+   carrier `debug_vm_dump=on`, `src/carrier/debug/vm_dump.cpp`). The file image of a `jmp [slot]` thunk names a
    `.securom` VM stub, but the SecuROM loader rewrites the slot at startup. Static analysis of the file
    therefore shows the DEFAULT target; the live target can differ. Census (~15s after attach, 2448
    thunks = every `FF 25 <slot in 0x01a48000..0x03771f0f>` in `.text`; per-thunk data in
@@ -82,7 +82,7 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
    thunk `0x0046ab80` -> `NodeArray_DecrementChildRefs` `0x00518fa0`. Not covered by the census:
    non-slot stubs like `0x0050f660` (`push esi; ...; push 0x50f677; jmp 0x0085d760`, target is `.text`,
    untraced). Unaligned thunks are real too (mid-function VM calls, e.g. `0x0048bf06`).
-   Rules: (a) a slot's runtime value is not in the file — read it live (carrier `vm_dump`), do not
+   Rules: (a) a slot's runtime value is not in the file — read it live (carrier `debug_vm_dump`), do not
    conclude "opaque" from the `.securom` target; (b) the 406 targets are mostly NOT disassembled in
    Ghidra yet (create the function at the target; mutated prologues decompile with a junk
    `DAT_0256xxxx` counter, `push X; jmp [IAT]` / `push X; push Y; ret` call sites stop the decompiler,

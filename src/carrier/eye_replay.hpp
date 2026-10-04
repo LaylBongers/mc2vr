@@ -22,7 +22,7 @@
 //     the pass-2 composite draw runs unsuppressed and the game presents the
 //     same LEFT image at both per-frame Presents — the S4 steady state (the
 //     compositor will consume the eye RT instead).
-//   - eye_dump_frames=N: after stream_dump_delay seconds, write BMP pairs
+//   - debug_eye_dump_frames=N: after debug_dump_delay seconds, write BMP pairs
 //     (mc2vr_eye_left/right_frame<N>.bmp) for the parallax check — pairs count
 //     only when NON-EMPTY (black loading/video frames are skipped and retried
 //     at a 0.5s cadence, so the window waits for real content). fp16 HDR
@@ -51,10 +51,10 @@ bool set_rt_enabled(const char *value);
 // stale driver page when they are (live-observed 2026-10-04).
 bool set_pin_enabled(const char *value);
 
-// mc2vr.conf eye_dump_frames=N (0 = never; dumps need eye_rt=on).
+// mc2vr.conf debug_eye_dump_frames=N (0 = never; dumps need eye_rt=on).
 void set_dump_frames(uint32_t n);
 
-// mc2vr.conf stream_dump_delay=S — shared with the stream dump window.
+// mc2vr.conf debug_dump_delay=S — shared with the stream dump window.
 void set_dump_delay(float seconds);
 
 // Pass tracking — called from stream_capture's SubmitToGPU hook around each

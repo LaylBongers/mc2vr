@@ -6,14 +6,15 @@ add_library(mc2vr_carrier SHARED
     init.cpp
     hooks.cpp
     device.cpp
-    probes.cpp
-    render_dump.cpp
     view_rewrite.cpp
-    stub_trace.cpp
-    stream_capture.cpp
     eye_replay.cpp
-    vm_dump.cpp
     log.cpp
+    # Diagnostic/instrumentation modules (mostly conf-gated, default off).
+    debug/probes.cpp
+    debug/render_dump.cpp
+    debug/stub_trace.cpp
+    debug/stream_capture.cpp
+    debug/vm_dump.cpp
     sha256.c
 )
 

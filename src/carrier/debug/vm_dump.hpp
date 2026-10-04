@@ -4,7 +4,7 @@
 // shares the process address space, so it copies the runtime bytes, diffs
 // them against the on-disk image, and re-reads once later to catch runtime
 // patching. Nothing in the VM is hooked or written.
-// Controlled by mc2vr.conf vm_dump=on|off (default off).
+// Controlled by mc2vr.conf debug_vm_dump=on|off (default off).
 #pragma once
 
 namespace mc2vr::vmdump {

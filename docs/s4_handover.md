@@ -33,9 +33,9 @@ registered but dead in this prefix).
    layout in the prefix, interop questions); §Status is current.
 3. `docs/launcher_plan.md` — mechanism rules (do-not-re-litigate list),
    hook inventory, build/test commands.
-5. `docs/render_path.md` — frame chain and threading (esp. the per-frame
+4. `docs/render_path.md` — frame chain and threading (esp. the per-frame
    GPU-sync event-query spin in `LtiRenderer_BeginSubmit`).
-6. `docs/ghidra-reva.md` — how to use the ReVa MCP tools correctly.
+5. `docs/ghidra-reva.md` — how to use the ReVa MCP tools correctly.
 
 ## Current state (2026-10-04 end of day, all live-verified unless noted)
 
@@ -43,7 +43,7 @@ registered but dead in this prefix).
 
 - `frame_replay=on` (S2c-1): the frame is submitted twice through
   `PgPrimitive_SubmitToGPU` (InlineHook at entry `0x00855690`,
-  `src/carrier/stream_capture.cpp`). Pass 1 = LEFT eye, pass 2 = RIGHT eye
+  `src/carrier/debug/stream_capture.cpp`). Pass 1 = LEFT eye, pass 2 = RIGHT eye
   (`eye_pass=on`; deterministic per-frame eye selection via
   `view::set_pass_eye`, replacing the `view_stereo_hold` A/B timer).
 - `eye_rt=on` (S2c-2): pass-2 `SetRenderTarget(0, mainRT)` and pass-2
@@ -114,19 +114,13 @@ zero failures, zero measurable cost. When S4's compositor takes over as the
 real consumer, revisit whether the pin stays (the monitor path should keep
 working regardless).
 
-### Conf keys (mc2vr.conf, read at DLL attach)
+### Conf keys
 
-`view_row_rewrite=stereo` (the S2 camera channel: D = ±right·IPD/2 on the
-viewContextData VP rows; gate = RT0 backbuffer-sized, main pass only) ·
-`view_ipd` (0.065) · `view_asym_x/y` (asym-projection NDC channel, default
-0, sign convention unvalidated) · `frame_replay` · `eye_pass` · `eye_rt` ·
-`eye_monitor_pin` · `eye_dump_frames` (0 now; N dumps N non-empty L/R BMP
-pairs after `stream_dump_delay` s; fp16 decoded + Reinhard-tonemapped;
-analysis: `tools/analyze_dumps.py`, fixture: `tools/eye_pair_fixture.py`) ·
-`stream_capture` (+ `stream_dump_frames`/`stream_dump_delay`) · `stub_trace`
-· `vm_dump`. Defaults off in code; conf template `conf/mc2vr.conf`. The
-DEPLOYED conf at `<GAME_DIR>/mc2vr/` is never overwritten by `launch.sh` —
-edit it there manually.
+Documented in `conf/mc2vr.conf` (read at DLL attach). Stereo pipeline keys: `view_row_rewrite=stereo`,
+`view_ipd`, `view_asym_x/y`, `frame_replay`, `eye_pass`, `eye_rt`, `eye_monitor_pin`; diagnostics are
+all `debug_*` and default off. The DEPLOYED conf at `<GAME_DIR>/mc2vr/` is never overwritten by
+`launch.sh` — edit it there manually. Analysis tools: `tools/analyze_dumps.py` (parses view/S2c/eye
+evidence), `tools/eye_pair_fixture.py`.
 
 ## S4 engineering list
 
@@ -194,14 +188,8 @@ edit it there manually.
 
 ## Open questions the new agent inherits
 
-- `g_RenderQueue2` (2D/overlay) consumption timing vs Present — needed for
-  the S4 compositor's HUD handling; add counters when S4 starts.
-- Shaders without `viewContextData` (explicit `g_ViewProjMtx`, `LocalToProj`,
-  `Mvp`/`TexGen`, rain) are not rewritten and lag the pan — check billboards,
-  rain, particles, quads before assuming the pair is geometry-correct
-  everywhere (stereo_design.md §S2 item 2).
-- Shadow-map basis is the light's, not the camera's — shadows will lag the
-  eye offset; assess visually once in the HMD.
+- `g_RenderQueue2` (2D/overlay) consumption timing vs Present — needed for the compositor's HUD
+  handling; add counters when S4 starts.
+- Shaders without `viewContextData`, shadow-map basis, PS-side mono camera data: see
+  `stereo_design.md` § S2 remaining work and § Open questions.
 - `view_asym_x/y` sign convention vs the HMD runtime.
-- Why `ViewManager_Update` never fired in the S1 traced run (curiosity, not
-  a blocker).
