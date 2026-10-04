@@ -13,7 +13,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
-| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1 IPC + lifecycle DONE (selftest-verified 2026-10-04: launcher spawns the host + waits ready, carrier connects non-fatally, seqlock pose/state + SPSC event/command rings cross-bitness win64↔win32, mock round trip incl. Shutdown). S4-2..S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
+| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1 IPC + lifecycle DONE (selftest + live-verified 2026-10-04: launcher spawns the host + waits ready, carrier connects non-fatally, seqlock pose/state + SPSC event/command rings cross-bitness win64↔win32, mock round trip incl. Shutdown, host death watch). S4-2..S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
 | S5 motion controls | not started |
 
 ## Open RE items

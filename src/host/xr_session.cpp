@@ -286,8 +286,8 @@ bool frame(State& s, unsigned n) {
         uint32_t nv = 0;
         XR_TRY(xrLocateViews(s.session, &li, &vs, 2, &nv, views));
 
-        const bool poseOk = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) &&
-                            (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT);
+        poseOk = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0 &&
+                 (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0;
         if (n % 90 == 0) {
             const float dx = views[1].pose.position.x - views[0].pose.position.x;
             const float dy = views[1].pose.position.y - views[0].pose.position.y;

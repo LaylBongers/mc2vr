@@ -175,8 +175,15 @@ selftested first without the game.
   for its ready line; carrier connects in stage 1 (non-fatal: no host ⇒ the
   game runs unmodified-mono-plus-stereo-on-monitor as today). Selftest
   extended: host `--mock` ↔ stand-in carrier round trip.
-  **Status (2026-10-04)**: COMPLETE, selftest-verified (both phases pass under
-  plain Wine; live-run pending the next `./launch.sh`). Protocol v1:
+  **Status (2026-10-04)**: COMPLETE — selftest-verified AND live-verified
+  (`./launch.sh`, SteamVR up, gameplay run). Live evidence: launcher spawned
+  the host (ready in ~260 ms), carrier `ipc: connected`, state transitions
+  mirrored host-side 1:1 (SYNCHRONIZED/FOCUSED/SYNCHRONIZED), host shut down
+  on carrier exit after 8473 frames (death watch works both directions).
+  Fix from the live audit: a shadowed local `poseOk` in `xr_session.cpp`
+  left the IPC tracked flag always false — the host's own log said `valid=1`
+  while the carrier never saw a tracked pose; fixed + `-Wshadow` on the host
+  target. Protocol v1:
   `src/common/mc2vr_ipc.h` (fixed-width, arch-neutral; seqlocked
   `Mc2IpcState` = pose/FOV/IPD/session/recenter; SPSC `Mc2IpcMsg` rings —
   events host→carrier, commands carrier→host incl. the S4-2 `FRAME_READY`

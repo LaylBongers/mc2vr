@@ -17,3 +17,6 @@ target_include_directories(mc2vr_host PRIVATE
 
 # Static runtimes: nothing but system DLLs needed inside the Wine prefix.
 target_link_options(mc2vr_host PRIVATE -static -static-libgcc -static-libstdc++)
+# A shadowed local (the S4-1 poseOk bug, caught in the live log audit) nearly
+# silently broke the IPC tracked flag - make it a compile-time warning.
+target_compile_options(mc2vr_host PRIVATE -Wshadow)
