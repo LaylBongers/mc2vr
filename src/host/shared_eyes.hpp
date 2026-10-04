@@ -34,4 +34,16 @@ void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
 // arrived. Cheap when idle.
 void pump();
 
+// S4-3 seam: the newest carrier image per eye. Returns true when eye has a
+// shared texture opened (with its UNORM-cast SRV). Does NOT consume the
+// mirror's `fresh` flag — the OpenXR loop re-submits the newest pair at HMD
+// cadence while the game runs ~30 Hz (S4-3 pacing), so freshness is
+// irrelevant to the caller.
+struct LatestImage {
+    ID3D11ShaderResourceView* srv = nullptr;
+    uint64_t frameId = 0;
+    uint32_t w = 0, h = 0;
+};
+bool latest(uint32_t eye, LatestImage& out);
+
 }  // namespace seyes

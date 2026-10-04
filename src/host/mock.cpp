@@ -7,6 +7,7 @@
 #include "ipc.hpp"
 #include "log.hpp"
 #include "pose.hpp"
+#include "submit.hpp"
 
 #include <windows.h>
 
@@ -83,6 +84,19 @@ int run(int frames) {
             hostlog::write("mock: eye texture %d creation failed", e);
             return 1;
         }
+    }
+
+    // S4-3 smoke check: compile the blit shaders + run one draw in the same
+    // prefix the real host uses, so the SELFTEST — not the first HMD run —
+    // catches a missing d3dcompiler_47 or a broken view cast.
+    if (sub::init(d.dev)) {
+        eyes::draw_pattern(d.ctx, rtv[1], 1, 0);
+        ID3D11ShaderResourceView* srv = nullptr;
+        if (SUCCEEDED(d.dev->CreateShaderResourceView(tex[1], nullptr, &srv))) {
+            sub::draw(d.ctx, srv, rtv[0], kW, kH, kW, kH);
+            srv->Release();
+        }
+        hostlog::write("mock: submit blit shaders ready (draw smoke ok)");
     }
 
     // Canonical ready marker (launcher/selftest wait for this line) + a

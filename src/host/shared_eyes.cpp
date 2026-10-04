@@ -26,6 +26,7 @@ struct Entry {
     uint64_t handle = 0;
     ID3D11Texture2D* tex = nullptr;   // opened shared texture
     ID3D11Texture2D* stg = nullptr;   // same-desc CPU-read staging
+    ID3D11ShaderResourceView* srv = nullptr;  // UNORM-cast view (S4-3 blit)
     uint32_t w = 0, h = 0;
 };
 std::vector<Entry> g_cache;
@@ -201,10 +202,28 @@ void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
             tex->Release();
             return;
         }
+        // S4-3: plain-UNORM-cast SRV on the BGRA8-family texture (87 or 88
+        // typed — both cast to 87). Raw bytes, no sRGB decode: the blit
+        // shader passes them through and the compositor decodes the sRGB
+        // swapchain — the intended path for display-referred finals. Failure
+        // here only disables the OpenXR submission for this texture (the
+        // mirror keeps working off e.tex).
+        ID3D11ShaderResourceView* srv = nullptr;
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv = {};
+        sv.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        sv.Texture2D.MostDetailedMip = 0;
+        sv.Texture2D.MipLevels = 1;
+        if (FAILED(g_dev->CreateShaderResourceView(tex, &sv, &srv))) {
+            hostlog::write("seyes: SRV creation failed for handle 0x%llx "
+                           "(hr-ignored, texture stays mirror-only)",
+                           (unsigned long long)handle);
+        }
         Entry ne;
         ne.handle = handle;
         ne.tex = tex;
         ne.stg = stg;
+        ne.srv = srv;
         ne.w = w;
         ne.h = h;
         g_cache.push_back(ne);
@@ -269,6 +288,18 @@ void pump() {
         g_stat_eyes[0][1] = (uint32_t)g_drawn[0];
         g_stat_eyes[1][1] = (uint32_t)g_drawn[1];
     }
+}
+
+bool latest(uint32_t eye, LatestImage& out) {
+    out = LatestImage();
+    if (!g_inited || eye > 1) return false;
+    Latest& lt = g_latest[eye];
+    if (lt.e == nullptr || lt.e->srv == nullptr) return false;
+    out.srv = lt.e->srv;
+    out.frameId = lt.frameId;
+    out.w = lt.e->w;
+    out.h = lt.e->h;
+    return true;
 }
 
 }  // namespace seyes

@@ -41,13 +41,14 @@ D3D11 + IPC server. Design, IPC contract and risks: `docs/stereo_design.md` §S4
 
 ## Next session — start here
 
-1. S4-0 through S4-2 are DONE — S4-2 is now LIVE-VERIFIED (2026-10-04,
-   gameplay run: the host mirror showed the live stereo pair, clearly two
-   offset cameras; full pipeline ~30 Hz, zero failures in carrier
-   `share window:` and host `seyes: window stats` counters). Next: S4-3
-   (OpenXR submission — host copies the shared images into the swapchains,
-   `xrEndFrame` projection layer with the carrier-rendered pose+FOV; swapchain
-   formats are sRGB-only 8-bit — 29/91 — which matters, see the S4-0 status).
+1. S4-0 through S4-3 are DONE — S4-3 is LIVE-VERIFIED (2026-10-04, gameplay
+   run: the stereo pair visible in the headset, user-confirmed; audit in the
+   S4-3 status entry — steady `submit: window fresh=600 reused=1802
+   pattern=0`, zero failures both sides). Next: **S4-4 pose feedback** — the
+   projection layer currently submits the RUNTIME views' pose+FOV while the
+   carrier still renders the static ±IPD/2 pan; swapping in the
+   carrier-rendered pose is S4-4's core (slot-5 `PostUpdateHook` +
+   `view_rewrite`/`view_asym` channels, see the S4-4 entry below).
 2. The S4-2 probe result (do not re-litigate): DXVK D3D9 legacy `pSharedHandle`
    textures OPEN in DXVK D3D11 (`OpenSharedResource`) across processes in
    every combination tested (D3D9Ex/plain device × A8R8G8B8/X8R8G8B8; probe:
@@ -271,6 +272,52 @@ selftested first without the game.
   carrier reports having rendered with (lets the runtime reproject). Host
   runs `xrWaitFrame` at HMD cadence and re-submits the newest pair while the
   game runs ~30 Hz.
+  **Status (2026-10-04)**: **COMPLETE — LIVE-VERIFIED** (gameplay run:
+  the stereo pair visible in the headset; user-confirmed). Live evidence
+  (mc2vr_host.log / mc2vr_carrier.log audit): format 91 chosen with RTV cast
+  87 as designed; `submit: window fresh=600 reused=1802 pattern=0` steady
+  state (fresh = per-eye blits of new carrier frames → 30 Hz game,
+  reused re-submits the newest pair up to ~120 Hz host cadence; pattern=2
+  only in the very first window before the first pair arrived); carrier
+  `share window:` steady 300 L/R per 10s, ringFull=0 (the S4-2 residual
+  backpressure never recurred), syncTimeouts=2 total across the whole run
+  (bounded 8ms event-query flush occasionally times out — benign),
+  noHostSkips=0; mirror `seyes:` opened=8 (2 eyes × 4 ring slots),
+  openFails=0. Residuals noted for S4-4: pose/FOV in the projection layer
+  are still the RUNTIME views (see below), and the host loop runs ~120 Hz
+  while the game runs ~30 Hz — pacing/timewarp quality is S4-5's
+  `EndOfFrameHook` plate. Log-line unit fix post-run: `submit: window`'s
+  rate line now says "eye blits ~N/s, host frames ~N Hz" (the old label
+  said "frames" but counted per-eye blits — 2 per host frame). Implemented:
+  - `src/host/submit.cpp` — fullscreen-triangle blit (vs/ps 4_0 compiled at
+    startup via a dynamic `d3dcompiler_47.dll` load — no link-time import)
+    drawing the newest shared-eye image into the acquired swapchain image,
+    aspect-fit 2560x1440 → e.g. 2016x2240 (letterbox on black) via a viewport
+    rect; alpha forced opaque (the X8R8G8B8 source opens as B8G8R8X8, alpha
+    reads 0xFF — probe-proven). All bound state unbound after the draw.
+    Failure is non-fatal: the loop falls back to the S4-0 test pattern
+    (pulsing in the headset = carrier pipeline not talking / `eye_share=off`).
+  - **sRGB handling** (the 29/91 issue): runtime swapchains are sRGB-typed and
+    `CopyResource` is illegal across UNORM↔sRGB — so the blit passes the
+    sRGB-encoded LDR finals through as RAW bytes via UNORM-CAST views on both
+    ends: SRV `B8G8R8A8_UNORM` on the shared texture (castable from 87/88;
+    added per-entry in `shared_eyes.cpp`) and the swapchain RTV cast to the
+    plain-UNORM sibling (91→87, 29→28 — `create_swapchains` now prefers 91
+    then 29; the old code preferred plain UNORM, which the runtime never
+    offers). The compositor decodes the sRGB swapchain — exactly what
+    display-referred content means — byte passthrough, no double gamma.
+  - `xr_session.cpp frame()`: per eye, newest shared image via the new
+    `seyes::latest()` accessor (reuses the S4-2 open cache + `g_latest[]`
+    seam; does NOT consume the mirror's fresh flag — re-submission at HMD
+    cadence is the point) is blitted into the swapchain; the projection layer
+    still uses the RUNTIME views' pose+FOV (the carrier still renders the
+    static ±IPD/2 pan — the carrier-reported pose lands in S4-4). ~10s
+    `submit: window fresh/reused/pattern` stats line = the acceptance
+    evidence.
+  - Live-run checklist (DONE 2026-10-04, kept for reruns): SteamVR up,
+    `eye_share=on` in the DEPLOYED conf, gameplay. In `mc2vr_host.log`
+    expect: `submit: blit shaders ready`, `openxr: using swapchain format 91`,
+    `submit: window` lines, and the mirror still working alongside.
 - **S4-4 Pose feedback**: slot-5 `PostUpdateHook` (RenderShell vtable claim
   PROVEN 1:1 with frames; re-claim on device-lost if counts stop) reads the
   latest pose from the shared block (lock-free, never blocks the render
@@ -321,10 +368,12 @@ selftested first without the game.
 
 ## Open questions the new agent inherits
 
-- S4-2 residual watch items for S4-3 (live-verified 2026-10-04, but keep an eye
-  out): `ringFull` was 16 in one 10s carrier window during the live run
-  (command-ring backpressure — benign at these rates, but worth a glance if it
-  grows), and the backbuffer MS type is now logged at ring creation.
+- S4-2 residual watch items (live-verified 2026-10-04, but keep an eye
+  out): `ringFull` was 16 in one 10s carrier window during the S4-2 live run
+  (command-ring backpressure — benign at these rates; stayed 0 across the
+  whole S4-3 run), and the backbuffer MS type is now logged at ring creation.
+  S4-3-run note: syncTimeouts=2 total across the whole run (bounded 8 ms
+  event-query flush — benign, logged for the record).
 - `g_RenderQueue2` (2D/overlay) consumption timing vs Present — needed for HUD
   handling; add counters when S4 starts.
 - Shaders without `viewContextData`, shadow-map basis, PS-side mono camera data: see

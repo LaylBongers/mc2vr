@@ -16,6 +16,7 @@
 #include "log.hpp"
 #include "pose.hpp"
 #include "shared_eyes.hpp"
+#include "submit.hpp"
 
 namespace xrs {
 
@@ -49,6 +50,10 @@ struct State {
     bool exiting = false;
     d3d::Device d3d;
     Eye eye[2];
+    // S4-3 submission stats (10s window; the log is the acceptance evidence)
+    uint64_t subLast[2] = {0, 0};  // last submitted carrier frameId per eye
+    uint64_t subFresh = 0, subReused = 0, subPattern = 0;
+    ULONGLONG subNext = 0;
 };
 
 const char* state_name(XrSessionState s) {
@@ -173,16 +178,30 @@ bool create_swapchains(State& s) {
     XR_TRY(xrEnumerateSwapchainFormats(s.session, 0, &nf, nullptr));
     std::vector<int64_t> fmts(nf);
     XR_TRY(xrEnumerateSwapchainFormats(s.session, nf, &nf, fmts.data()));
-    // The LDR finals are display-referred sRGB-encoded content, so a
-    // non-sRGB-converting format keeps them bit-exact; prefer UNORM, fall
-    // back to the runtime's first choice. S4-3 revisits this against real images.
+    // S4-3: the runtime offers sRGB-ONLY 8-bit formats (29/91, live-verified
+    // S4-0 — no plain UNORM). The shared LDR finals are display-referred
+    // sRGB-encoded bytes; the submit path renders them through UNORM-cast
+    // views (SRV on the shared texture, RTV cast below) so the bytes pass
+    // through untouched and the compositor decodes the sRGB swapchain — no
+    // double gamma. Prefer the BGRA layout to match the source channels.
     int64_t chosen = fmts.empty() ? 0 : fmts[0];
     for (int64_t f : fmts) {
         hostlog::write("openxr: swapchain format %lld", (long long)f);
-        if (f == DXGI_FORMAT_R8G8B8A8_UNORM || (chosen != DXGI_FORMAT_R8G8B8A8_UNORM && f == DXGI_FORMAT_B8G8R8A8_UNORM))
+        if (f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
+            chosen = f;
+        else if (f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB &&
+                 chosen != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
             chosen = f;
     }
     hostlog::write("openxr: using swapchain format %lld", (long long)chosen);
+    // The blit writes raw bytes, so the RTV must NOT be the sRGB-typed one
+    // (that would re-encode on write). Cast to the plain-UNORM sibling.
+    DXGI_FORMAT rtvFmt = (chosen == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
+                             ? DXGI_FORMAT_B8G8R8A8_UNORM
+                         : (chosen == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+                             ? DXGI_FORMAT_R8G8B8A8_UNORM
+                             : (DXGI_FORMAT)chosen;
+    hostlog::write("openxr: swapchain RTV cast format %u", (unsigned)rtvFmt);
 
     for (int e = 0; e < 2; ++e) {
         Eye& ey = s.eye[e];
@@ -206,7 +225,7 @@ bool create_swapchains(State& s) {
         for (auto& img : ey.images) {
             ID3D11RenderTargetView* rtv = nullptr;
             D3D11_RENDER_TARGET_VIEW_DESC rd = {};
-            rd.Format = (DXGI_FORMAT)chosen;
+            rd.Format = rtvFmt;
             rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
             if (FAILED(s.d3d.dev->CreateRenderTargetView(img.texture, &rd, &rtv))) {
                 hostlog::write("openxr: RTV creation failed (eye %d)", e);
@@ -310,7 +329,23 @@ bool frame(State& s, unsigned n) {
             XrSwapchainImageWaitInfo wi = {XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wi.timeout = XR_INFINITE_DURATION;
             XR_TRY(xrWaitSwapchainImage(ey.swapchain, &wi));
-            eyes::draw_pattern(s.d3d.ctx, ey.rtvs[idx], e, n);
+            // S4-3: submit the carrier's shared image when we have one; the
+            // test pattern stays as the pre-carrier / eye_share=off fallback
+            // (pulsing in the headset = carrier pipeline not talking).
+            seyes::LatestImage img;
+            if (sub::ready() && seyes::latest(e, img)) {
+                sub::draw(s.d3d.ctx, img.srv, ey.rtvs[idx], img.w, img.h, ey.w,
+                          ey.h);
+                if (img.frameId != s.subLast[e]) {
+                    s.subLast[e] = img.frameId;
+                    s.subFresh++;
+                } else {
+                    s.subReused++;  // game ~30 Hz < HMD cadence: re-submit newest
+                }
+            } else {
+                eyes::draw_pattern(s.d3d.ctx, ey.rtvs[idx], e, n);
+                s.subPattern++;
+            }
             XR_TRY(xrReleaseSwapchainImage(ey.swapchain, nullptr));
 
             pv[e].pose = views[e].pose;
@@ -318,10 +353,31 @@ bool frame(State& s, unsigned n) {
             pv[e].subImage.swapchain = ey.swapchain;
             pv[e].subImage.imageRect = {{0, 0}, {(int32_t)ey.w, (int32_t)ey.h}};
         }
+        // NOTE: pose/fov below are the RUNTIME's views, not what the carrier
+        // rendered with (it still draws the static +/-IPD/2 pan). The
+        // carrier-reported pose replaces them in S4-4; until then the
+        // compositor reprojects a nominally-head-locked image.
         layer.space = s.space;
         layer.viewCount = 2;
         layer.views = pv;
         layerCount = 1;
+
+        // ~10s submission window (diagnostic; S4-3 acceptance evidence).
+        const ULONGLONG now = GetTickCount64();
+        if (s.subNext == 0) {
+            s.subNext = now + 10000;
+        } else if (now > s.subNext) {
+            s.subNext = now + 10000;
+            // fresh/reused/pattern count per-EYE blits (2 per host frame).
+            hostlog::write("submit: window fresh=%llu reused=%llu pattern=%llu "
+                           "(eye blits ~%.0f/s, host frames ~%.0f Hz)",
+                           (unsigned long long)s.subFresh,
+                           (unsigned long long)s.subReused,
+                           (unsigned long long)s.subPattern,
+                           (s.subFresh + s.subReused + s.subPattern) / 10.0,
+                           (s.subFresh + s.subReused + s.subPattern) / 20.0);
+            s.subFresh = s.subReused = s.subPattern = 0;
+        }
     }
 
     XrFrameEndInfo ei = {XR_TYPE_FRAME_END_INFO};
@@ -365,6 +421,11 @@ int run(const Options& opt) {
         return 1;
     }
     hostlog::write("mc2vr_host: ready (openxr session up)");
+
+    // S4-3: blit shaders for the shared-eye submission (non-fatal — on
+    // failure the loop keeps submitting the S4-0 test pattern, which is
+    // itself the diagnostic).
+    sub::init(s.d3d.dev);
 
     // S4-2: shared-eye mirror (diagnostic window; independent of OpenXR —
     // its failure changes nothing).
