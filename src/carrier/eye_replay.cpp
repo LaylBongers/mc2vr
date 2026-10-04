@@ -13,6 +13,8 @@
 #include "log.hpp"
 #include "view_rewrite.hpp"
 #include "device.hpp"
+#include "hmd_submit.hpp"
+
 
 namespace mc2vr::eye {
 
@@ -577,6 +579,13 @@ void set_pass(uint32_t pass)
         }
     }
 
+    // S4-2: capture the per-eye LDR finals for the compositor. At 1->2 the
+    // backbuffer holds pass 1's LEFT composite; the S4-2 blit is order-
+    // independent here (the pin save does not modify the backbuffer).
+    if (g_pass == 1 && pass == 2) {
+        submit::on_boundary(g_device, 1, 2, backbuffer());
+    }
+
     // Pass boundaries: pass 1 -> 2 = pass 1 finished (dump left = main RT);
     // pass 2 -> 0 = pass 2 finished (dump right = eye RT). A pair counts
     // only when BOTH sides are non-empty (empty = black loading/video frame:
@@ -593,6 +602,13 @@ void set_pass(uint32_t pass)
             }
         }
         left_pending = false;
+    }
+
+    // S4-2: at 2->0 the backbuffer holds pass 2's RIGHT composite — capture
+    // it BEFORE the pin restore overwrites the backbuffer, then submit the
+    // L/R pair to the compositor.
+    if (g_pass == 2 && pass == 0) {
+        submit::on_boundary(g_device, 2, 0, backbuffer());
     }
 
     if (g_pin_enabled && g_pass == 2 && pass == 0 && g_snap_rt && backbuffer()) {
@@ -628,6 +644,7 @@ void on_reset()
     }
     g_main_rt = nullptr;
     g_main_desc = {};
+    submit::on_reset(); // S4-2: drop the capture textures while they exist
     MC2VR_LOG("eye: Reset — eye/snapshot RT dropped, main RT recording cleared");
 }
 

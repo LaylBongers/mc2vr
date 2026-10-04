@@ -133,6 +133,8 @@ viewContextData VP rows; gate = RT0 backbuffer-sized, main pass only) ·
 pairs after `stream_dump_delay` s; fp16 decoded + Reinhard-tonemapped;
 analysis: `tools/analyze_dumps.py`, fixture: `tools/eye_pair_fixture.py`) ·
 `stream_capture` (+ `stream_dump_frames`/`stream_dump_delay`) · `openvr` ·
+  `openvr_submit` (**off in code** — S4-2 capture+Submit, requires
+  `openvr=on`; see §S4 list item 2 for the error-decision table) ·
 `openvr_init_registry` (**off** — live-proven poison, run 5; the err-105 fix
 is now the carrier-time registry window instead) ·
 `stub_trace` · `vm_dump`. Defaults off in code; conf template `conf/mc2vr.conf`. The
@@ -314,18 +316,228 @@ edit it there manually.
      (iii) pose matrix row 0 garbage (rows 1-2 sane, valid=1) on the one
      sample — the lighthouse log showed "IMU went off scale" churn all day;
      re-sample settled (S4-3 polls continuously anyway and will validate).
-   **S4-2 REMINDER — the thiscall ABI applies to the IVRCompositor FnTable
-   too**: entries are ECX-preset thunks; call Submit / PostPresentHandoff /
-   GetVulkan* / SetSkyboxOverride etc. WITHOUT self (the probe's slot-39
-   call is already fixed). Wrong-ABI calls don't just fail — they can
-   watchdog-abort vrserver (live-proven). Re-verify the served
-   IVRCompositor_022 layout against the builtin's
-   create_winIVRCompositor_IVRCompositor_022_FnTable before wiring Submit.
-2. **Per-eye LDR capture**: carrier D3D9 textures (DEFAULT pool, shared
-   handles if the interop needs them), filled at the pass boundaries from
-   the backbuffer (see the design observation above), or submit the fp16 RTs
-   if the interop supports them (unlikely to look right — they are
-   pre-tonemap; verify on the monitor first).
+   **S4-2 layout verification DONE (2026-10-04, agent session): the served
+   IVRCompositor_022 FnTable = 46 slots** — RE of the builtin vrclient.dll
+   create_winIVRCompositor_IVRCompositor_022_FnTable (create-table entry at
+   0x101f24d8 → builder 0x1000e8c0, thunk array 0x2e0 bytes = 46×16) confirmed
+   the method order matches the pinned 1.16.8 header class for slots 0–45
+   (SetStageOverride_Async … GetPosesForFrame are 024+ additions, NOT served —
+   never touch slot 46+). Submit=5, PostPresentHandoff=7,
+   GetVulkanInstanceExtensionsRequired=39, GetVulkanDeviceExtensionsRequired=40;
+   same ECX-preset thiscall thunks as IVRSystem — call WITHOUT self. The
+   hand-rolled OpenVR POD types were replaced with the vendored header itself
+   (`src/carrier/openvr_fntables.hpp` includes `vendor/openvr/openvr_1.16.8.h`
+   — the ONLY vendored header now; the SDK 2.15 `openvr.h` (026/029 layouts,
+   not served) was deleted 2026-10-04). FnTable structs stay hand-defined
+   because the 1.16.8 header predates the SDK's FnTable section; every used
+   slot is locked with static_asserts.
+2. **Per-eye LDR capture — IMPLEMENTED 2026-10-04 (S4-2, pending live run):
+   `src/carrier/hmd_submit.cpp` (conf `openvr_submit=on`, default off;
+   requires `openvr=on`; deployed conf is manual-edit).** At the 1→2 boundary
+   the backbuffer (pass-1's final LEFT composite) is blitted into carrier
+   texture L; at the 2→0 boundary the backbuffer (pass-2's final RIGHT
+   composite) is captured BEFORE the monitor-pin restore, then
+   `Submit(Eye_Left)` + `Submit(Eye_Right)` (TextureType_DirectX,
+   ColorSpace_Gamma, DEFAULT-pool RT-usage textures created from the
+   backbuffer's own desc) + `PostPresentHandoff` — all on the render thread
+   via eye::set_pass. No WaitGetPoses in v1 (it would re-pace the 30 fps
+   loop onto the 120 Hz HMD cadence; add it only if the run shows
+   AlreadySubmitted). Fail-soft every step; every DISTINCT Submit error is
+   logged once per state change, the 10s window reports captures/submits/
+   skips. **RUN 7 (2026-10-04, first live run): CRASHED ~20 ms after the
+   first submit pair — root-cause isolated by log timing.** The pair ran
+   during the opening credits at frame ~7: both eyes returned **101
+   DoNotHaveFocus** (clean IPC round-trips, 6-8 ms each — the compositor
+   throttles unfocused submits to 10 Hz; no watchdog abort this time, the
+   crash was IN-PROCESS). The very next call in the sequence was
+   **PostPresentHandoff — the only never-before-exercised call, never
+   logged, and documented to "access the Vulkan queue"** — invoked mid-
+     frame (inside the game's SubmitToGPU) with DXVK's boot-time interop
+     deliberately disarmed. Captures were fine (the pin-proven StretchRect
+   mechanism, one L + one R blit completed). Fix shipped for run 8:
+   PostPresentHandoff REMOVED (it is optional per openvr.h — only needed
+   when the app can't call WaitGetPoses right after Present, which we
+   don't call yet; revisit only together with the WaitGetPoses/pacing
+   design), and failed submit pairs now back off to one attempt per 0.5 s
+   (a 101 pair costs ~14 ms of the 16 ms frame budget in IPC; a successful
+   pair resumes full rate). **101 DoNotHaveFocus is expected during boot
+   (dashboard/other app holds compositor focus) and is NOT by itself a
+   failure — the questions for run 8 are: (1) does the game survive to
+   gameplay, (2) does focus ever arrive (log shows it as a LEFT/RIGHT
+   Submit -> 0 transition), (3) if it stays 101 forever, the focus
+   investigation moves to the SteamVR side (scene-focus assignment for
+   system.generated.wine-preloader, dashboard holding focus).** If the
+   crash recurs at the same point WITHOUT PostPresentHandoff, the 101-path
+   Submit wrapper itself is the suspect and the next step is gating submits
+   until focus exists.
+   **RUN 8 (PostPresentHandoff removed): CRASHED AGAIN — deeper root cause
+   now isolated. The log ends AT the first Submit enter-log (frame ~3): the
+   `LEFT Submit -> ...` result line never appeared, and vrserver saw the
+   process disconnect ~30 ms later (in-process death, no malformed IPC).
+   Difference from run 7: focus arrived immediately this time, so Submit
+   got PAST the early DoNotHaveFocus check — into the D3D9→Vulkan texture
+   conversion, which only exists if DXVK's OpenVR interop was armed AT
+   DEVICE CREATION (game boot, before the carrier exists). CONCLUSION:
+   design option (b) — runtime-interop Submit with the boot interop
+   disarmed — is DEAD, live-proven twice (run 7 died at the first queue-
+   touching call after the unfocused pair; run 8 at the first focused
+   Submit). Shipped for run 9 = option (c): conf `openvr_boot_interop=on`
+   (default off) — the LAUNCHER (not the carrier — too late) writes the
+   three `HKCU\Software\Wine\VR` values BEFORE CreateProcessW so DXVK's
+   d3d9 arms its boot interop at device creation (the intended Valve path
+   for 32-bit D3D9 VR apps under Proton). RUN-6A DISCIPLINE applies:
+   SteamVR must be FULLY UP and stable before launching with it on, or the
+   game can hang pre-main-loop (run 6a). The carrier's attach-time registry
+   window stays as-is (serves vrclient; deleting the key post-init2 is
+   harmless — the device is already armed, and the launcher re-arms next
+   boot). Expected run 9 signatures: launcher line `openvr: boot-time DXVK
+   interop ARMED`, then submits returning 0 (or 101 until focus, then 0).
+   If it STILL crashes with the interop armed, the next suspects are the
+   mid-frame submit call site (move Submit to the Present hook, engineering
+   list item 4) and the texture-format assumption (X8R8G8B8 RT textures).
+   **RUN 9 (boot interop armed): GAME DIED IN EARLY BOOT — RUN-6A
+   SIGNATURE REPRODUCED ON PURPOSE, and the missing variable is now
+   clear: SteamVR STABILITY.** Launcher: interop ARMED (disp=1, ok) →
+   game started → `boot marker never ticked twice (rc=5)` ~200 ms later —
+   rc=5 = ReadProcessMemory access denied = the process was ALREADY DEAD,
+   carrier never attached (carrier log still run 8's). vrserver shows the
+   launch window INSIDE an HMD wake transition: `16:58:38 leaving standby`
+   → launch `16:58:44.7` → `16:58:53 entering standby`; no wine-preloader
+   connection ever reached vrserver — DXVK's interop path died at boot
+   before/during its connect, mid-transition. CONCLUSION: armed+transition
+   = guaranteed early boot death (runs 6a, 9); armed+quiescent = the one
+   UNTESTED cell = run 10. Fix shipped: human timing is not reliable
+   enough (the HMD wakes/sleeps on its own), so launch.sh now GATES the
+   launch when `openvr_boot_interop=on`: parses vrserver.txt's standby
+   lines, requires the HMD AWAKE (last line "leaving standby") with no
+   transition for ≥8 s, polls up to 120 s with wake-the-HMD hints, and
+   ABORTS instead of launching into the known-crash state. Gate verified
+   against the real log (correctly reports standby). For run 10: SteamVR
+   up, HMD ON/worn (so it stays awake), `./launch.sh` — the gate holds
+   until stable. If run 10 STILL dies in early boot with the gate
+   satisfies, option (c) is dead too for this game → plan B territory:
+   OpenXR + D3D11 + sysmem round-trip (docs/s4_handover.md §S4), or RE of
+   DXVK's interop-arm crash path.
+   **RUN 10 (gate satisfied): STILL DIED IN EARLY BOOT — OPTION (c) DEAD,
+   THE D3D9-IN-PROCESS-OPENVR TEXTURE PATH IS CLOSED (runs 7-10).** Gate
+   passed (vrserver: HMD awake since 17:03:12, launch 17:03:22 — 10 s
+   quiet, no transitions; launcher disp=2, ARMED), yet the game died ~200
+   ms in (rc=5, carrier never attached, no SteamVR connection ever
+   reached). Even quiescent, the armed DXVK d3d9 interop kills this game
+   before the main loop — the failure is in the armed path itself, not
+   timing. VERDICT: every cell is covered — unarmed Submit crashes in the
+   D3D9→Vulkan conversion (runs 7/8), armed interop kills early boot
+   (runs 9/10, gated or not). ROOT CAUSE across all of S4-2's failures:
+   forcing the game's own D3D9 device to interoperate with SteamVR via
+   Vulkan external-memory sharing, in-process, under Proton. The fix is
+   architectural: SEVER the game's D3D9 device from VR entirely — capture
+   to sysmem (proven: dump_surface) and let something else own the VR
+   session. Candidate architectures (decision pending, 2026-10-04):
+     (A) in-process OpenXR: 32-bit wineopenxr + carrier D3D11 device + sysmem
+         upload into an OpenXR swapchain. Unknown: does SteamVR's OpenXR
+         runtime serve 32-bit clients (32-bit+D3D11 never tested; the
+         wineopenxr64.json registration is broken and must be repaired
+         first). All in-process wine-VR coupling remains, just on a
+         different API.
+     (B) OpenVR + own Vulkan device: keep the PROVEN S4-1 bridge, create a
+         carrier-owned Vulkan instance/device, upload from sysmem, submit
+         TextureType_Vulkan (VRVulkanTextureData_t). Severs D3D9 from VR,
+         but hand-rolls the Vulkan external-memory sharing — the fragile
+         kind of code this whole saga warns about.
+     (C) out-of-process relay: a 64-bit NATIVE LINUX helper owns the VR
+         session (native OpenXR or openvr_api.so, 64-bit — the
+         best-supported SteamVR client class on Linux); the 32-bit carrier
+         captures the eye pair to a POSIX shared-memory ring buffer and
+         the helper uploads to its own textures and submits at HMD cadence
+         (independently of the game's 30 fps — big pacing win). HMD pose
+         flows back through the same shm for S4-3/S5. No wine-VR coupling
+         at all; every piece (capture, shm, pose) is individually simple.
+         Cost: a second process + shm protocol (launch.sh spawns it).
+   Deployed conf reverted to bootable: openvr_submit=off,
+   openvr_boot_interop=off (both are live-proven game-killers as of
+   2026-10-04). The S4-1 bridge (openvr=on) stays — it is proven safe and
+   remains the diagnostics/facts channel.
+   **PREFIX MIGRATION (2026-10-04 evening): the old prefix was GE-Proton-
+   created (GE-Proton11-7 in compatibilitytools.d) while launch.conf runs
+   Proton Experimental — every run was Experimental wine/DXVK against a
+   GE-stamped prefix that Proton kept half-upgrading (openxr manifests
+   appearing mid-run, registry writes not persisting). NEW CLEAN PREFIX at
+   `/home/laylb/Games/mercenaries-2-clean` (launch.conf updated; game +
+   saves copied at the SAME C:\ paths; the game needs NO registry transplant
+   — its EA Games/SecuROM keys are EMPTY sections, the game is registry-
+   independent). Old prefix kept untouched as fallback (revert launch.conf
+   to switch back). Clean-prefix first-run facts: Proton 11.0-100 prefix,
+   SteamVR-up setup installed C:\vrclient, syswow64 openvr_api_dxvk.dll +
+   wineopenxr.dll, C:\openxr\wineopenxr64.json, and BOTH Khronos registry
+   views — which is Proton's OWN behavior on a clean prefix.**
+   **OPTION A (in-process 32-bit OpenXR) VERDICT: DEAD — structurally
+   impossible on this machine, proven from three directions (2026-10-04):**
+     1. The native OpenXR runtime is SteamVR's `bin/linux64/vrclient.so`
+        (per ~/.config/openxr/1/active_runtime.json) — 64-BIT ONLY;
+        SteamVR ships no linux32 directory and NO 32-bit OpenXR runtime
+        library exists anywhere on the machine (find: only 32-bit
+        LOADERS under Proton dirs, never a runtime).
+     2. wineopenxr is a LOADER PROXY (objdump NEEDED: libopenxr_loader,
+        ntdll), not an OpenVR bridge — the 32-bit chain
+        (syswow64 wineopenxr.dll → i386 wineopenxr.so → 32-bit loader)
+        terminates at a 64-bit-only runtime .so.
+     3. Proton's own setup only registers the 64-bit manifest on a clean
+        prefix (both ActiveRuntime views → wineopenxr64.json).
+   Bonus fact: SteamVR's OpenXR "runtime" IS vrclient.so — OpenXR is
+   bridged to the same OpenVR IPC our S4-1 bridge already speaks. OpenXR
+   in-process would have bought nothing but a different API surface.
+   REMAINING PATHS: (C) out-of-process 64-bit helper (native OpenXR via
+   vrenv.sh, or 64-bit wine OpenVR — both SteamVR-supported 64-bit client
+   classes) + shm frame relay from the 32-bit carrier; (B) OpenVR in-
+   process + TextureType_Vulkan with a carrier-owned Vulkan device +
+   sysmem upload. C recommended.
+   **DECISION (2026-10-04 evening): option C, with SHARED HANDLES instead of
+   sysmem — probe-verified viable.** The design: the carrier creates its two
+   capture textures as D3D9Ex SHARED textures (CreateTexture pSharedHandle;
+   RT usage, DEFAULT pool — the same StretchRect capture path hmd_submit
+   already uses, plus an event-query GPU sync before publishing each frame —
+   probe-proven REQUIRED: without the sync the reader raced the queued
+   StretchRect and saw zeros), and publishes just the HANDLE VALUES + frame
+   index over a small POSIX shm control block. A 64-bit wine HELPER in the
+   same prefix (first-class DXVK D3D11 + openvr_api_dxvk x64 app — the
+   SteamVR-supported class; run-6a landmine does not apply, the game process
+   is never at stake) opens them via OpenSharedResource, owns the OpenVR
+   session, and submits at HMD cadence with fresh poses. HMD pose flows back
+   through the same shm for S4-3. The game process does ZERO VR work — it
+   stays in the proven-clean run-6b state permanently.
+   PROBE A RESULT (tools/vr_share_probe/, 2026-10-04, clean prefix):
+   **PASS** — writer32 (i686 d3d9ex, shared RT texture, Clear+StretchRect
+   fill, event-query sync, self-check readback) → reader64 (x64 d3d11,
+   OpenSharedResource, staging readback): 512/512 samples verified,
+   cross-process AND cross-bitness, same prefix. The fill mechanism is the
+   exact carrier capture shape. (Note: probe A initially FAILED all-zeros;
+   root cause was the missing GPU sync, NOT the sharing — the writer
+   self-check + sync fixed it. Any carrier capture-to-shared-texture code
+   MUST issue the event-query flush before publishing each frame.)
+   PROBE B (tools/vr_helper_probe/, PENDING USER RUN): the helper core —
+   64-bit D3D11 + OpenVR x64 textbook loop (WaitGetPoses → Submit L/R →
+   PostPresentHandoff), red-tinted LEFT / cyan-tinted RIGHT checkerboard in
+   the HMD for 15 s. SteamVR up + HMD on; run tools/vr_helper_probe/run.sh.
+   If probe B passes, the relay build-out order: (1) helper binary
+   (session + OpenSharedResource + submit loop + pose publisher),
+   (2) carrier: switch hmd_submit's textures to shared handles + query sync
+   + shm handle publisher (pose consumer comes with S4-3), (3) launch.sh
+   spawns the helper, (4) live run.
+   Error → next step (updated for run 8):
+     - `0 None` — image in the HMD, S4-2 core done (pacing/S4-3 next).
+     - `106 SharedTexturesNotSupported` / `105 TextureUsesUnsupportedFormat`
+       / `1 RequestFailed` — the D3D9 texture path needs DXVK's interop:
+       go design (c), re-arm `openvr_vulkan_instance_extensions` behind a
+       SteamVR-stability gate at the next boot (run-6a knowledge applies).
+     - `108 AlreadySubmitted` — the runtime wants WaitGetPoses per frame:
+       add it at the 2→0 boundary and measure the pacing cost.
+     - `101 DoNotHaveFocus` / `103 IsNotSceneApplication` — session-level
+       (focus stolen or Scene init lost); investigate vrserver state.
+   Original design options kept for reference: carrier D3D9 textures
+   (DEFAULT pool, shared handles if the interop needs them), filled at the
+   pass boundaries from the backbuffer (see the design observation above),
+   or submit the fp16 RTs if the interop supports them (unlikely to look
+   right — they are pre-tonemap; verify on the monitor first).
 3. **Pose feedback**: slot-5 `PostUpdateHook` (RenderShell vtable claim
    PROVEN 1:1 with frames; re-claim on device-lost if counts stop — see
    launcher_plan hook table) samples

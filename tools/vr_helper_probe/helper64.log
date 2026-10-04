@@ -1,0 +1,3 @@
+=== helper64 probe starting (64-bit wine VR app) ===
+VR registry values written (disp=2, ok) — DXVK d3d11 interop will arm at device creation
+FATAL: D3D11CreateDevice hr=80004005 — is SteamVR up? (armed interop connects at device creation)

@@ -9,6 +9,7 @@
 #include "hooks.hpp"
 #include "log.hpp"
 #include "openvr_bridge.hpp"
+#include "hmd_submit.hpp"
 #include "probes.hpp"
 #include "render_dump.hpp"
 #include "stream_capture.hpp"
@@ -94,6 +95,13 @@ static void load_conf()
             // S4-1: OpenVR/SteamVR bridge bootstrap (openvr_bridge.cpp).
             if (!ovr::set_enabled(value)) {
                 MC2VR_LOG("conf: openvr=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "openvr_submit") == 0) {
+            // S4-2: per-eye LDR capture at the pass boundaries +
+            // IVRCompositor::Submit (hmd_submit.cpp). Requires openvr=on
+            // (the compositor FnTable comes from the bridge bootstrap).
+            if (!submit::set_enabled(value)) {
+                MC2VR_LOG("conf: openvr_submit=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "openvr_init_registry") == 0) {
             // S4-1 run 5: in-game vrclient_init_registry DEADLOCKED the game

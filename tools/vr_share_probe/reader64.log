@@ -1,0 +1,6 @@
+handle from writer32: 0000000040000002
+D3D11 device created (64-bit DXVK)
+OpenSharedResource hr=00000000 tex=0000000000fef910
+opened texture: 1024x1024 fmt=87
+verified 512 samples, 0 mismatches
+RESULT: PASS — 32-bit D3D9 shared texture opened and verified from 64-bit D3D11; the shared-handle relay design is viable

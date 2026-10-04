@@ -1,14 +1,15 @@
-// S4-1: OpenVR bridge. See openvr_bridge.hpp for the mission. Layout facts in
-// this file come from Valve's openvr.h (SDK 2.15, IVRSystem_026) — the vtable
-// order of the FnTable fields must match the interface version requested;
-// VR_IsInterfaceVersionValid is checked first and the FnTable is only used if
-// the runtime serves exactly IVRSystem_026.
+// S4-1/S4-2: OpenVR bridge. See openvr_bridge.hpp for the mission. All enums,
+// POD types and FnTable layouts come from the VENDORED PINNED header —
+// vendor/openvr/openvr_1.16.8.h — via openvr_fntables.hpp. The FnTable field
+// order must match the interface version the runtime serves (IVRSystem_022 /
+// IVRCompositor_022 here); VR_IsInterfaceVersionValid is checked first and a
+// FnTable is only used when the runtime serves exactly the pinned version.
 //
 // MinGW g++ cannot call MSVC thiscall vtables on i386, so this module uses the
-// official `FnTable:` C bindings: VR_GetGenericInterface("FnTable:IVRSystem_026")
-// returns a struct of plain __cdecl function pointers taking the interface
-// object as the first argument. Stage 1 deliberately calls only functions with
-// no struct-by-value returns (i386 sret ABI left untested for now).
+// official `FnTable:` C bindings: VR_GetGenericInterface("FnTable:...") returns
+// a struct of plain function pointers. NOTE the entries are ECX-preset
+// THISCALL thunks — call WITHOUT self (openvr_fntables.hpp has the ABI notes
+// and the live-proven consequences of getting this wrong).
 
 #include "openvr_bridge.hpp"
 
@@ -22,51 +23,8 @@
 namespace mc2vr::ovr {
 
 // ---------------------------------------------------------------------------
-// Minimal OpenVR POD types (openvr.h, pack(8) — no 8-byte members here, so the
-// i386 default packing produces the identical layout).
-// ---------------------------------------------------------------------------
-
-enum EVRInitError {
-    VRInitError_None = 0,
-};
-enum EVRApplicationType {
-    VRApplication_Scene = 1,
-};
-enum EVREye { Eye_Left = 0, Eye_Right = 1 };
-enum ETrackingUniverseOrigin { TrackingUniverseStanding = 1 };
-enum ETrackedDeviceClass {
-    TrackedDeviceClass_Invalid = 0,
-    TrackedDeviceClass_HMD = 1,
-};
-enum ETrackedPropertyError { TrackedProp_Success = 0 };
-enum ETrackingResult { TrackingResult_Running_OK = 200 };
-
-// General/HMD string+float properties (openvr.h ETrackedDeviceProperty).
-enum ETrackedDeviceProperty {
-    Prop_ModelNumber_String = 1001,
-    Prop_SerialNumber_String = 1002,
-    Prop_ManufacturerName_String = 1005,
-    Prop_DisplayFrequency_Float = 2002,
-    Prop_UserIpdMeters_Float = 2003,
-};
-
-struct HmdMatrix34_t {
-    float m[3][4];
-};
-struct HmdVector3_t {
-    float v[3];
-};
-struct TrackedDevicePose_t {
-    HmdMatrix34_t mDeviceToAbsoluteTracking;
-    HmdVector3_t vVelocity;
-    HmdVector3_t vAngularVelocity;
-    ETrackingResult eTrackingResult;
-    bool bPoseIsValid;
-    bool bDeviceIsConnected;
-};
-
-// ---------------------------------------------------------------------------
-// DLL exports (openvr_api_dxvk.dll, extern "C" __cdecl).
+// DLL exports (openvr_api_dxvk.dll, extern "C" __cdecl). The vr:: enum names
+// below all come from the vendored header.
 // ---------------------------------------------------------------------------
 
 typedef bool(__cdecl *VR_IsHmdPresent_t)();
@@ -80,88 +38,6 @@ typedef void *(__cdecl *VR_GetGenericInterface_t)(const char *version,
                                                   int32_t *error);
 typedef const char *(__cdecl *VR_GetVRInitErrorAsEnglishDescription_t)(
     int32_t error);
-
-// ---------------------------------------------------------------------------
-// IVRSystem_022 FnTable — fields in exact openvr.h (SDK 1.16.8) virtual-method
-// order. Layout source: vendor/openvr/openvr_1.16.8.h — PINNED, not master:// the 20261001 Proton vrclient's served IVRSystem_026 FnTable empirically does
-// NOT match the SDK 2.15 public header (2026-10-04: slot-28 string-property call
-// crashed the probe), while the pinned 1.16.8 IVRCompositor_022 layout worked
-// 1:1 under the same runtime. The runtime serves 022 on every client observed.
-// Unused slots are kept as void* so the used slots sit at the right indices;
-// the static_asserts below lock the ones we rely on.
-
-// ABI NOTE (2026-10-04 live-proven): the FnTable entries Proton serves are
-// THISCALL thunks that load the IVRSystem object into ECX THEMSELVES (built
-// in create_winIVRSystem_IVRSystem_022_FnTable: "mov ecx, obj; mov edx,
-// wrapper; jmp edx"). The first STACK argument is the method's first
-// parameter — NOT self. Passing an explicit self shifts every argument one
-// slot: run 5's "device 0 is not the HMD" was the class query reading the
-// table pointer as the device index, the string query then fed a NULL
-// buffer pointer into the server, and the probe's RT-size query printed the
-// real HEIGHT in *w (2240) with *h never written (0) while the real width
-// was scribbled over the table object. Call these WITHOUT self.
-struct VRSystem_FnTable_022 {
-    void (*GetRecommendedRenderTargetSize)(uint32_t *w, uint32_t *h);             // 0
-    void *GetProjectionMatrix;                                                    // 1
-    void (*GetProjectionRaw)(EVREye eye, float *left, float *right,
-                             float *top, float *bottom);                          // 2
-    void *ComputeDistortion;                                                      // 3
-    void *GetEyeToHeadTransform;                                                  // 4 (struct return — S4-3)
-    void *GetTimeSinceLastVsync;                                                  // 5
-    int32_t (*GetD3D9AdapterIndex)();                                             // 6
-    void *GetDXGIOutputInfo;                                                     // 7
-    void *GetOutputDevice;                                                        // 8
-    void *IsDisplayOnDesktop;                                                     // 9
-    void *SetDisplayVisibility;                                                   // 10
-    void (*GetDeviceToAbsoluteTrackingPose)(ETrackingUniverseOrigin origin,
-                                            float predicted_seconds,
-                                            TrackedDevicePose_t *poses,
-                                            uint32_t count);                      // 11
-    void *GetSeatedZeroPoseToStandingAbsoluteTrackingPose;                       // 12
-    void *GetRawZeroPoseToStandingAbsoluteTrackingPose;                           // 13
-    void *GetSortedTrackedDeviceIndicesOfClass;                                   // 14
-    void *GetTrackedDeviceActivityLevel;                                         // 15
-    void *ApplyTransform;                                                         // 16
-    void *GetTrackedDeviceIndexForControllerRole;                                 // 17
-    void *GetControllerRoleForTrackedDeviceIndex;                                 // 18
-    int32_t (*GetTrackedDeviceClass)(uint32_t index);                              // 19
-    void *IsTrackedDeviceConnected;                                              // 20
-    void *GetBoolTrackedDeviceProperty;                                          // 21
-    float (*GetFloatTrackedDeviceProperty)(uint32_t index,
-                                           int32_t prop, int32_t *error);         // 22
-    int32_t (*GetInt32TrackedDeviceProperty)(uint32_t index,
-                                             int32_t prop, int32_t *error);       // 23
-    void *GetUint64TrackedDeviceProperty;                                        // 24
-    void *GetMatrix34TrackedDeviceProperty;                                      // 25
-    void *GetArrayTrackedDeviceProperty;                                          // 26
-    uint32_t (*GetStringTrackedDeviceProperty)(uint32_t index,
-                                               int32_t prop, char *value,
-                                               uint32_t size,
-                                               int32_t *error);                   // 27
-};
-
-static_assert(__builtin_offsetof(VRSystem_FnTable_022, GetProjectionRaw) ==
-              2 * sizeof(void *), "IVRSystem_022 slot 2 (GetProjectionRaw)");
-static_assert(__builtin_offsetof(VRSystem_FnTable_022, GetD3D9AdapterIndex) ==
-              6 * sizeof(void *), "IVRSystem_022 slot 6 (GetD3D9AdapterIndex)");
-static_assert(__builtin_offsetof(VRSystem_FnTable_022,
-                                 GetDeviceToAbsoluteTrackingPose) ==
-              11 * sizeof(void *),
-              "IVRSystem_022 slot 11 (GetDeviceToAbsoluteTrackingPose)");
-static_assert(__builtin_offsetof(VRSystem_FnTable_022,
-                                 GetStringTrackedDeviceProperty) ==
-              27 * sizeof(void *),
-              "IVRSystem_022 slot 27 (GetStringTrackedDeviceProperty)");
-
-// FnTable version strings we request; the layout above matches exactly _022.
-static const char *kIVRSystem_Version = "IVRSystem_022";
-
-// Probe list — logged so a mismatch tells us which header to pull next.
-static const char *kProbeVersions[] = {
-    "IVRSystem_026", "IVRSystem_025", "IVRSystem_024", "IVRSystem_023",
-    "IVRSystem_022", "IVRCompositor_029", "IVRCompositor_028",
-    "IVRCompositor_027", "IVRCompositor_026", "IVRCompositor_022",
-};
 
 // ---------------------------------------------------------------------------
 // State
@@ -182,6 +58,14 @@ static VR_GetVRInitErrorAsEnglishDescription_t
     p_VR_GetVRInitErrorAsEnglishDescription;
 
 static VRSystem_FnTable_022 *g_system = nullptr;
+static VRCompositor_FnTable_022 *g_compositor = nullptr;
+
+// Probe list — logged so a mismatch tells us which header to pull next.
+static const char *kProbeVersions[] = {
+    "IVRSystem_026", "IVRSystem_025", "IVRSystem_024", "IVRSystem_023",
+    "IVRSystem_022", "IVRCompositor_029", "IVRCompositor_028",
+    "IVRCompositor_027", "IVRCompositor_026", "IVRCompositor_022",
+};
 
 // The err-105 fix (RE-proven in load_vrclient): vrclient requires
 // HKCU\Software\Wine\VR with PROTON_VR_RUNTIME, state (DWORD, nonzero =
@@ -290,6 +174,11 @@ bool ready()
     return g_ready;
 }
 
+VRCompositor_FnTable_022 *compositor()
+{
+    return g_compositor;
+}
+
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
@@ -348,9 +237,9 @@ static void log_version_probes()
 // One HMD pose sample — pre-tests the S4-3 feed path and logs live tracking.
 static void log_pose_sample()
 {
-    TrackedDevicePose_t pose;
+    vr::TrackedDevicePose_t pose;
     memset(&pose, 0, sizeof(pose));
-    g_system->GetDeviceToAbsoluteTrackingPose(TrackingUniverseStanding,
+    g_system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding,
                                               0.0f, &pose, 1);
     MC2VR_LOG("ovr: pose sample: valid=%d connected=%d result=%d",
               pose.bPoseIsValid ? 1 : 0, pose.bDeviceIsConnected ? 1 : 0,
@@ -451,12 +340,12 @@ static void bootstrap()
     // VR_InitInternal2 there is no connection and they all report 0 no matter
     // what SteamVR serves. Init also asks Steam to start SteamVR if it isn't
     // up, so retry briefly to cover the startup race.
-    int32_t err = VRInitError_None;
+    int32_t err = vr::VRInitError_None;
     uint32_t token = 0;
     for (int attempt = 1;; attempt++) {
-        err = VRInitError_None;
-        token = p_VR_InitInternal2(&err, VRApplication_Scene, "mc2vr");
-        if (err == VRInitError_None) {
+        err = vr::VRInitError_None;
+        token = p_VR_InitInternal2(&err, vr::VRApplication_Scene, "mc2vr");
+        if (err == vr::VRInitError_None) {
             break;
         }
         MC2VR_LOG("ovr: VR_InitInternal2 attempt %d failed err=%d (%s)", attempt,
@@ -479,8 +368,8 @@ static void bootstrap()
     // Post-init probes: NOW these reflect what the runtime actually serves.
     log_version_probes();
 
-    // Only use the _022 FnTable when the runtime serves exactly that version —
-    // the struct layout above is version-specific (see the header comment).
+    // Only use a FnTable when the runtime serves exactly the pinned version —
+    // the struct layouts are version-specific (see openvr_fntables.hpp).
     if (!p_VR_IsInterfaceVersionValid(kIVRSystem_Version)) {
         MC2VR_LOG("ovr: runtime does not serve %s — bridge stays idle; pull "
                   "the matching openvr.h and adjust the FnTable",
@@ -488,16 +377,41 @@ static void bootstrap()
         return;
     }
 
-    int32_t iface_err = VRInitError_None;
+    int32_t iface_err = vr::VRInitError_None;
     void *iface = p_VR_GetGenericInterface("FnTable:IVRSystem_022", &iface_err);
-    if (iface == nullptr || iface_err != VRInitError_None) {
-        MC2VR_LOG("ovr: FnTable:IVRSystem_026 unavailable err=%d (%s)",
+    if (iface == nullptr || iface_err != vr::VRInitError_None) {
+        MC2VR_LOG("ovr: FnTable:IVRSystem_022 unavailable err=%d (%s)",
                   iface_err,
                   p_VR_GetVRInitErrorAsEnglishDescription(iface_err));
         return;
     }
     g_system = static_cast<VRSystem_FnTable_022 *>(iface);
     MC2VR_LOG("ovr: IVRSystem_022 FnTable acquired");
+
+    // S4-2: the compositor table. Same pinned-version rule; the 46-slot 022
+    // layout is RE-verified against the builtin vrclient's own FnTable
+    // builder (docs/s4_handover.md §S4 item 1/2, 2026-10-04). Acquired
+    // BEFORE the smoke-test gates below on purpose: Submit diagnostics stay
+    // available even if a smoke-test check aborts the rest.
+    if (!p_VR_IsInterfaceVersionValid(kIVRCompositor_Version)) {
+        MC2VR_LOG("ovr: runtime does not serve %s — hmd_submit stays idle; "
+                  "pull the matching openvr.h and adjust the FnTable",
+                  kIVRCompositor_Version);
+    } else {
+        int32_t comp_err = vr::VRInitError_None;
+        void *comp = p_VR_GetGenericInterface("FnTable:IVRCompositor_022",
+                                              &comp_err);
+        if (comp == nullptr || comp_err != vr::VRInitError_None) {
+            MC2VR_LOG("ovr: FnTable:IVRCompositor_022 unavailable err=%d (%s) "
+                      "— hmd_submit stays idle",
+                      comp_err,
+                      p_VR_GetVRInitErrorAsEnglishDescription(comp_err));
+        } else {
+            g_compositor = static_cast<VRCompositor_FnTable_022 *>(comp);
+            MC2VR_LOG("ovr: IVRCompositor_022 FnTable acquired (46 slots, "
+                      "Submit=5 PostPresentHandoff=7)");
+        }
+    }
 
     // ---- Smoke-test facts (S4-2/3 inputs) ----
     // Run-5 lesson: after a session teardown, cached calls keep answering but
@@ -506,33 +420,33 @@ static void bootstrap()
     // wrong class means the session is suspect (torn down, or no HMD) and we
     // ABORT instead of calling deeper; (2) every remaining call is preceded
     // by an enter-log so any future hang pinpoints the exact call.
-    // Call entries WITHOUT self (see the ABI note at the struct).
+    // Call entries WITHOUT self (see the ABI note in openvr_fntables.hpp).
     const int32_t dev_class = g_system->GetTrackedDeviceClass(0);
     MC2VR_LOG("ovr: device 0 class = %d (want 1 = HMD)", dev_class);
-    if (dev_class != TrackedDeviceClass_HMD) {
+    if (dev_class != vr::TrackedDeviceClass_HMD) {
         MC2VR_LOG("ovr: device 0 is not the HMD — session suspect; aborting "
                   "smoke test, bridge stays not-ready (fail-soft)");
         return;
     }
 
     char str[256];
-    int32_t prop_err = TrackedProp_Success;
+    int32_t prop_err = vr::TrackedProp_Success;
     memset(str, 0, sizeof(str));
     MC2VR_LOG("ovr: querying manufacturer ...");
     g_system->GetStringTrackedDeviceProperty(0,
-                                              Prop_ManufacturerName_String, str,
+                                              vr::Prop_ManufacturerName_String, str,
                                               sizeof(str), &prop_err);
     MC2VR_LOG("ovr: HMD manufacturer = \"%s\" (err=%d)", str, prop_err);
     memset(str, 0, sizeof(str));
     MC2VR_LOG("ovr: querying model ...");
     g_system->GetStringTrackedDeviceProperty(0,
-                                             Prop_ModelNumber_String, str,
+                                             vr::Prop_ModelNumber_String, str,
                                              sizeof(str), &prop_err);
     MC2VR_LOG("ovr: HMD model = \"%s\" (err=%d)", str, prop_err);
     memset(str, 0, sizeof(str));
     MC2VR_LOG("ovr: querying serial ...");
     g_system->GetStringTrackedDeviceProperty(0,
-                                             Prop_SerialNumber_String, str,
+                                             vr::Prop_SerialNumber_String, str,
                                              sizeof(str), &prop_err);
     MC2VR_LOG("ovr: HMD serial = \"%s\" (err=%d)", str, prop_err);
 
@@ -546,17 +460,17 @@ static void bootstrap()
 
     MC2VR_LOG("ovr: querying IPD + display frequency ...");
     float ipd = g_system->GetFloatTrackedDeviceProperty(
-        0, Prop_UserIpdMeters_Float, &prop_err);
+        0, vr::Prop_UserIpdMeters_Float, &prop_err);
     float freq = g_system->GetFloatTrackedDeviceProperty(
-        0, Prop_DisplayFrequency_Float, &prop_err);
+        0, vr::Prop_DisplayFrequency_Float, &prop_err);
     MC2VR_LOG("ovr: HMD IPD = %.4f m, display freq = %.1f Hz", ipd, freq);
 
     float pl, pr, pt, pb;
     MC2VR_LOG("ovr: querying raw projection L ...");
-    g_system->GetProjectionRaw(Eye_Left, &pl, &pr, &pt, &pb);
+    g_system->GetProjectionRaw(vr::Eye_Left, &pl, &pr, &pt, &pb);
     MC2VR_LOG("ovr: proj raw L = [l%.4f r%.4f t%.4f b%.4f]", pl, pr, pt, pb);
     MC2VR_LOG("ovr: querying raw projection R ...");
-    g_system->GetProjectionRaw(Eye_Right, &pl, &pr, &pt, &pb);
+    g_system->GetProjectionRaw(vr::Eye_Right, &pl, &pr, &pt, &pb);
     MC2VR_LOG("ovr: proj raw R = [l%.4f r%.4f t%.4f b%.4f]", pl, pr, pt, pb);
 
     MC2VR_LOG("ovr: sampling pose ...");
