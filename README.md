@@ -3,9 +3,6 @@
 Adding full-featured VR support to the game "Mercenaries 2: World in Flames", through reverse
 engineering.
 
-> This project is almost entirely implemented by AI agents, and in its current state extremely
-> fragile. I don't recommend even attempting to use it just yet. Write-up, coming soon!
-
 ## Setup
 
 For VR support, the launch script in this project is set up to launch the game under Proton.
