@@ -13,6 +13,7 @@ source "$(dirname "$0")/launch.conf"
 MC2VR_ROOT="$(cd "$(dirname "$0")" && pwd)"
 PROTON_PATH="$STEAM_HOME/steamapps/common/$PROTON_NAME"
 
+mkdir -p "$COMPAT_DATA_PATH" # Proton requires the dir; it creates pfx/ inside on first run
 export STEAM_COMPAT_DATA_PATH="$COMPAT_DATA_PATH"
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_HOME"
 

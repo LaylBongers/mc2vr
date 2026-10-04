@@ -59,7 +59,7 @@ bool call_vm_thunk()
     // absence of this log line (and a dead game) is the failure signal.
     MC2VR_LOG("probe (b) direct VM-stub call GetD3DDevice() @ %p -> %p (%s)",
               (void *)MC2_GETD3DDEVICE_THUNK, device,
-              device ? "device exists" : "NULL — expected, D3D init is a few frames later");
+              device ? "device exists" : "NULL — UNEXPECTED, init waits for the device first");
     return true;
 }
 

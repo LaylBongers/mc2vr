@@ -3,6 +3,9 @@
 Adding full-featured VR support to the game "Mercenaries 2: World in Flames", through reverse
 engineering.
 
+> This project is almost entirely implemented by AI agents, and in its current state extremely
+> fragile. I don't recommend even attempting to use it just yet. Write-up, coming soon!
+
 ## Setup
 
 For VR support, the launch script in this project is set up to launch the game under Proton.
@@ -12,9 +15,9 @@ Copy "launch.conf.example" to "launch.conf", and fill in the missing details.
 
 ## Launcher / carrier
 
-The launcher (`mc2vr_launcher.exe`) starts the game, waits for the main loop to
-come alive (per-frame counter moving), and injects `mc2vr_carrier.dll`, which
-installs SafetyHook hooks in-process. Plan and hook list:
+The launcher (`mc2vr_launcher.exe`) starts the game suspended, injects
+`mc2vr_carrier.dll`, waits for it to install its early SafetyHook hooks
+in-process, then resumes the game. Plan and hook list:
 `docs/launcher_plan.md`.
 
 Build (32-bit MinGW cross toolchain, outputs to `build/win32/bin/`):

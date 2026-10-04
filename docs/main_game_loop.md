@@ -17,7 +17,7 @@ Per-address facts (names, prototypes, loop addresses, vtable layouts, globals, s
 - Frame pacing for VR should bypass/neutralize the adaptive framerate path (`g_FrameratePolicy` / `AdaptiveFramerate_Govern`, ini `[framerate]` presets) so the HMD drives the cadence.
 - Input injection has no dedicated input-update call: input flows through the state stack (`GameStateStack_Update`) and buffers cleared on the idle-reset path.
 - Mechanism (proven, see `launcher_plan.md`): carrier (in-process SafetyHook) installs hooks statically by literal VA — image base fixed (no ASLR, relocs stripped, `initial_analysis.md`). Never hook via the SecuROM wrapper pointers (runtime-only) or inside `0x01a48000+`.
-- Boot gate: carrier is injected when the per-frame counter at `0x011755bc` moves (main loop alive, SecuROM startup stub finished by construction). The pre-D3D loop spins uncapped (~1400 Hz); the D3D device already exists by carrier-init time.
+- Boot gate: the carrier loads BEFORE the game starts (suspended launch). Its stage 2 gates on the D3D device existing (`g_LtiRenderer->dx9State`, read directly — see `launcher_plan.md`), NOT on the per-frame counter at `0x011755bc`: that counter spins uncapped (~1400 Hz) pre-D3D, so it only says the main loop is alive.
 
 ## Open items
 

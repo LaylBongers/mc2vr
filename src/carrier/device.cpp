@@ -325,8 +325,8 @@ bool capture_and_hook()
     QueryPerformanceFrequency(&g_qpc_freq);
 
     // Capture: a direct call of the plaintext GetD3DDevice thunk. Returns
-    // the live DXVK IDirect3DDevice9 object (proven by M1: it exists at
-    // carrier-init time).
+    // the live DXVK IDirect3DDevice9 object (init.cpp's stage 2 only
+    // calls us once g_LtiRenderer->dx9State is non-NULL).
     g_device = ((GetD3DDevice_t)MC2_GETD3DDEVICE_THUNK)();
     if (!g_device) {
         MC2VR_LOG("D3D: FATAL — GetD3DDevice() returned NULL at init (unexpected per M1)");

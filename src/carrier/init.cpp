@@ -281,6 +281,25 @@ static bool verify_build_lock()
     return true;
 }
 
+// Block until the engine has built its D3D device. Reads the same two
+// globals GetD3DDevice_Impl does (`g_LtiRenderer ? g_LtiRenderer->dx9State :
+// NULL`) instead of CALLING the GetD3DDevice thunk: before the loader patches
+// that VM-slot thunk, a call would enter the unpatched SecuROM stub, and the
+// frame counter is no help (it spins ~1400 Hz pre-D3D). A non-NULL device
+// means the engine is well past startup, so the thunk is safe afterwards.
+static bool wait_for_device()
+{
+    for (DWORD waited = 0; waited < 120 * 1000; waited += 50) {
+        const uintptr_t renderer = *(volatile uintptr_t *)MC2_G_LTIRENDERER;
+        if (renderer != 0 &&
+            *(volatile uintptr_t *)(renderer + MC2_LTIRENDERER_DX9STATE_OFF) != 0) {
+            return true;
+        }
+        Sleep(50);
+    }
+    return false;
+}
+
 void init()
 {
     log_init();
@@ -298,24 +317,36 @@ void init()
 
     if (!lock_ok) {
         MC2VR_LOG("init complete — build lock FAILED, staying resident but idle");
+        MC2VR_LOG("early init done (idle)"); // launcher's resume marker
         return;
     }
 
-    // M1 SecuROM pre-probes, before any hook touches .text: each step logs,
-    // so a crash is attributable to exactly one action (probes first — the
-    // FrameTick patch below is the higher-risk live-.text test).
+    // ---- Stage 1: early. Runs possibly before the game's first instruction
+    // (launcher starts it suspended and resumes on the marker below). Plaintext
+    // .text hooks only — nothing that needs engine-constructed state.
+    hooks::install();
+    render::install_early();
+    MC2VR_LOG("early init done"); // launcher's resume marker
+
+    // ---- Stage 2: late. Needs the engine up (device, render shell).
+    MC2VR_LOG("waiting for D3D device");
+    if (!wait_for_device()) {
+        MC2VR_LOG("FATAL: D3D device never appeared — late init skipped");
+        return;
+    }
+    MC2VR_LOG("D3D device live — late init");
+
+    // M1 SecuROM pre-probes: each step logs, so a crash is attributable to
+    // exactly one action.
     probes::data_write_restore();
     probes::call_vm_thunk();
-
-    hooks::install();
 
     // M2: device capture + VmtHook (Present/BeginScene/EndScene/Reset).
     // Best-effort: a failure here keeps the game and FrameTick hook alive.
     device::capture_and_hook();
 
-    // M3: view-table dump + command histogram + slot claim test + queue poll.
-    // Best-effort per component.
-    render::install();
+    // M3: g_RenderShell slot claim + queue poll.
+    render::install_late();
 
     // Read-only live dump of the VM chain behind RenderTask_RenderFrame.
     vmdump::install();

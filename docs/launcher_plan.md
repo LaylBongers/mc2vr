@@ -4,7 +4,7 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 
 ## Architecture
 
-`launch.sh` → `mc2vr_launcher.exe` (win32 i386, in-prefix via Proton) → `CreateProcess` game → inject `mc2vr_carrier.dll` (win32 i386) → carrier installs SafetyHook hooks in-process.
+`launch.sh` → `mc2vr_launcher.exe` (win32 i386, in-prefix via Proton) → `CreateProcess` game SUSPENDED → inject `mc2vr_carrier.dll` (win32 i386) → carrier installs its plaintext SafetyHook hooks → launcher resumes the game. Hooks are live before the game's first instruction (**early attach, PROVEN under Proton 2026-10-04**); state-dependent hooks (device, render shell) install in a second carrier stage once the engine has built them.
 
 - Carrier = delivery vehicle only; mechanism stays "patch the code itself". Rejected: external cross-process `WriteProcessMemory` patching (no prologue relocation, no MidHook, messier under Wine).
 - Everything 32-bit; image can't relocate, base fixed `0x00400000` — all hook VAs are literal runtime addresses.
@@ -20,9 +20,14 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 ## Launch sequence (launcher)
 
 1. Resolve paths from deploy location (`<game dir>/mc2vr/`).
-2. `CreateProcessW` game (no suspension).
-3. Boot gate: poll frame counter `0x011755bc` until TWO value changes (a single early init write could fake one). Counter starts at 0 and spins uncapped pre-D3D (~1400 Hz); gate fires ~0.2–1s after start. Main loop alive ≠ rendering up, but the D3D device already exists by carrier-init time. Strict "render ready" gate if ever needed: `g_D3D9` (`0x01175284`) ≠ 0.
-4. Inject: `CreateRemoteThread` + `LoadLibraryW`. Works under Proton (proven). Fallbacks (manual mapping, import stub) never needed.
+2. `CreateProcessW` game `CREATE_SUSPENDED`. Stale `mc2vr_carrier.log` deleted first. No exe-base check in the launcher (suspended process has no module list yet) — the carrier verifies base + build lock in-process.
+3. Inject: `CreateRemoteThread` + `LoadLibraryW` into the suspended process. Works under Proton and plain Wine (selftest). Launcher waits for the carrier log line `early init done` (stage 1 finished), then `ResumeThread`; if it never appears the game is killed, not resumed.
+4. Carrier stages:
+   - Stage 1 (before the game runs): conf, base/build-lock gate, FrameTick + BeginSubmit hooks, `render::install_early` (opcode/view/upload-gate MidHooks, stub tracer, SubmitToGPU). Plaintext `.text` only.
+   - Stage 2 (once the engine has a device): probes, device capture + VmtHook, `render::install_late` (g_RenderShell vtable claim, poller), vmdump. Gate = plain memory read of `g_LtiRenderer` (`0x01175288`) → `dx9State` (`+0x5bc`), i.e. what `GetD3DDevice_Impl` does, WITHOUT calling the `GetD3DDevice` thunk: its VM slot is patched by the loader at runtime, so calling it before startup finishes would enter the unpatched stub. Device non-NULL ⇒ engine is past startup ⇒ the thunk is safe afterwards.
+   - Proven 2026-10-04 (real game, Proton Experimental, clean prefix): stage 1 completes ~250ms after start; game resumes; first frame ~80ms later; device capture ~150ms after that; full stereo pipeline (replay, eye RT, monitor pin, camera rewrite) identical to the old late-attach runs; zero SecuROM reaction. The old assumption that SecuROM would block pre-boot patching was never true — `.text` is plaintext on disk, nothing decrypts it, and the VM only patches thunk *slots*, not hooked code.
+   - GOTCHA: the frame counter `0x011755bc` is NOT a device-ready signal (spins ~1400 Hz pre-D3D); an earlier build gated on it, captured NULL and silently skipped all device hooks. The old launcher-side boot gate and the `--late` flow are removed.
+   - New capability, not yet used: because we run before `Direct3DCreate9`/`CreateDevice`, device creation params (and the d3d9 entry points) are now hookable. The old "creation params unchangeable post-boot" constraint no longer applies.
 5. Carrier `DllMain` only spawns the init thread (loader lock). Logs: `<deploy dir>/mc2vr_{launcher,carrier}.log`.
 
 ## Mechanism (proven, do not re-litigate)
@@ -41,7 +46,7 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 | Site | VA | Type | Status |
 |---|---|---|---|
 | `GameShell_FrameTick` | `0x00630e10` | InlineHook | DONE (M1): frame counter, 10s timing reports, `hooks::frame_count()` |
-| `GetD3DDevice` thunk | `0x0047f2f0` | direct call | DONE (M2): device capture at init (device pre-exists; thunk is hot-path — don't hook it). At runtime its slot is patched to native `GetD3DDevice_Impl` `0x00403160` (`g_LtiRenderer->dx9State`) |
+| `GetD3DDevice` thunk | `0x0047f2f0` | direct call | DONE (M2): device capture in carrier stage 2, after the device exists (thunk is hot-path — don't hook it). At runtime its slot is patched to native `GetD3DDevice_Impl` `0x00403160` (`g_LtiRenderer->dx9State`) |
 | device vtable | runtime | VmtHook | DONE (M2): Present 17 / BeginScene 41 / EndScene 42 / Reset 16 — slots pinned (SetRenderState@57 anchor + runtime 1:1 call-pattern confirmation); present params via swapchain `GetPresentParameters` (slot 9) on first Present; Reset logs new params. DONE: SetVertexShaderConstantF 94 = the camera channel (`view_rewrite.cpp`; SetTransform is never called — shader-driven); SetRenderTarget 37 observed (pass gate: view rewrite only while RT0 = backbuffer size). DONE (S2c-2): SetRenderTarget 37 + StretchRect 34 = the pass-2 eye-RT redirect (`eye_replay.cpp`; gameplay's final composite is a DRAW into RT0=backbuffer — counter-proven, observed-not-redirected); UpdateSurface 30 (pass-2 main-RT source redirect; never observed live) + UpdateTexture 31 (diagnostic counter only) hooked. Monitor pin = carrier StretchRect snapshot (backbuffer->snapshot RT before pass 2) / restore (after) via `device::blit_surfaces` (original-method trampoline) — backbuffer writes are NEVER suppressed (SwapEffect=DISCARD: stale driver page, live-observed). Backbuffer identity via GetBackBuffer slot 18, ref released on Reset |
 | `LtiRenderer_BeginSubmit` entry | `0x0074aaa0` | MidHook probe | DONE (M2.5): answered driver + vtable questions; one-shot, currently dormant |
 | `RenderCmd_ExecuteStream` | `0x008569d0` | MidHook at opcode cmp `0x008569f5` (EAX=opcode, 27 ops) | M3 histogram + S2c stream tap — installed |
@@ -65,7 +70,7 @@ Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device
   - Command histogram: gameplay ~21 opcodes (menu 9), 1.5k–3.4k cmds/frame; bins 00/01/02/03 dominate; 27 opcodes defined.
   - Queue+0x10 is a ring POSITION (wraps 0..cap-1; capacity 4096, elem 96); +0x14 stayed 0. — **reinterpreted in S0**: +0x10 = countersA (consumer-advanced), +0x14 = countersB (producer-advanced); see `render_path.md`.
   - Carrier keeps the M3 instrumentation as ambient telemetry for future runs.
-- M4: stereo rendering (design and status: `stereo_design.md`). **S0/S1/S2 (incl. S2c second draw pass) COMPLETE and live-verified** (the draw camera never surfaces in patchable plaintext data — the GPU-boundary `SetVertexShaderConstantF` rewrite is the per-eye channel). Remaining: S4 HMD presentation + pose (`s4_handover.md`). **S4 targets OpenVR/SteamVR — OpenXR is RULED OUT** (Valve's OpenXR driver has no 32-bit+DX9 support; wineopenxr is present+registered in the prefix but unusable — see stereo_design.md §S4). Device already exists at injection (creation params unchangeable post-boot); device-lost path + `Reset` VmtHook or Present-hook interop blit for param changes (the latter needs neither).
+- M4: stereo rendering (design and status: `stereo_design.md`). **S0/S1/S2 (incl. S2c second draw pass) COMPLETE and live-verified** (the draw camera never surfaces in patchable plaintext data — the GPU-boundary `SetVertexShaderConstantF` rewrite is the per-eye channel). Remaining: S4 HMD presentation + pose (`s4_handover.md`). **S4 targets OpenVR/SteamVR — OpenXR is RULED OUT** (Valve's OpenXR driver has no 32-bit+DX9 support; wineopenxr is present+registered in the prefix but unusable — see stereo_design.md §S4). The carrier now loads before the game creates its device (early attach), so creation params can be changed at `Direct3DCreate9`/`CreateDevice` instead of via device-lost + `Reset`; the Present-hook interop blit needs neither.
 
 ## Motion-control / logic-mod track (long-term)
 

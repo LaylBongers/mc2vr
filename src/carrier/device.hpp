@@ -4,8 +4,8 @@
 //
 // Discipline notes:
 //   - Capture is a direct CALL of the GetD3DDevice thunk (supersedes the
-//     plan's original "InlineHook the thunk": the device pre-exists at
-//     carrier-init per the M1 finding, and the thunk is hot-path with 12
+//     plan's original "InlineHook the thunk": capture runs in carrier
+//     stage 2 once the device exists (init.cpp), and the thunk is hot-path with 12
 //     constant callers — calling is proven safe by probe (b)).
 //   - VmtHook clones the object's vtable and swaps the vptr — the original
 //     DXVK vtable in d3d9.dll is never touched. The swap is an aligned

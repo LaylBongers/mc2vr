@@ -19,8 +19,15 @@
 
 namespace mc2vr::render {
 
-// Installs everything. Best-effort per component: failures are logged and
-// don't stop the rest (game keeps running).
-void install();
+// Best-effort per component: failures are logged and don't stop the rest
+// (game keeps running).
+//
+// Early: plaintext .text hooks only (opcode/view MidHooks, upload gate,
+// stub tracer, SubmitToGPU). Safe before the game's first instruction.
+void install_early();
+
+// Late: needs engine-constructed state (g_RenderShell vptr) — call once the
+// main loop is ticking.
+void install_late();
 
 } // namespace mc2vr::render

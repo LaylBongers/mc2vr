@@ -16,8 +16,7 @@ namespace mc2vr::probes {
 bool data_write_restore();
 
 // Directly call the GetD3DDevice VM-stub thunk. A clean return is the pass
-// condition; the returned pointer is informational (NULL is expected while D3D
-// init hasn't run yet — the launcher injects before D3D comes up).
+// condition; the returned pointer is informational (init.cpp runs this after the device wait, so NULL is unexpected).
 bool call_vm_thunk();
 
 } // namespace mc2vr::probes

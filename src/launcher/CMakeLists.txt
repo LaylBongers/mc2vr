@@ -2,7 +2,6 @@
 # injects the carrier DLL. See docs/launcher_plan.md.
 add_executable(mc2vr_launcher
     main.c
-    boot_wait.c
     inject.c
 )
 

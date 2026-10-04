@@ -11,9 +11,6 @@
 // if the real base differs — every VA below is absolute.
 #define MC2_GAME_BASE_EXPECTED ((uintptr_t)0x00400000u)
 
-#define MC2_FRAME_COUNTER_2 ((uintptr_t)0x011755bcu) // _DAT_011755bc
-
-
 // ---- M1 hook/probe sites (all plaintext .text/.data, well below the ----
 // ---- SecuROM region at 0x01a48000; see docs/launcher_plan.md hook list) --
 
@@ -70,6 +67,11 @@
 
 // GetD3DDevice — thunk (6 bytes, jmp into a SecuROM VM stub), void* (void),
 // 12 call sites. Hooking VM stubs is forbidden; CALLING them is fine (probe).
+// g_LtiRenderer (LtiRenderer*; NULL until the engine builds it) and the
+// offset of its dx9State (= the live IDirect3DDevice9*). Reading these is what
+// GetD3DDevice_Impl does, without entering the VM-slot thunk.
+#define MC2_G_LTIRENDERER ((uintptr_t)0x01175288u)
+#define MC2_LTIRENDERER_DX9STATE_OFF ((uintptr_t)0x5bcu)
 #define MC2_GETD3DDEVICE_THUNK ((uintptr_t)0x0047f2f0u)
 
 // PgPrimitive_SubmitToGPU (0x00855690, plate on the function) — per-frame D3D

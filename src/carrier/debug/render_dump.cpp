@@ -369,7 +369,7 @@ bool install_mid(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn
 
 } // namespace
 
-void install()
+void install_early()
 {
     // Command histogram.
     install_mid(g_opcode_mid, MC2_RENDERCMD_OPCODE_CMP, opcode_midhook, "ExecuteStream opcode");
@@ -377,7 +377,21 @@ void install()
     // View-table dump.
     install_mid(g_view_mid, MC2_SUBMITVIEW_LOOP_LEA, view_midhook, "SubmitWorldPackets view loop");
 
+    // View rewrite: upload-gate MidHook (the device-level tap is installed
+    // with the device VmtHook, device.cpp).
+    view::install();
+
+    // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
+    trace::install();
+
+    // S2c-1: SubmitToGPU frame-replay InlineHook (mc2vr.conf frame_replay=on).
+    s2c::install();
+}
+
+void install_late()
+{
     // g_RenderShell slots 4/5 claim (also proves the M4 claim mechanism).
+    // The object's vptr is only valid once the engine has constructed it.
     auto vmt = safetyhook::VmtHook::create(reinterpret_cast<void *>(MC2_G_RENDERSHELL));
     if (!vmt) {
         MC2VR_LOG("M3: FATAL — g_RenderShell VmtHook create failed (error %u)",
@@ -403,16 +417,6 @@ void install()
     if (!g_poller_thread) {
         MC2VR_LOG("M3: FATAL — queue poller thread creation failed (%lu)", GetLastError());
     }
-
-    // View rewrite: upload-gate MidHook (the device-level tap is installed
-    // with the device VmtHook, device.cpp).
-    view::install();
-
-    // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
-    trace::install();
-
-    // S2c-1: SubmitToGPU frame-replay InlineHook (mc2vr.conf frame_replay=on).
-    s2c::install();
 }
 
 } // namespace mc2vr::render

@@ -1,6 +1,7 @@
-// mc2vr launcher (M0): start the game, wait for boot-complete (frame counter
-// moving), then inject the carrier DLL. Orchestration only — all game
-// memory *writes* happen in-process in the carrier.
+// mc2vr launcher: start the game SUSPENDED, inject the carrier DLL, wait for
+// the carrier's early hooks to be installed, then resume — hooks are live
+// before the game executes anything. Orchestration only — all game memory
+// *writes* happen in-process in the carrier.
 //
 // Layout: launcher + carrier are deployed into <game_dir>\mc2vr\. Paths are
 // resolved relative to the launcher's own directory, so the working
@@ -15,13 +16,9 @@
 #include <stdint.h>
 #include <stdarg.h>
 
-#include "game_addresses.h"
-#include "boot_wait.h"
 #include "inject.h"
 
 #define GAME_EXE_DEFAULT     L"MERCENARIES2.EXE"
-#define BOOT_POLL_MS        100
-#define BOOT_TIMEOUT_MS     (180 * 1000)
 #define INJECT_TIMEOUT_MS   (30 * 1000)
 #define ACK_TIMEOUT_MS      (15 * 1000)
 
@@ -84,6 +81,26 @@ static BOOL file_exists(const wchar_t *path)
     return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
 }
 
+// Poll the carrier log for a line containing `needle`.
+static BOOL wait_for_log_line(const wchar_t *path, const char *needle, DWORD timeout_ms)
+{
+    for (DWORD waited = 0; waited < timeout_ms; waited += 50) {
+        FILE *f = _wfopen(path, L"r");
+        if (f) {
+            char line[512];
+            while (fgets(line, sizeof(line), f)) {
+                if (strstr(line, needle) != NULL) {
+                    fclose(f);
+                    return TRUE;
+                }
+            }
+            fclose(f);
+        }
+        Sleep(50);
+    }
+    return FALSE;
+}
+
 int main(void) // no arguments: everything is resolved from the install layout
 {
     // ---- Locate ourselves ------------------------------------------------
@@ -127,54 +144,22 @@ int main(void) // no arguments: everything is resolved from the install layout
     PROCESS_INFORMATION pi;
     ZeroMemory(&pi, sizeof(pi));
 
-    // Normal start — no suspension needed (docs/launcher_plan.md step 2).
-    if (!CreateProcessW(game_exe, NULL, NULL, NULL, FALSE, 0, NULL, game_dir, &si, &pi)) {
+    // Drop the previous run's carrier log so the markers polled below can
+    // only come from this run.
+    wchar_t carrier_log[MAX_PATH];
+    path_join(carrier_log, MAX_PATH, g_launcher_dir, L"mc2vr_carrier.log");
+    DeleteFileW(carrier_log);
+
+    if (!CreateProcessW(game_exe, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED,
+                        NULL, game_dir, &si, &pi)) {
         mc2_log("fatal: CreateProcessW failed (%lu)", GetLastError());
         return 1;
     }
-    CloseHandle(pi.hThread);
-    mc2_log("game started (pid=%lu)", pi.dwProcessId);
+    mc2_log("game started suspended (pid=%lu)", pi.dwProcessId);
 
-    // ---- Verify load base --------------------------------------------------
-    // All hook VAs are absolute; the image can't relocate, so anything other
-    // than the fixed base means our addresses are wrong — refuse loudly.
-    uintptr_t base = 0;
-    DWORD rc = mc2_remote_module_base(pi.hProcess, GAME_EXE_DEFAULT, &base, 50);
-    if (rc != 0) {
-        mc2_log("fatal: cannot find game module in remote process (%lu)", rc);
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hProcess);
-        return 1;
-    }
-    if (base != MC2_GAME_BASE_EXPECTED) {
-        mc2_log("fatal: game loaded at unexpected base %p (expected %p); "
-                "all recorded VAs are invalid",
-                (void *)base, (void *)MC2_GAME_BASE_EXPECTED);
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hProcess);
-        return 1;
-    }
-    mc2_log("game module base verified: %p", (void *)base);
-
-    // ---- Wait for boot completion ------------------------------------------
-    mc2_log("waiting for main-loop frame counter at %p ...",
-            (void *)MC2_FRAME_COUNTER_2);
-    uint64_t counter_initial = 0;
-    uint64_t counter_final = 0;
-    rc = mc2_wait_boot_counter(pi.hProcess, MC2_FRAME_COUNTER_2,
-                               BOOT_POLL_MS, BOOT_TIMEOUT_MS,
-                               &counter_initial, &counter_final);
-    if (rc != 0) {
-        mc2_log("fatal: boot marker never ticked twice (rc=%lu) — game may be "
-                "stuck or this build mismatches the RE'd binary", rc);
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hProcess);
-        return 1;
-    }
-    // The values are logged so "counter moving" can be audited against the
-    // plan's expectation (a frame counter shows small, steady increments).
-    mc2_log("boot complete: main loop ticking (counter %016llx -> %016llx)",
-            (unsigned long long)counter_initial, (unsigned long long)counter_final);
+    // No module-base check here: a suspended process has no module list yet.
+    // The carrier verifies base + build lock in-process before hooking.
+    DWORD rc;
 
     // ---- Inject the carrier --------------------------------------------------
     rc = mc2_inject_dll(pi.hProcess, carrier_dll, INJECT_TIMEOUT_MS);
@@ -186,37 +171,34 @@ int main(void) // no arguments: everything is resolved from the install layout
     }
     mc2_log("carrier injected");
 
+    // ---- Wait for the carrier's early hooks, then resume ---------------------
+    // The marker is logged at the end of carrier stage 1 (also when the
+    // build lock fails and the carrier stays idle). Poll for the actual line,
+    // not bare file existence — the file exists before its first line.
+    BOOL acked = wait_for_log_line(carrier_log, "early init done", ACK_TIMEOUT_MS);
+    if (!acked) {
+        mc2_log("fatal: carrier never reported early init — not resuming the game");
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return 1;
+    }
+    if (ResumeThread(pi.hThread) == (DWORD)-1) {
+        mc2_log("fatal: ResumeThread failed (%lu)", GetLastError());
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return 1;
+    }
+    mc2_log("early hooks in place — game resumed");
+    CloseHandle(pi.hThread);
     // Game keeps running on its own from here.
     CloseHandle(pi.hProcess);
 
-    // ---- Wait for the carrier's "attached" ack ------------------------------
-    // M0 success criterion: carrier logs "attached". Poll for the actual log
-    // line rather than bare file existence — the file is created before the
-    // first line is written (a plain existence check raced and dumped an
-    // empty file in the first real run).
-    wchar_t carrier_log[MAX_PATH];
-    path_join(carrier_log, MAX_PATH, g_launcher_dir, L"mc2vr_carrier.log");
+    // Let late-stage init finish a little so the dump below is informative.
+    wait_for_log_line(carrier_log, "init complete", 10000);
 
-    FILE *f = NULL;
-    for (DWORD waited = 0; waited < ACK_TIMEOUT_MS; waited += 250) {
-        if ((f = _wfopen(carrier_log, L"r")) != NULL) {
-            char line[512];
-            BOOL attached = FALSE;
-            while (fgets(line, sizeof(line), f)) {
-                if (strstr(line, "carrier attached") != NULL) {
-                    attached = TRUE;
-                    break;
-                }
-            }
-            if (attached) {
-                break; // ack received — reopen below for the full dump
-            }
-            fclose(f);
-            f = NULL;
-        }
-        Sleep(250);
-    }
-
+    FILE *f = _wfopen(carrier_log, L"r");
     if (f) {
         // Rewind and dump everything written so far.
         fseek(f, 0, SEEK_SET);
