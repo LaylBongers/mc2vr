@@ -21,10 +21,19 @@ namespace {
 
 constexpr uint32_t VS_ROWS = 256;  // vs_3_0 float constant registers (plus headroom)
 constexpr float DEFAULT_AMP = 4.0f;
+constexpr float DEFAULT_IPD = 0.065f;   // world units (metres), average adult IPD
+constexpr float DEFAULT_HOLD = 2.0f;    // stereo eye A/B hold, seconds
 
-enum class RewriteMode { Off, On, Pulse };
+enum class RewriteMode { Off, On, Pulse, Stereo };
 RewriteMode g_mode = RewriteMode::Off;
 float g_amp = DEFAULT_AMP;
+float g_ipd = DEFAULT_IPD;
+float g_hold_s = DEFAULT_HOLD;
+// Per-eye asymmetric-projection centre shift, NDC units (S2 step 1: "an edit
+// to the same rows"). 0 = disabled until S4 supplies real per-eye tan angles;
+// the row.w scaling is |row.xyz| = the projection coefficient, and the sign
+// convention is to be validated against the HMD runtime then.
+float g_asym_x = 0.0f, g_asym_y = 0.0f;
 
 // ---- live technique constant map (published by the upload-gate MidHook) ------
 // Register bases slide per technique and different techniques reuse the same
@@ -53,6 +62,18 @@ uint32_t g_main_w = 0, g_main_h = 0;
 uint32_t g_rt_w = 0, g_rt_h = 0;
 uint32_t g_rt_seen[16][2];  // distinct RT0 sizes (log once each)
 uint32_t g_rt_seen_n = 0;
+
+// ---- stereo eye state -----------------------------------------------------------
+// Camera right axis in world space, derived from the raw (pre-rewrite) VP
+// row0 upload: row0.xyz = P00 * right (row-major, clip.x = dot(row0, p), the
+// view row0 is the camera right axis), so normalize(row0.xyz) is `right`.
+// The cache is at most one frame old — a sub-degree direction error on a
+// 0.032-unit offset, and the first technique's upload of each frame refreshes
+// it for the rest of the frame.
+float g_right[3] = {0.0f, 0.0f, 0.0f};
+bool g_right_valid = false;
+int g_stereo_eye = +1;  // +1 right / -1 left; A/B alternating until S2c
+uint64_t g_stereo_flip_ms = 0;
 
 bool pass_is_main()
 {
@@ -119,20 +140,92 @@ RewriteMode parse_rewrite_mode(const char *value, bool *ok)
     if (strcmp(value, "pulse") == 0) {
         return RewriteMode::Pulse;
     }
+    if (strcmp(value, "stereo") == 0) {
+        return RewriteMode::Stereo;
+    }
     *ok = false;
     return RewriteMode::Off;
 }
 
-// World-space pan distance for this frame (+x). `pulse` = ~2s sine at 60fps.
-float rewrite_delta()
+// World-space pan for this frame. `pulse` = ~2s sine at 60fps. `stereo`
+// alternates the eye sign every view_stereo_hold seconds (A/B verification
+// until the S2c replay supplies real per-eye passes) and pans along the
+// camera right axis by ±view_ipd/2. `asym` carries the per-eye NDC
+// projection-centre shift (sign follows the eye).
+void rewrite_delta(float d[3], float asym[2])
 {
+    d[0] = d[1] = d[2] = 0.0f;
+    asym[0] = asym[1] = 0.0f;
     if (g_mode == RewriteMode::Off) {
-        return 0.0f;
+        return;
     }
     if (g_mode == RewriteMode::Pulse) {
-        return g_amp * sinf(6.2831853f * (float)(hooks::frame_count() % 120u) / 120.0f);
+        d[0] = g_amp * sinf(6.2831853f * (float)(hooks::frame_count() % 120u) / 120.0f);
+        return;
     }
-    return g_amp;
+    if (g_mode == RewriteMode::On) {
+        d[0] = g_amp;
+        return;
+    }
+    // Stereo.
+    const uint64_t now = GetTickCount64();
+    if (g_stereo_flip_ms == 0) {
+        g_stereo_flip_ms = now;
+    } else if ((float)(now - g_stereo_flip_ms) >= g_hold_s * 1000.0f) {
+        g_stereo_flip_ms = now;
+        g_stereo_eye = -g_stereo_eye;
+        MC2VR_LOG("view: stereo eye -> %s (right=[%.4f %.4f %.4f], off=%.4f)",
+                  g_stereo_eye > 0 ? "RIGHT" : "LEFT", (double)g_right[0],
+                  (double)g_right[1], (double)g_right[2],
+                  (double)(g_ipd * 0.5f));
+    }
+    if (!g_right_valid) {
+        return;  // only until the first VP row0 upload lands (start of frame 1)
+    }
+    const float half = g_ipd * 0.5f * (float)g_stereo_eye;
+    d[0] = g_right[0] * half;
+    d[1] = g_right[1] * half;
+    d[2] = g_right[2] * half;
+    asym[0] = g_asym_x * (float)g_stereo_eye;
+    asym[1] = g_asym_y * (float)g_stereo_eye;
+}
+
+bool have_vp_or_vcd_regs()
+{
+    return g_vcd_reg != REG_INVALID || g_vp_reg != REG_INVALID;
+}
+
+// Scan one RAW upload for the VP row0 (first row of viewContextData/ViewProj)
+// and cache normalize(row0.xyz) as the world-space camera right axis. Needed
+// for the stereo cold-start (the rewrite still early-outs on a zero delta, so
+// the in-loop cache would never fire); once running, the in-loop refresh in
+// on_set_vs_constant keeps it current every frame.
+void cache_right_axis(uint32_t start_register, const float *data, uint32_t vec4_count)
+{
+    const uint32_t vcd_reg = g_vcd_reg;
+    const uint32_t vcd_count = g_vcd_count;
+    const uint32_t vp_reg = g_vp_reg;
+    for (uint32_t i = 0; i < vec4_count; i++) {
+        const uint32_t reg = start_register + i;
+        const uint32_t vcd_off = reg - vcd_reg;  // wraps when reg < vcd_reg
+        const bool is_row0 = (vcd_reg != REG_INVALID && vcd_count >= 4 && vcd_off == 0) ||
+                             (vp_reg != REG_INVALID && reg == vp_reg);
+        if (!is_row0) {
+            continue;
+        }
+        // row0.xyz = P00 * right (view row0 = camera right axis), so the
+        // normalized xyz IS the world right direction.
+        const float *r = data + i * 4;
+        const float n2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+        if (n2 > 1e-20f) {
+            const float inv = 1.0f / sqrtf(n2);
+            g_right[0] = r[0] * inv;
+            g_right[1] = r[1] * inv;
+            g_right[2] = r[2] * inv;
+            g_right_valid = true;
+        }
+        return;  // at most one row0 per upload
+    }
 }
 
 } // namespace
@@ -158,6 +251,38 @@ void set_view_row_amp(float amp)
         MC2VR_LOG("view: view_row_amp=%g out of range (0,100], keeping %g", (double)amp,
                   (double)g_amp);
     }
+}
+
+void set_view_ipd(float ipd)
+{
+    if (ipd > 0.0f && ipd <= 1.0f) {
+        g_ipd = ipd;
+        MC2VR_LOG("view: stereo IPD set to %g world units (per-eye offset %g)",
+                  (double)ipd, (double)(ipd * 0.5f));
+    } else {
+        MC2VR_LOG("view: view_ipd=%g out of range (0,1], keeping %g", (double)ipd,
+                  (double)g_ipd);
+    }
+}
+
+void set_view_stereo_hold(float seconds)
+{
+    if (seconds >= 0.1f && seconds <= 60.0f) {
+        g_hold_s = seconds;
+        MC2VR_LOG("view: stereo eye A/B hold set to %g s", (double)seconds);
+    } else {
+        MC2VR_LOG("view: view_stereo_hold=%g out of range [0.1,60], keeping %g",
+                  (double)seconds, (double)g_hold_s);
+    }
+}
+
+void set_view_asym(float x, float y)
+{
+    g_asym_x = x;
+    g_asym_y = y;
+    MC2VR_LOG("view: asymmetric projection centre shift = (%g, %g) NDC "
+              "(sign convention to be validated against the HMD runtime, S4)",
+              (double)x, (double)y);
 }
 
 void set_main_rt_size(uint32_t w, uint32_t h)
@@ -192,11 +317,12 @@ void on_set_render_target(uint32_t w, uint32_t h)
 //   count 4: [VP row0..3]
 //   count 5: [VP row0..3 | camPos (w==1)]
 //   count 6: [VP row0..3 | camPos | extra row (a world-fixed plane — left alone)]
-// Row-major, clip_i = dot(VP_row_i, worldpos). A camera pan by world-space
-// D = (delta,0,0) is: camPos.x += delta; every VP row w -= row.x*delta
-// (per-row — a uniform clip-w shift does not work, the divide scales it
-// per-vertex). The projection is folded into the VP rows, so an asymmetric
-// per-eye projection is an edit to the same rows.
+// Row-major, clip_i = dot(VP_row_i, worldpos). A camera pan by world-space D is:
+// camPos.xyz += D; every VP row w -= dot(row.xyz, D) (per-row — a uniform
+// clip-w shift does not work, the divide scales it per-vertex). The
+// projection is folded into the VP rows, so an asymmetric per-eye projection
+// is an edit to the same rows: the NDC centre shift e_k lands in row_k.w as
+// |row_k.xyz| * e_k (row_k.xyz = P_kk * basis_k).
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
                                 uint32_t vec4_count)
 {
@@ -206,8 +332,22 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     }
     g_vs_vec4s += vec4_count;
 
-    const float delta = pass_is_main() ? rewrite_delta() : 0.0f;
-    if (delta == 0.0f || vec4_count > VS_ROWS) {
+    float d[3] = {0.0f, 0.0f, 0.0f};
+    float asym[2] = {0.0f, 0.0f};
+    if (pass_is_main()) {
+        rewrite_delta(d, asym);
+    }
+    // Stereo cold-start: the right-axis cache must fill from the raw uploads
+    // even while the pan is still zero (first frame), or it never would.
+    // Main pass only — offscreen passes (shadow/reflection) upload their own
+    // viewContextData with the LIGHT's basis, which must not seed the cache.
+    if (g_mode == RewriteMode::Stereo && !g_right_valid && pass_is_main() &&
+        have_vp_or_vcd_regs()) {
+        cache_right_axis(start_register, data, vec4_count);
+    }
+    if ((d[0] == 0.0f && d[1] == 0.0f && d[2] == 0.0f && asym[0] == 0.0f &&
+         asym[1] == 0.0f) ||
+        vec4_count > VS_ROWS) {
         return data;
     }
     const uint32_t vcd_reg = g_vcd_reg;
@@ -227,16 +367,47 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     memcpy(scratch, data, vec4_count * 16);
     for (uint32_t i = 0; i < vec4_count; i++) {
         float *row = scratch + i * 4;
+        const float *raw = data + i * 4;
         const uint32_t reg = start_register + i;
         const uint32_t vcd_off = reg - vcd_reg;  // wraps when reg < vcd_reg
-        const bool is_vp = (have_vcd && vcd_count >= 4 && vcd_off < 4) ||
-                           (have_vp && reg >= vp_reg && reg < vp_reg + vp_count);
+        uint32_t vp_idx = 0xffffffffu;
+        if (have_vcd && vcd_count >= 4 && vcd_off < 4) {
+            vp_idx = vcd_off;
+        } else if (have_vp && reg >= vp_reg && reg < vp_reg + vp_count) {
+            vp_idx = reg - vp_reg;
+        }
         const bool is_pos = have_vcd && vcd_count >= 5 && vcd_off == 4;
-        if (is_vp && row[3] != 1.0f) {
-            row[3] -= row[0] * delta;
+        if (vp_idx == 0) {
+            // Refresh the camera right axis from the RAW upload (pre-rewrite —
+            // caching the shifted row would accumulate the offset per frame).
+            // Fires every frame; keeps up with camera rotation within a frame.
+            const float n2 = raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2];
+            if (n2 > 1e-20f) {
+                const float inv = 1.0f / sqrtf(n2);
+                g_right[0] = raw[0] * inv;
+                g_right[1] = raw[1] * inv;
+                g_right[2] = raw[2] * inv;
+                g_right_valid = true;
+            }
+        }
+        if (vp_idx != 0xffffffffu && row[3] != 1.0f) {
+            row[3] -= row[0] * d[0] + row[1] * d[1] + row[2] * d[2];
+            // Asymmetric per-eye projection centre (stereo mode, S2 step 1):
+            // row_k.xyz = P_kk * basis_k, so |row_k.xyz| is the projection
+            // coefficient that scales the NDC shift into row_k.w. Sign
+            // convention to be validated against the HMD runtime (S4).
+            if (asym[0] != 0.0f && vp_idx == 0) {
+                row[3] += sqrtf(row[0] * row[0] + row[1] * row[1] + row[2] * row[2]) *
+                          asym[0];
+            } else if (asym[1] != 0.0f && vp_idx == 1) {
+                row[3] += sqrtf(row[0] * row[0] + row[1] * row[1] + row[2] * row[2]) *
+                          asym[1];
+            }
             g_rows_rewritten++;
         } else if (is_pos && row[3] == 1.0f) {
-            row[0] += delta;
+            row[0] += d[0];
+            row[1] += d[1];
+            row[2] += d[2];
             g_rows_rewritten++;
         }
     }
@@ -245,12 +416,16 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
 
 void report_window()
 {
-    MC2VR_LOG("view: uploads calls=%llu vec4s=%llu | rewritten rows=%llu (mode=%s)",
+    const char *mode = g_mode == RewriteMode::Pulse ? "pulse"
+                       : g_mode == RewriteMode::On    ? "on"
+                       : g_mode == RewriteMode::Stereo ? "stereo"
+                                                       : "off";
+    MC2VR_LOG("view: uploads calls=%llu vec4s=%llu | rewritten rows=%llu (mode=%s%s)",
               (unsigned long long)g_vs_calls, (unsigned long long)g_vs_vec4s,
-              (unsigned long long)g_rows_rewritten,
-              g_mode == RewriteMode::Pulse ? "pulse"
-              : g_mode == RewriteMode::On  ? "on"
-                                           : "off");
+              (unsigned long long)g_rows_rewritten, mode,
+              g_mode == RewriteMode::Stereo
+                  ? (g_stereo_eye > 0 ? ", eye=R" : ", eye=L")
+                  : "");
     g_vs_calls = 0;
     g_vs_vec4s = 0;
     g_rows_rewritten = 0;

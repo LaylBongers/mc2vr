@@ -12,8 +12,8 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 |---|---|
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
-| S2 per-eye injection | camera pan **done and visually clean at game scale**; real HMD offsets, stream replay (S2c) pending |
-| S4 HMD presentation, S5 motion controls | not started |
+| S2 per-eye injection | camera pan **done and visually clean at game scale**; `stereo` mode **verified in-game 2026-10-04** (right axis tracks camera rotation, unit-length, flips at 2s; log evidence in the handover note below); stream replay (S2c) pending |
+| S4 HMD presentation, S5 motion controls | not started — **OpenXR ruled out** (Valve's OpenXR driver has no 32-bit+DX9 support); S4 targets OpenVR/SteamVR |
 
 ## Handover — state and next steps (2026-10-03)
 
@@ -25,12 +25,24 @@ tracer (`stub_trace=on`).
 
 Next, roughly in order:
 1. Real per-eye offsets from the HMD pose (replace the pulse) + asymmetric projection (VP rows).
+   — **Plumbing done (2026-10-04)**: `view_row_rewrite=stereo` pans along the camera
+   right axis (derived per frame from the raw VP row0 uploads) by ±`view_ipd`/2, with
+   eye A/B alternation every `view_stereo_hold` s until S2c drives per-eye passes, and
+   the asym-projection channel (`view_asym_x/y` NDC shifts into row_k.w) ready for S4's
+   real per-eye tan angles. **VERIFIED in-game 2026-10-04**: log shows the derived
+   right axis unit-length and tracking camera yaw ([1,0,0] → [-1,0,0] through a 180°
+   turn → smooth rotation into [0.01, 0, 0.9999]), flips at 2s, 100k+ rows rewritten per
+   gameplay window; menu flips show right=[0,0,0] (cache unseeded until the first
+   main-pass camera upload — expected). Human-confirmed: the left/right motion tracks
+   camera rotation. The HMD pose source itself is S4 (OpenVR; see below).
 2. Shaders without `viewContextData` (billboards/rain/quads) — check which lag, then implement.
 3. PS-side camera data (the pass uploads the view record to the PS; `cameraPos` c92; texgen
    matrices are mono) — hook slot 109 if reflections/shadows skew at IPD scale.
-4. S2c second draw pass (stream buffering/replay, eye RTs); note the per-frame GPU sync in
+4. S2c second draw pass (stream buffering/replay, eye RTs) — **dedicated handover
+   brief: `docs/s2c_handover.md`**; note the per-frame GPU sync in
    `LtiRenderer_BeginSubmit` and that rendering runs as a registered task (`RenderTask_RenderFrame`).
-5. S4 compositor (OpenXR via wineopenxr), pacing.
+5. S4 compositor — **OpenVR/SteamVR, not OpenXR** (OpenXR ruled out: Valve's
+   OpenXR driver has no 32-bit+DX9 support), pacing.
 Open RE items: what the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk,
 see its Ghidra plate); why `ViewManager_Update` never fired in the traced run; `FUN_00858980`,
 `FUN_00852740` (opcode 0x08 draw) etc. still unnamed.
@@ -123,6 +135,18 @@ a uniform clip-w shift does NOT work, the divide scales it per-vertex).
 Rewriting is done on a scratch copy returned to the driver call — the game's
 upload buffer may alias the persistent per-view record and is never modified.
 
+**Stereo offsets** (`view_row_rewrite=stereo`): `D = ±right·IPD/2`. The camera
+right axis is derived in the hook from the raw (pre-rewrite) uploads:
+VP row0.xyz = P00·right (view row0 = camera right), so
+`right = normalize(row0.xyz)`; the cache refreshes on every main-pass row0
+upload (at most one frame old; offscreen passes must not seed/refresh it —
+the shadow pass's basis is the light's). Until S2c supplies real per-eye draw
+passes the eye sign alternates every `view_stereo_hold` seconds (A/B check:
+shadows/materials must stay glued at each eye). Asymmetric per-eye projection
+is an edit to the same rows: NDC centre shift `e_k` lands in row_k.w as
+`|row_k.xyz|·e_k·eyeSign` (`view_asym_x/y`, default 0 — real values and sign
+convention come from the HMD runtime in S4).
+
 **Exact registers come from the game's own resolver, not shape matching**
 (blocks arrive split across upload calls, and register numbers are reused
 across techniques, so shape heuristics conflate techniques). A MidHook at the
@@ -142,9 +166,11 @@ would be shifted (none seen); if render resolution ever differs from the
 backbuffer, key the gate on RT identity. Shadow *receivers* look up in world
 space (the VS passes world position to the PS), so they are eye-invariant.
 
-**Controls** (`mc2vr.conf`): `view_row_rewrite=off|on|pulse`, `view_row_amp=`
-world units (default 4.0, unmistakable; ~0.05 for game-scale checks, 0.032 =
-IPD scale). The real per-eye offset is `D = ±right·IPD/2` (≈0.032 m).
+**Controls** (`mc2vr.conf`): `view_row_rewrite=off|on|pulse|stereo`,
+`view_row_amp=` world units (default 4.0, unmistakable; ~0.05 for game-scale
+checks), `view_ipd=` (default 0.065; per-eye offset = half),
+`view_stereo_hold=` s per eye (default 2.0), `view_asym_x/y=` NDC (default
+0). The real per-eye offset is `D = ±right·IPD/2` (≈0.032 m).
 
 ## Architecture
 
@@ -182,14 +208,26 @@ the consumer never reads view camera data.)
 ### S4 — Presentation / HMD runtime
 
 - `Present` VmtHook (proven) as the compositor entry: submit both eye textures
-  (or an SBS target) to OpenVR/OpenXR. Interop blit needs no swapchain changes;
+  (or an SBS target) to OpenVR/SteamVR. Interop blit needs no swapchain changes;
   the game's Present continues to the monitor untouched.
 - Slot-5 (`PostUpdateHook`) claim as the per-frame VR orchestration point:
   sample HMD pose, marshal to the main thread before the producer loop, feed
   S2. Slot-4 (`EndOfFrameHook`) for end-of-frame bookkeeping (timewarp input,
   frame pacing — `main_game_loop.md`).
-- OpenXR preferred on Proton/RADV via wineopenxr (present in the prefix;
-  verify at integration).
+- **OpenVR, not OpenXR** (corrected 2026-10-04): Valve's OpenXR driver does not
+  support the 32-bit + DX9 combination, so OpenXR is ruled out — despite wineopenxr
+  being present AND registered in this prefix (both `ActiveRuntime` keys →
+  `C:\openxr\wineopenxr64.json`, 32-bit `wineopenxr.dll` in syswow64; the WOW64
+  filesystem redirect makes the 64-bit manifest loadable from 32-bit processes —
+  presence is NOT the blocker, the driver is). OpenVR bridge IS installed in this
+  exact prefix (SteamVR-for-Proton layout, disk-verified 2026-10-04): `openvrpaths.vrpath`
+  (steamuser AppData/Local/openvr) points runtime → `C:\vrclient\`, which holds both
+  `vrclient.dll` (i386) and `vrclient_x64.dll`; `syswow64` has 32-bit `vrclient.dll` and
+  `openvr_api_dxvk.dll` (the DXVK-interop OpenVR API — D3D9/DXVK texture sharing is the
+  intended submission path for 32-bit apps). Open integration questions: which DLL the
+  carrier should LoadLibrary (no plain `openvr_api.dll` in the prefix), and
+  `IVRCompositor::Submit` with `IDirect3DTexture9` under Proton+DXVK. Pose sampling
+  (`IVRSystem::GetDeviceToAbsoluteTrackingPose`) goes on the slot-5 hook.
 - UI/2D (`g_RenderQueue2`): render once; composite over both eyes in the
   compositor. Per-eye rects are compositor-owned.
 - Fallback if per-eye RTs can't differ at the D3D level per view: Present-hook

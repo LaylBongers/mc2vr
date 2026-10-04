@@ -32,13 +32,28 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
 void on_set_render_target(uint32_t w, uint32_t h);
 void set_main_rt_size(uint32_t w, uint32_t h);
 
-// mc2vr.conf view_row_rewrite=off|on|pulse. off = pass-through. Returns false
-// on unrecognized values.
+// mc2vr.conf view_row_rewrite=off|on|pulse|stereo. off = pass-through. stereo
+// = per-eye offset D = ±right·view_ipd/2 (see docs/stereo_design.md §S2,
+// handover step 1). Returns false on unrecognized values.
 bool set_view_row_rewrite(const char *value);
 
 // mc2vr.conf view_row_amp=<float>: pan amplitude in world units for on/pulse
 // (default 4.0 = unmistakable; ~0.05 for game-scale checks, 0.032 = IPD).
 void set_view_row_amp(float amp);
+
+// mc2vr.conf view_ipd=<float>: full inter-pupillary distance in world units
+// for stereo mode (default 0.065; per-eye offset is half of this).
+void set_view_ipd(float ipd);
+
+// mc2vr.conf view_stereo_hold=<float>: seconds each eye is held before
+// alternating (stereo A/B verification until the S2c replay drives real
+// per-eye passes; default 2.0).
+void set_view_stereo_hold(float seconds);
+
+// mc2vr.conf view_asym_x/y=<float>: per-eye asymmetric-projection centre
+// shift in NDC units (default 0 = disabled; sign convention validated
+// against the HMD runtime in S4).
+void set_view_asym(float x, float y);
 
 // 10s window report (called from render_dump.cpp's poller); resets counters.
 void report_window();

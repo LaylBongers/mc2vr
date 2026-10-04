@@ -20,6 +20,10 @@
 
 namespace mc2vr {
 
+// Sticky state for the view_asym_x/y conf pair (each key updates one
+// component; both must survive the other's arrival).
+static float g_conf_asym_x = 0.0f, g_conf_asym_y = 0.0f;
+
 // Read <deploy dir>/mc2vr.conf (next to this DLL). Simple
 // key=value lines, '#' comments, whitespace-tolerant. Unknown keys are
 // logged and ignored; unknown values leave the default (off).
@@ -77,10 +81,10 @@ static void load_conf()
             *--end = '\0';
         }
         if (strcmp(key, "view_row_rewrite") == 0) {
-            // The viewContextData camera pan (view_rewrite.cpp).
+            // The viewContextData camera channel (view_rewrite.cpp).
             if (!view::set_view_row_rewrite(value)) {
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
-                          "(use off|on|pulse) — defaulting to off", value);
+                          "(use off|on|pulse|stereo) — defaulting to off", value);
                 view::set_view_row_rewrite("off");
             }
         } else if (strcmp(key, "stub_trace") == 0) {
@@ -100,6 +104,42 @@ static void load_conf()
                 view::set_view_row_amp((float)amp);
             } else {
                 MC2VR_LOG("conf: view_row_amp=%s not a number, ignored", value);
+            }
+        } else if (strcmp(key, "view_ipd") == 0) {
+            // Full IPD in world units for view_row_rewrite=stereo (default
+            // 0.065; per-eye offset is half of this).
+            char *end = nullptr;
+            const double ipd = strtod(value, &end);
+            if (end != value && end[0] == 0) {
+                view::set_view_ipd((float)ipd);
+            } else {
+                MC2VR_LOG("conf: view_ipd=%s not a number, ignored", value);
+            }
+        } else if (strcmp(key, "view_stereo_hold") == 0) {
+            // Seconds each eye is held in stereo A/B mode (default 2.0).
+            char *end = nullptr;
+            const double hold = strtod(value, &end);
+            if (end != value && end[0] == 0) {
+                view::set_view_stereo_hold((float)hold);
+            } else {
+                MC2VR_LOG("conf: view_stereo_hold=%s not a number, ignored", value);
+            }
+        } else if (strcmp(key, "view_asym_x") == 0 ||
+                   strcmp(key, "view_asym_y") == 0) {
+            // Per-eye asymmetric-projection centre shift, NDC units. Both
+            // keys land in one setter; values are sticky (default 0).
+            char *end = nullptr;
+            const double v = strtod(value, &end);
+            if (end != value && end[0] == 0) {
+                if (strcmp(key, "view_asym_x") == 0) {
+                    view::set_view_asym((float)v, g_conf_asym_y);
+                    g_conf_asym_x = (float)v;
+                } else {
+                    view::set_view_asym(g_conf_asym_x, (float)v);
+                    g_conf_asym_y = (float)v;
+                }
+            } else {
+                MC2VR_LOG("conf: %s=%s not a number, ignored", key, value);
             }
         } else {
             MC2VR_LOG("conf: unknown key '%s' ignored", key);
