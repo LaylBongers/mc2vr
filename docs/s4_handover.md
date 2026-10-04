@@ -62,12 +62,27 @@ D3D11 + IPC server. Design, IPC contract and risks: `docs/stereo_design.md` §S4
    lands (lived through in this probe: all-zero reads + 10s query timeouts
    until the flag was added). This gotcha applies to any future carrier-side
    GPU-sync spin.
-3. S4-1 code and its docs are committed; the working tree is clean.
+3. S4-3 is committed (`86abf73` "Implement stereo present to HMD."); the
+   working tree is clean. The deployed conf has `eye_share=on` — LEAVE it on
+   (it is the S4 steady state; `launch.sh` never overwrites that file). The
+   in-tree conf stays `eye_share=off` (default for host-less runs).
+4. User-visible state after S4-3 (expected, not bugs): the HMD shows two
+   letterboxed 16:9 flat images that do NOT respond to your head. Diagnosis
+   on record (2026-10-04, settled — do not re-derive): (a) head-locked feel
+   because the projection layer submits the runtime's pose while the carrier
+   renders the static ±IPD/2 pan — that swap is S4-4's core; (b) letterbox
+   because the game's 16:9 projection fills only part of the ~0.9-aspect eye
+   image — the projection-FOV/aspect match is a carve-out AFTER S4-4 (see
+   Open questions: "Projection FOV/aspect fill"); (c) 30 Hz game vs ~120 Hz
+   host cadence — pacing/timewarp is S4-5.
 
 Host source map (`src/host/`): `main.cpp` (args `--mock --frames N --xr-debug`, log setup),
 `xr_session.cpp` (instance/session/swapchains/event pump/frame loop, Wine VR registry fixups),
-`mock.cpp` (no-runtime mode), `d3d.cpp` (D3D11 device on runtime LUID), `eyes.cpp` (test pattern),
-`log.cpp`, `pose.hpp`. Host is statically linked; the exe is ~17 MB (unstripped).
+`mock.cpp` (no-runtime mode + S4-3 blit smoke test), `d3d.cpp` (D3D11 device on runtime LUID),
+`eyes.cpp` (test pattern), `shared_eyes.cpp` (open cache, mirror window, `latest()` seam),
+`submit.cpp` (S4-3 swapchain blit), `log.cpp`, `pose.hpp`. Host is statically linked.
+Host frame rate observed ~120 Hz in the live run; submit stats: fresh counts per-EYE blits
+of new carrier frames, reused covers the rest (log line says both units explicitly).
 
 ## Current state (2026-10-04 end of day, all live-verified unless noted)
 
@@ -149,9 +164,10 @@ working regardless).
 ### Conf keys
 
 Documented in `conf/mc2vr.conf` (read at DLL attach). Stereo pipeline keys: `view_row_rewrite=stereo`,
-`view_ipd`, `view_asym_x/y`, `frame_replay`, `eye_pass`, `eye_rt`, `eye_monitor_pin`, `eye_share` (S4-2,
-default off — flip it in the DEPLOYED conf for the live run); diagnostics are
-all `debug_*` and default off. The DEPLOYED conf at `<GAME_DIR>/mc2vr/` is never overwritten by
+`view_ipd`, `view_asym_x/y`, `frame_replay`, `eye_pass`, `eye_rt`, `eye_monitor_pin`, `eye_share` (S4-2;
+in-tree default off, but the DEPLOYED conf at `<GAME_DIR>/mc2vr/` has it ON since the S4-3 live run —
+the S4 steady state, leave it on); diagnostics are
+all `debug_*` and default off. The DEPLOYED conf is never overwritten by
 `launch.sh` — edit it there manually. Analysis tools: `tools/analyze_dumps.py` (parses view/S2c/eye
 evidence), `tools/eye_pair_fixture.py`. S4-1 env vars (not conf keys): `MC2VR_NO_HOST` (launcher skips
 the host), `MC2VR_IPC_NAME` (rename the IPC section; default `mc2vr_ipc_v1`).
@@ -368,6 +384,20 @@ selftested first without the game.
 
 ## Open questions the new agent inherits
 
+- **Projection FOV/aspect fill** (carve-out, do AFTER S4-4; discussed +
+  settled 2026-10-04): the HMD currently shows letterboxed 16:9 flat images —
+  beyond the missing head pose (S4-4), the game's baked 16:9 projection fills
+  only part of the ~2016x2240 (~0.9 aspect, ~100°+) per-eye images. Fixing it
+  means extending the GPU-boundary rewrite (`view_rewrite`, currently a rigid
+  translation-only pan on the VP rows) to change the PROJECTION — per-eye
+  FOV/aspect matching the host-reported FOV — so the render fills the eye
+  image. Related but distinct: `view_asym_x/y` (projection CENTER shift) is
+  already scoped into S4-4; the FOV/aspect change itself is not yet scoped.
+  Open sub-questions: which VP rows are projection vs view (S2 mapping in
+  Ghidra plates), per-technique coverage (180/194 shaders carry
+  viewContextData — do all bake FOV?), and whether widened FOV breaks
+  culling/LOD assumptions in the engine (near edges of view frusta are
+  game-side data).
 - S4-2 residual watch items (live-verified 2026-10-04, but keep an eye
   out): `ringFull` was 16 in one 10s carrier window during the S4-2 live run
   (command-ring backpressure — benign at these rates; stayed 0 across the
