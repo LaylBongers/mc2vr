@@ -99,7 +99,7 @@ static void load_conf()
             }
         } else if (strcmp(key, "stream_capture") == 0) {
             // S2c-0: render-command-stream capture + opcode census (read-only;
-            // docs/s2c_handover.md). Requires the opcode MidHook (M3).
+            // docs/stereo_design.md §S2). Requires the opcode MidHook (M3).
             if (!s2c::set_enabled(value)) {
                 MC2VR_LOG("conf: stream_capture=%s not recognized (use on|off)", value);
             }
@@ -129,7 +129,7 @@ static void load_conf()
             }
         } else if (strcmp(key, "frame_replay") == 0) {
             // S2c-1: second draw pass — re-invoke PgPrimitive_SubmitToGPU after
-            // the original (same eye/RTs; state-safety test, docs/s2c_handover.md).
+            // the original (same eye/RTs; state-safety test, docs/stereo_design.md §S2).
             if (!s2c::set_replay_enabled(value)) {
                 MC2VR_LOG("conf: frame_replay=%s not recognized (use on|off)", value);
             }

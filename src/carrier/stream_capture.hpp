@@ -1,4 +1,4 @@
-// S2c-0: render-command-stream capture + opcode census (docs/s2c_handover.md,
+// S2c-0: render-command-stream capture + opcode census (docs/stereo_design.md §S2,
 // docs/stereo_design.md §S2c). Read-only — no behavior change.
 //
 // The M3 opcode MidHook inside RenderCmd_ExecuteStream (0x008569f5, installed
@@ -32,7 +32,7 @@ void set_dump_delay(float seconds);
 
 // mc2vr.conf frame_replay=off|on (default off): S2c-1 — invoke
 // PgPrimitive_SubmitToGPU a second time after the original returns (same
-// eye, same RTs — the "replay unchanged" state-safety test; docs/s2c_handover.md).
+// eye, same RTs — the "replay unchanged" state-safety test; docs/stereo_design.md §S2).
 bool set_replay_enabled(const char *value);
 
 // Install the S2c-1 frame-replay InlineHook on PgPrimitive_SubmitToGPU

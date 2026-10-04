@@ -12,7 +12,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 |---|---|
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
-| S2 per-eye injection | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel in-game verified; S2c second draw pass built on it — deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Record: `docs/s2c_handover.md`; active brief: `docs/s4_handover.md` |
+| S2 per-eye injection | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel in-game verified; S2c second draw pass built on it — deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
 | S4 HMD presentation, S5 motion controls | not started — **OpenXR ruled out** (Valve's OpenXR driver has no 32-bit+DX9 support); S4 targets OpenVR/SteamVR |
 
 ## Handover — state and next steps (2026-10-03)
@@ -38,14 +38,16 @@ Next, roughly in order:
 2. Shaders without `viewContextData` (billboards/rain/quads) — check which lag, then implement.
 3. PS-side camera data (the pass uploads the view record to the PS; `cameraPos` c92; texgen
    matrices are mono) — hook slot 109 if reflections/shadows skew at IPD scale.
-4. S2c second draw pass (stream buffering/replay, eye RTs) — **dedicated handover
-   brief: `docs/s2c_handover.md`**; note the per-frame GPU sync in
+4. S2c second draw pass — **COMPLETE (2026-10-04)**: frame re-submitted
+   twice through PgPrimitive_SubmitToGPU, pass 2 redirected into a
+   carrier eye RT; note the per-frame GPU sync in
    `LtiRenderer_BeginSubmit` and that rendering runs as a registered task (`RenderTask_RenderFrame`).
 5. S4 compositor — **OpenVR/SteamVR, not OpenXR** (OpenXR ruled out: Valve's
    OpenXR driver has no 32-bit+DX9 support), pacing.
 Open RE items: what the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk,
-see its Ghidra plate); why `ViewManager_Update` never fired in the traced run; `FUN_00858980`,
-`FUN_00852740` (opcode 0x08 draw) etc. still unnamed.
+see its Ghidra plate); why `ViewManager_Update` never fired in the traced run. (`FUN_00858980`/
+`FUN_00852740` were named during S2c: `RenderCmd_ResetPassState` / `RenderCmd_SetScreenConstants`,
+opcode 0x08.)
 Camera-matrix writer hunt (2026-10-03, after the thunk-target census): NEGATIVE. None of the 405
 runtime-native thunk-target functions references `g_ViewContextTable` (`0x01169774`) or the
 `ViewEntry` table (`0x012865e0`); the view/camera code (`ViewEntry_Activate`, `FUN_0048a3b0`,
@@ -234,7 +236,8 @@ the consumer never reads view camera data.)
    stale driver page, live-observed); run-4-verified stable and free
    (perf identical, ~30 fps inherent to frame_replay: 2 x 16.6 ms passes
    > 60 Hz vsync budget — S4 pacing owns the fix). Details:
-   docs/s2c_handover.md "S2c-2 ACCEPTANCE MET" / "MONITOR PIN VERIFIED".
+   `docs/s4_handover.md` (verified state); full run-by-run milestone
+   record in git history (`git log --follow -- docs/s2c_handover.md`).
    **S2c COMPLETE.**
 
 ### S4 — Presentation / HMD runtime

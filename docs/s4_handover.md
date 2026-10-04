@@ -3,7 +3,8 @@
 Self-contained brief for the agent picking up S4. S2 (per-eye injection) and
 S2c (second draw pass) are COMPLETE and live-verified — this brief assumes
 nothing from those milestones except what is stated here; per-address facts
-live in Ghidra plates, milestone history in `docs/s2c_handover.md`.
+live in Ghidra plates, milestone history in git (`git log --follow --
+docs/s2c_handover.md`) and the S2c summary in `docs/stereo_design.md` §S2.
 
 ## Mission
 
@@ -32,11 +33,8 @@ registered but dead in this prefix).
    layout in the prefix, interop questions); §Status is current.
 3. `docs/launcher_plan.md` — mechanism rules (do-not-re-litigate list),
    hook inventory, build/test commands.
-4. `docs/render_path.md` — frame chain and threading (esp. the per-frame
+5. `docs/render_path.md` — frame chain and threading (esp. the per-frame
    GPU-sync event-query spin in `LtiRenderer_BeginSubmit`).
-5. `docs/s2c_handover.md` — S2c milestone record: what was built, every
-   live-run lesson (read the run notes at the end; they include the DISCARD
-   lesson and the wide-printf lesson — both plated there).
 6. `docs/ghidra-reva.md` — how to use the ReVa MCP tools correctly.
 
 ## Current state (2026-10-04 end of day, all live-verified unless noted)
@@ -95,7 +93,14 @@ monitor stable).
   query spin in `LtiRenderer_BeginSubmit`).
 - Swapchain: 2560×1440, fmt 22 (X8R8G8B8), fullscreen, **SwapEffect=DISCARD
   (backbuffer content after Present is UNDEFINED — never suppress backbuffer
-  writes; live-observed stale-page artifact, see s2c_handover)**, count=1.
+  writes; live-observed stale-page artifact)**, count=1.
+- Final composite path differs by game state (counter-proven 2026-10-04):
+  GAMEPLAY ends each pass with a single DRAW into RT0=backbuffer
+  (bbRtSets=1/pass-2 frame, no pass-2 StretchRect ever targets the
+  backbuffer, UpdateSurface/UpdateTexture never fire); MENUS/LOADING
+  instead use a mainRT→backbuffer StretchRect as the final copy. Pass-
+  boundary capture (below) works for both since it keys on boundaries, not
+  the mechanism.
 - Render threading: all D3D device use on the main/render thread; hook
   handlers run there.
 
