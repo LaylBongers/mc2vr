@@ -172,6 +172,35 @@ installed as the stream tap — extend it, don't re-site it.
   eye RT instead); (3) S2c-3 is effectively satisfied (deterministic
   per-frame eye pair) — S4 Present-hook compositor is the consumer; audit
   UpdateSurface/UpdateTexture redirects only if a visual artifact appears.
+- **S2c-2 next steps IMPLEMENTED (2026-10-04, awaiting live run)**:
+  (1) fp16 decode — `dump_surface` now accepts A16B16G16R16F (113, 8 B/px:
+  R,G,B,A halves; decode host-verified exhaustively incl. subnormals) plus
+  the old 32-bit RGB path, tone-mapped per channel (Reinhard + ~sRGB gamma
+  via 8192-entry LUT over [0,16), brighter clamps near-white) into the same
+  24-bit BMPs, so tools/analyze_dumps.py's parallax report works unchanged.
+  (2) monitor pin — conf `eye_monitor_pin=on` (needs eye_rt=on): pass-2
+  StretchRects whose source was redirected AND whose dst is the swapchain
+  backbuffer (GetBackBuffer slot 18, cached, ref released on Reset) are
+  skipped (return S_OK) so the monitor holds a stable pass-1 LEFT image
+  instead of alternating L/R each frame; mid-frame pass-2 reads still run
+  (only the EndSubmit RT->backbuffer copy is skipped). Window report now
+  includes pinSkips. This is also the S4 steady state (compositor eats the
+  eye RT, Present keeps showing pass 1). Conf template updated; the
+  DEPLOYED conf at <GAME_DIR>/mc2vr/ is manual — add the key there.
+  LIVE-RUN RECIPE: keep frame_replay=on eye_pass=on eye_rt=on
+  eye_dump_frames=5 stream_dump_delay=15, add eye_monitor_pin=on, get into
+  GAMEPLAY; expected: stable LEFT image on the monitor (no L/R flicker),
+  10 BMP dumps (5 pairs), log lines "eye: dumped left/right ...", pinSkips≈
+  rtRedirects>0 in the eye window report, delta=0, Present=2x frames. Then
+  `tools/analyze_dumps.py <GAME_DIR>/mc2vr/mc2vr_carrier.log` reports the
+  measured horizontal parallax per pair at 1-px resolution (upgraded
+  2026-10-04: full-res numpy shift search, +/-64px window, sign convention
+  documented in shift_sad; pure-Python 4px-grid fallback if numpy is
+  missing; regression fixture tools/eye_pair_fixture.py mirrors the
+  carrier's fp16 decode + tonemap and is recovered exactly). SAD at best
+  shift << shift-0 SAD = stereoscopy proven. If dumps come out washed out,
+  note it — a future `eye_dump_exposure` key is the knob (not needed for
+  parallax math).
 - **S2c-2 (staging bullet, historical)**: replay into a second eye RT with the OTHER eye's rewrite active;
   A/B via the existing hold timer driving eye selection, dump both RTs to PNG
   (extend `tools/analyze_dumps.py` if needed) and check parallax geometry.

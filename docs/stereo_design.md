@@ -224,8 +224,10 @@ the consumer never reads view camera data.)
    per-frame EndSubmit copies put LEFT then RIGHT into the backbuffer and the
    two Presents alternate them on the monitor (visually: rapid horizontal
    camera oscillation = working temporal stereo). Main scene RT is fp16 HDR
-   (D3DFMT_A16B16G16R16F) — BMP dumps need an fp16 decode (next step), see
-   docs/s2c_handover.md for remaining work.
+   (D3DFMT_A16B16G16R16F) — the fp16 decode + tonemap BMP path and the
+   `eye_monitor_pin` monitor pin (skip pass-2 EndSubmit copy, backbuffer
+   keeps LEFT = S4 steady state) are implemented (2026-10-04, awaiting live
+   run) — see docs/s2c_handover.md "S2c-2 next steps IMPLEMENTED".
 
 ### S4 — Presentation / HMD runtime
 

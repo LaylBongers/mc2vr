@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <d3d9.h> // type/layout constants only
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -25,6 +26,9 @@ constexpr size_t SSLOT_LockRect = 13; // IDirect3DSurface9 vtable (d3d9.h): GetC
 constexpr size_t SSLOT_UnlockRect = 14;
 constexpr size_t SSLOT_GetDesc = 12;
 constexpr size_t SSLOT_Release = 2;
+// IDirect3DDevice9 (d3d9.h): GetBackBuffer = 18 (re-verified against the
+// header alongside CreateRenderTarget=28 / StretchRect=34).
+constexpr size_t DSLOT_GetBackBuffer = 18;
 
 using DevCall_t = HRESULT(__stdcall *)(void *);
 using SurfaceDesc_t = HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *);
@@ -33,6 +37,7 @@ using Release_t = HRESULT(__stdcall *)(void *);
 
 bool g_pass_enabled = false;
 bool g_rt_enabled = false;
+bool g_pin_enabled = false;
 uint32_t g_dump_frames = 0;
 float g_dump_delay_s = 15.0f;
 
@@ -45,10 +50,18 @@ void *g_main_rt = nullptr;
 void *g_eye_rt = nullptr;
 D3DSURFACE_DESC g_main_desc = {};
 
+// The swapchain's backbuffer = the EndSubmit copy's destination, recorded on
+// first use for the monitor pin. GetBackBuffer AddRefs; our ref is released
+// in on_reset (which runs BEFORE the original Reset, while the surface
+// still exists). Re-fetched lazily after Reset.
+void *g_backbuffer = nullptr;
+bool g_backbuffer_failed = false;
+
 // ---- window counters (main thread writes; poller reads+resets) -------------
 
 uint64_t g_redirects = 0;
 uint64_t g_blit_redirects = 0;
+uint64_t g_pin_skips = 0;
 uint64_t g_dumps_written = 0;
 uint64_t g_dump_failures = 0;
 
@@ -99,17 +112,89 @@ bool write_bmp(const wchar_t *path, const uint8_t *bgr, uint32_t width, uint32_t
     return true;
 }
 
+// ---- fp16 (D3DFMT_A16B16G16R16F) decode + simple tonemap -----------------------
+//
+// The main scene RT is fp16 HDR (live fact 2026-10-04, plated on
+// LtiRenderer_EndSubmit): 4 half floats per pixel, memory order R,G,B,A
+// (channel names run most->least significant). BMP output needs a float
+// decode + tonemap so both eyes' dumps are viewable and comparable.
+
+// IEEE 754 half -> float32 (zero, subnormal, normal, inf/NaN).
+float half_to_float(uint16_t h)
+{
+    const uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+    const uint32_t exp = (h >> 10) & 0x1fu;
+    uint32_t frac = h & 0x3ffu;
+    uint32_t bits;
+    if (exp == 0) {
+        if (frac == 0) {
+            bits = sign; // +-0
+        } else {
+            // Subnormal half = frac * 2^-24: normalize the leading 1 into
+            // bit 10, each shift = one exponent step.
+            uint32_t e = 113; // 127 - 15 + 1
+            while ((frac & 0x400u) == 0) {
+                frac <<= 1;
+                e--;
+            }
+            bits = sign | (e << 23) | ((frac & 0x3ffu) << 13);
+        }
+    } else if (exp == 31) {
+        bits = sign | 0x7f800000u | (frac << 13); // +-inf / NaN
+    } else {
+        bits = sign | ((exp - 15 + 127) << 23) | (frac << 13);
+    }
+    float f;
+    memcpy(&f, &bits, 4);
+    return f;
+}
+
+// Display path: linear HDR -> Reinhard per channel ([0,inf) -> [0,1)) ->
+// ~sRGB gamma -> 8 bit. LUT over [0, TM_MAX); brighter pixels clamp near
+// white (the parallax check wants structure, not a pretty image). Built
+// lazily on first use (render thread, once per process).
+constexpr uint32_t TM_LEVELS = 8192;
+constexpr float TM_MAX = 16.0f;
+uint8_t g_tonemap_lut[TM_LEVELS];
+bool g_tonemap_ready = false;
+
+uint8_t tonemap(float v)
+{
+    if (!g_tonemap_ready) {
+        for (uint32_t i = 0; i < TM_LEVELS; i++) {
+            const double x = (double)TM_MAX * (double)i / (double)(TM_LEVELS - 1);
+            const double m = x / (1.0 + x);
+            g_tonemap_lut[i] = (uint8_t)(255.0 * pow(m, 1.0 / 2.2) + 0.5);
+        }
+        g_tonemap_ready = true;
+    }
+    if (!(v > 0.0f)) {
+        return 0; // negative / NaN -> black (filter overshoot clamps)
+    }
+    const float scaled = v * ((float)(TM_LEVELS - 1) / TM_MAX);
+    if (scaled >= (float)(TM_LEVELS - 1)) {
+        return g_tonemap_lut[TM_LEVELS - 1];
+    }
+    return g_tonemap_lut[(uint32_t)scaled];
+}
+
 // Read a render target into system memory and write it as a BMP.
-// 32-bit formats only (A8R8G8B8=21, X8R8G8B8=22); anything else is logged
-// and skipped rather than misread.
+// Handles 32-bit RGB (A8R8G8B8=21, X8R8G8B8=22) and fp16 HDR
+// (A16B16G16R16F=113); anything else is logged and skipped rather than
+// misread.
 void dump_surface(const char *tag, void *surface, uint64_t frame)
 {
-    if (g_main_desc.Format != 21 && g_main_desc.Format != 22) {
+    uint32_t bpp = 0;
+    if (g_main_desc.Format == 21 || g_main_desc.Format == 22) {
+        bpp = 4;
+    } else if (g_main_desc.Format == 113) {
+        bpp = 8;
+    } else {
         static bool warned = false;
         if (!warned) {
             warned = true;
             g_dump_failures++;
-            MC2VR_LOG("eye: dump skipped — main RT format %u not 32-bit RGB",
+            MC2VR_LOG("eye: dump skipped — main RT format %u not 32-bit RGB or fp16",
                       (unsigned)g_main_desc.Format);
         }
         return;
@@ -137,7 +222,7 @@ void dump_surface(const char *tag, void *surface, uint64_t frame)
     if (SUCCEEDED(hr)) {
         const uint32_t w = g_main_desc.Width;
         const uint32_t h = g_main_desc.Height;
-        if (!locked.pBits || (uint32_t)locked.Pitch < w * 4) {
+        if (!locked.pBits || (uint32_t)locked.Pitch < w * bpp) {
             g_dump_failures++;
             MC2VR_LOG("eye: dump %s FAILED — bad lock (pBits=%p pitch=%d)",
                       tag, locked.pBits, (int)locked.Pitch);
@@ -150,13 +235,24 @@ void dump_surface(const char *tag, void *surface, uint64_t frame)
         if (bgr) {
             const uint8_t *src = (const uint8_t *)locked.pBits;
             for (uint32_t y = 0; y < h; y++) {
-                const uint32_t *s = (const uint32_t *)(src + (h - 1 - y) * locked.Pitch);
+                const uint8_t *srow = src + (h - 1 - y) * locked.Pitch;
                 uint8_t *d = bgr + y * row;
-                for (uint32_t x = 0; x < w; x++) {
-                    const uint32_t px = s[x]; // X8R8G8B8 / A8R8G8B8
-                    *d++ = (uint8_t)(px >> 16); // B
-                    *d++ = (uint8_t)(px >> 8);  // G
-                    *d++ = (uint8_t)(px);       // R
+                if (bpp == 4) {
+                    const uint32_t *s = (const uint32_t *)srow;
+                    for (uint32_t x = 0; x < w; x++) {
+                        const uint32_t px = s[x]; // X8R8G8B8 / A8R8G8B8
+                        *d++ = (uint8_t)(px >> 16); // B
+                        *d++ = (uint8_t)(px >> 8);  // G
+                        *d++ = (uint8_t)(px);       // R
+                    }
+                } else {
+                    // A16B16G16R16F: R,G,B,A halves per pixel; alpha ignored.
+                    const uint16_t *s = (const uint16_t *)srow;
+                    for (uint32_t x = 0; x < w; x++) {
+                        *d++ = tonemap(half_to_float(s[4 * x + 2])); // B
+                        *d++ = tonemap(half_to_float(s[4 * x + 1])); // G
+                        *d++ = tonemap(half_to_float(s[4 * x + 0])); // R
+                    }
                 }
             }
             wchar_t path[MAX_PATH];
@@ -222,6 +318,30 @@ bool ensure_eye_rt()
     return true;
 }
 
+// The swapchain's backbuffer (dst of the EndSubmit RT0->backbuffer copy),
+// for the monitor pin. Cached; re-fetched after Reset.
+void *backbuffer()
+{
+    if (g_backbuffer || g_backbuffer_failed || !g_device) {
+        return g_backbuffer;
+    }
+    void **vt = *(void ***)g_device;
+    void *bb = nullptr;
+    // GetBackBuffer(0, 0 /* D3DBACKBUFFER_TYPE_MONO */, &bb) — AddRefs bb.
+    const HRESULT hr = ((HRESULT(__stdcall *)(void *, UINT, UINT, D3DBACKBUFFER_TYPE,
+                                              void **))vt[DSLOT_GetBackBuffer])(
+        g_device, 0, 0, D3DBACKBUFFER_TYPE_MONO, &bb);
+    if (FAILED(hr) || !bb) {
+        g_backbuffer_failed = true;
+        MC2VR_LOG("eye: GetBackBuffer FAILED hr=%08lx — monitor pin inactive",
+                  (unsigned long)hr);
+        return nullptr;
+    }
+    g_backbuffer = bb;
+    MC2VR_LOG("eye: backbuffer recorded: %p (monitor-pin dst)", bb);
+    return g_backbuffer;
+}
+
 } // namespace
 
 // ---- public entry points ---------------------------------------------------------
@@ -255,12 +375,23 @@ void *on_set_render_target(void *device, uint32_t index, void *game_surface)
     return g_eye_rt;
 }
 
-void *on_stretch_src(void *game_src)
+void *on_stretch_src(void *game_src, void *dst, bool *skip)
 {
+    *skip = false;
     if (!g_rt_enabled || g_pass != 2 || game_src != g_main_rt || !g_eye_rt) {
         return game_src;
     }
     g_blit_redirects++;
+    // Monitor pin: pass 2's EndSubmit RT0->backbuffer copy is skipped so the
+    // backbuffer keeps pass 1's LEFT image (stable monitor; the pass-2 RIGHT
+    // image stays in the eye RT — this is also the S4 steady state, where
+    // the compositor consumes the eye RT and Present keeps showing pass 1).
+    // Mid-frame reads (dst != backbuffer) still run: they feed pass-2 post
+    // effects and must see the redirected source.
+    if (g_pin_enabled && dst == backbuffer()) {
+        g_pin_skips++;
+        *skip = true;
+    }
     return g_eye_rt;
 }
 
@@ -305,6 +436,13 @@ void on_reset()
 {
     // All surfaces are gone. Forget the recording; the first post-Reset
     // slot-0 set re-records, and the eye RT is re-created lazily.
+    if (g_backbuffer) {
+        // Runs BEFORE the original Reset, while the surface still exists:
+        // drop the ref our GetBackBuffer took (no dangling ref across Reset).
+        ((Release_t)(*(void ***)g_backbuffer)[SSLOT_Release])(g_backbuffer);
+        g_backbuffer = nullptr;
+    }
+    g_backbuffer_failed = false;
     if (g_eye_rt) {
         ((Release_t)(*(void ***)g_eye_rt)[SSLOT_Release])(g_eye_rt);
         g_eye_rt = nullptr;
@@ -316,15 +454,18 @@ void on_reset()
 
 void report_window()
 {
-    if (g_redirects > 0 || g_blit_redirects > 0 || g_dump_failures > 0) {
-        MC2VR_LOG("eye window: rtRedirects=%llu blitRedirects=%llu dumps=%llu "
-                  "dumpFails=%llu",
+    if (g_redirects > 0 || g_blit_redirects > 0 || g_pin_skips > 0 ||
+        g_dump_failures > 0 || g_dumps_written > 0) {
+        MC2VR_LOG("eye window: rtRedirects=%llu blitRedirects=%llu pinSkips=%llu "
+                  "dumps=%llu dumpFails=%llu",
                   (unsigned long long)g_redirects, (unsigned long long)g_blit_redirects,
+                  (unsigned long long)g_pin_skips,
                   (unsigned long long)g_dumps_written,
                   (unsigned long long)g_dump_failures);
     }
     g_redirects = 0;
     g_blit_redirects = 0;
+    g_pin_skips = 0;
     g_dump_failures = 0;
 }
 
@@ -353,6 +494,22 @@ bool set_rt_enabled(const char *value)
     }
     MC2VR_LOG("eye: eye_rt=%s (pass-2 SetRenderTarget(0)/StretchRect redirect)",
               g_rt_enabled ? "on" : "off");
+    return true;
+}
+
+bool set_pin_enabled(const char *value)
+{
+    if (strcmp(value, "on") == 0) {
+        g_pin_enabled = true;
+    } else if (strcmp(value, "off") == 0) {
+        g_pin_enabled = false;
+    } else {
+        return false;
+    }
+    MC2VR_LOG("eye: eye_monitor_pin=%s (pass-2 EndSubmit RT->backbuffer copy %s)",
+              g_pin_enabled ? "on" : "off",
+              g_pin_enabled ? "SKIPPED — monitor holds pass 1 LEFT" :
+                              "runs — monitor alternates L/R per frame");
     return true;
 }
 

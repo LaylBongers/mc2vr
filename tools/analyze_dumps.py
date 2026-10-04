@@ -220,8 +220,48 @@ def best_shift(left, right, max_shift=16):
     return best, best_sad, sad0
 
 
+# ---- numpy full-resolution parallax (preferred path) --------------------------
+
+MAX_SHIFT_PX = 64  # full-res pixel search window (matches the old +/-16 units @4px)
+
+
+def gray_array(w, h, buf, row):
+    """Full-resolution grayscale int32 array from 24-bit BMP BGR rows."""
+    import numpy as np
+
+    img = np.frombuffer(buf, dtype=np.uint8).reshape(h, row)[:, : w * 3].astype(np.int32)
+    b, g, r = img[:, 0::3], img[:, 1::3], img[:, 2::3]
+    return (b * 114 + g * 587 + r * 299) // 1000
+
+
+def shift_sad(left, right, shifts):
+    """Mean |left(x) - right(x+sh)| per candidate shift (full resolution).
+
+    Sign convention: positive sh = right image content sits `sh` px to the
+    RIGHT of the left image's (i.e. left camera = right pan)."""
+    import numpy as np
+
+    h, w = left.shape
+    out = {}
+    for s in shifts:
+        if s >= 0:
+            a = left[:, : w - s] if s else left
+            b = right[:, s:] if s else right
+        else:
+            a = left[:, -s:]
+            b = right[:, : w + s]
+        if a.shape[1] == 0:
+            continue
+        out[s] = float(np.mean(np.abs(a.astype(np.int32) - b.astype(np.int32))))
+    return out
+
+
 def report_eye_dumps(paths):
     import glob as _glob
+    try:
+        import numpy  # noqa: F401 — presence selects the full-res path
+    except ImportError:
+        numpy = None
     if os.path.isdir(paths):
         paths = sorted(_glob.glob(os.path.join(paths, "mc2vr_eye_*.bmp")))
     by_frame = {}
@@ -243,12 +283,29 @@ def report_eye_dumps(paths):
         if (lw, lh) != (rw, rh):
             print(f"  frame {frame}: size mismatch {lw}x{lh} vs {rw}x{rh}")
             continue
-        sh, sad, sad0 = best_shift(gray_rows(lw, lh, lb, lrow),
-                                   gray_rows(rw, rh, rb, rrow))
-        # Convert to full-res pixel shift (downsample step = 4).
-        print(f"  frame {frame}: {lw}x{lh} | best shift {sh * 4:+d}px "
-              f"(downsampled units {sh:+d}), SAD {sad:.1f} vs shift0 {sad0:.1f} "
-              f"| {'PARALLAX PRESENT' if sh != 0 and sad < sad0 * 0.95 else 'no measurable parallax'}")
+        if numpy is not None:
+            # Full-resolution 1-px search (fp16-tonemapped dumps are big but
+            # numpy makes the exhaustive window cheap).
+            lg = gray_array(lw, lh, lb, lrow)
+            rg = gray_array(rw, rh, rb, rrow)
+            sads = shift_sad(lg, rg, range(-MAX_SHIFT_PX, MAX_SHIFT_PX + 1))
+            sad0 = sads.get(0, float("nan"))
+            min_sad = min(sads.values())
+            sh, sad = min(
+                ((s, v) for s, v in sads.items() if v <= min_sad * 1.05),
+                key=lambda t: (abs(t[0]), t[1]),
+            )
+            unit = "px"
+        else:
+            sh, sad, sad0 = best_shift(gray_rows(lw, lh, lb, lrow),
+                                      gray_rows(rw, rh, rb, rrow))
+            sh = sh * 4  # downsampled units -> full-res px
+            unit = "px (4px grid)"
+        verdict = (
+            "PARALLAX PRESENT" if sh != 0 and sad < sad0 * 0.95 else "no measurable parallax"
+        )
+        print(f"  frame {frame}: {lw}x{lh} | best shift {sh:+d}{unit}, "
+              f"SAD {sad:.2f} vs shift0 {sad0:.2f} | {verdict}")
 
 
 def discover_eye_dumps(arg):

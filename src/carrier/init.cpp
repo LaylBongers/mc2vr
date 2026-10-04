@@ -113,6 +113,12 @@ static void load_conf()
             if (!eye::set_rt_enabled(value)) {
                 MC2VR_LOG("conf: eye_rt=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "eye_monitor_pin") == 0) {
+            // S2c-2: skip the pass-2 EndSubmit RT->backbuffer copy so the
+            // monitor holds pass 1's LEFT image (S4 steady state).
+            if (!eye::set_pin_enabled(value)) {
+                MC2VR_LOG("conf: eye_monitor_pin=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "eye_dump_frames") == 0) {
             char *end = nullptr;
             const long n = strtol(value, &end, 10);

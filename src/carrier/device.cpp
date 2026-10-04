@@ -235,11 +235,17 @@ uint64_t g_stretch_calls = 0;
 
 // StretchRect: pass-2 sources pointing at the main RT read the eye RT instead
 // (post-effect blits must see pass 2's accumulation, not pass 1's frozen one).
+// With eye_monitor_pin=on the EndSubmit RT->backbuffer copy is skipped
+// (on_stretch_src sets skip) so the monitor keeps pass 1's LEFT image.
 HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
-                                    void *dst, const RECT *dst_rect, DWORD filter)
+                                   void *dst, const RECT *dst_rect, DWORD filter)
 {
     g_stretch_calls++;
-    src = eye::on_stretch_src(src);
+    bool skip = false;
+    src = eye::on_stretch_src(src, dst, &skip);
+    if (skip) {
+        return S_OK;
+    }
     return g_stretchrect_hook->stdcall<HRESULT>(self, src, src_rect, dst, dst_rect,
                                                 filter);
 }
