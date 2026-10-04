@@ -84,107 +84,6 @@ static BOOL file_exists(const wchar_t *path)
     return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
 }
 
-// ---- S4-2 option (c): arm DXVK's boot-time OpenVR interop --------------------
-//
-// Runs 7/8 (docs/s4_handover.md §S4 item 2) live-proved that
-// IVRCompositor::Submit with a D3D9 texture CRASHES the game process when
-// DXVK's boot-time OpenVR interop is disarmed — the conversion path is only
-// initialized at DEVICE CREATION, and device creation happens at game boot,
-// BEFORE the carrier exists. So the registry values must be in place before
-// the game process starts; this is the ONLY place that can do it.
-//
-// The carrier's attach-time ensure_vr_registry (openvr_bridge.cpp) is NOT
-// enough for this: it runs after the device was created. The two writers
-// coexist: this one arms the boot interop (conf openvr_boot_interop=on), the
-// carrier one still serves vrclient for openvr=on boots without it.
-//
-// RUN-6A DISCIPLINE (live-proven): with the values present at boot, DXVK's
-// d3d9 connects to SteamVR at device creation — if SteamVR is mid-transition
-// (standby cycling / vrserver restarting) the game can hang before the main
-// loop. SteamVR must be FULLY UP and stable BEFORE launching with
-// openvr_boot_interop=on. It must be up anyway for openvr=on.
-
-// Minimal conf parse: key=value lines, '#' comments. Returns TRUE when the
-// key exists with value "on".
-static BOOL conf_key_on(const wchar_t *conf_path, const char *key)
-{
-    FILE *f = _wfopen(conf_path, L"r");
-    if (!f) {
-        return FALSE;
-    }
-    char line[512];
-    BOOL on = FALSE;
-    size_t keylen = strlen(key);
-    while (fgets(line, sizeof(line), f)) {
-        char *hash = strchr(line, '#');
-        if (hash) {
-            *hash = '\0';
-        }
-        char *eq = strchr(line, '=');
-        if (!eq || (size_t)(eq - line) != keylen || strncmp(line, key, keylen) != 0) {
-            continue;
-        }
-        char *value = eq + 1;
-        while (*value == ' ' || *value == '\t') value++;
-        char *end = value + strlen(value);
-        while (end > value && (end[-1] == ' ' || end[-1] == '\t' ||
-                               end[-1] == '\r' || end[-1] == '\n')) {
-            *--end = '\0';
-        }
-        if (strcmp(value, "on") == 0) {
-            on = TRUE;
-        }
-        break;
-    }
-    fclose(f);
-    return on;
-}
-
-static void arm_boot_interop(void)
-{
-    // Same three values as the carrier's ensure_vr_registry (openvr_bridge.cpp)
-    // — proven values; PROTON_VR_RUNTIME is set by `proton run`, so the
-    // launcher sees exactly what the game process would.
-    char rt[MAX_PATH];
-    DWORD n = GetEnvironmentVariableA("PROTON_VR_RUNTIME", rt, sizeof(rt));
-    if (n == 0 || n >= sizeof(rt)) {
-        mc2_log("warning: openvr_boot_interop=on but PROTON_VR_RUNTIME is "
-                "missing — boot interop NOT armed (is SteamVR-for-Proton set up?)");
-        return;
-    }
-
-    HKEY key = NULL;
-    DWORD disp = 0;
-    LSTATUS rc = RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\VR", 0,
-                                 NULL, 0, KEY_SET_VALUE, NULL, &key, &disp);
-    if (rc != ERROR_SUCCESS) {
-        mc2_log("warning: RegCreateKeyExA(Software\\Wine\\VR) failed %lu — "
-                "boot interop NOT armed", rc);
-        return;
-    }
-
-    BOOL ok = TRUE;
-    if (RegSetValueExA(key, "PROTON_VR_RUNTIME", 0, REG_SZ,
-                       (const BYTE *)rt, n) != ERROR_SUCCESS) {
-        ok = FALSE;
-    }
-    const DWORD state = 1; // ready (probe-proven value; see openvr_bridge.cpp)
-    if (RegSetValueExA(key, "state", 0, REG_DWORD,
-                       (const BYTE *)&state, sizeof(state)) != ERROR_SUCCESS) {
-        ok = FALSE;
-    }
-    // The compositor reports EMPTY required instance extensions — "" is the
-    // semantically correct value (probe-verified).
-    if (RegSetValueExA(key, "openvr_vulkan_instance_extensions", 0, REG_SZ,
-                       (const BYTE *)"", 1) != ERROR_SUCCESS) {
-        ok = FALSE;
-    }
-    RegCloseKey(key);
-    mc2_log("openvr: boot-time DXVK interop ARMED (SteamVR must be up and "
-            "stable — run-6a discipline; disp=%lu, %s)",
-            disp, ok ? "ok" : "PARTIAL");
-}
-
 int main(void) // no arguments: everything is resolved from the install layout
 {
     // ---- Locate ourselves ------------------------------------------------
@@ -220,15 +119,6 @@ int main(void) // no arguments: everything is resolved from the install layout
     }
     mc2_log("game exe : %ls", game_exe);
     mc2_log("carrier  : %ls", carrier_dll);
-
-    // ---- S4-2 option (c): arm the boot-time interop BEFORE the game starts --
-    // DXVK's d3d9 reads these values at device creation (early game boot);
-    // after CreateProcessW is too late. Conf-gated (default off).
-    wchar_t conf_path[MAX_PATH];
-    path_join(conf_path, MAX_PATH, g_launcher_dir, L"mc2vr.conf");
-    if (conf_key_on(conf_path, "openvr_boot_interop")) {
-        arm_boot_interop();
-    }
 
     // ---- Start the game ----------------------------------------------------
     STARTUPINFOW si;

@@ -1,1 +1,0 @@
-RESULT: PASS — 32-bit D3D9 shared texture opened and verified from 64-bit D3D11; the shared-handle relay design is viable
