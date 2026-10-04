@@ -136,6 +136,24 @@ selftested first without the game.
   eye images) so IPC and the selftest work without an HMD. First check: does
   the prefix's 64-bit OpenXR runtime (`ActiveRuntime` → `C:\openxr\wineopenxr64.json`,
   already registered) create a session with a D3D11 binding under SteamVR?
+  **Status (2026-10-04)**: COMPLETE except the VISIBLE/FOCUSED render check. `src/host/` builds to
+  `build/win64/bin/mc2vr_host.exe` (`cmake -B build/win64 -DCMAKE_TOOLCHAIN_FILE=cmake/x86_64-w64-mingw32.cmake`;
+  loader built from vendored SDK 1.1.54 in `vendor/openxr-sdk/`). `--mock` verified under plain Wine.
+  Real mode verified under `proton run` with SteamVR up: instance (`SteamVR/OpenXR 2.17.10`,
+  `XR_KHR_D3D11_enable` present), D3D11 session on the runtime's LUID adapter (DXVK), LOCAL space,
+  2 swapchains **2016x2240**, 3 images each, formats offered: sRGB-only for 8-bit
+  (29 = R8G8B8A8_SRGB first, 91 = B8G8R8A8_SRGB; no plain UNORM — matters for S4-3), real head pose,
+  IPD 0.0640, asym FOV (L = -0.994/0.812/0.953/-0.954 rad). Clean IDLE→READY→SYNCHRONIZED→EXITING.
+  Gotchas (all handled in `xr_session.cpp::init_wine_vr_registry`):
+  1. Must run through `proton run` (plain `wine` gets wined3d: "Given ID3D11Device doesn't support
+     IDXGIVkInteropDevice").
+  2. wineopenxr negotiation fails (-6, runtime "lacks" every extension) unless `HKCU\Software\Wine\VR`
+     exists, has `wineopenxr_init_registry()` run, and a DWORD `state`=1 (normally published by
+     vrclient_x64 when an OpenVR app starts; state=2 fails). The host creates/fills these itself.
+  3. `--xr-debug` captures loader tracing to `mc2vr_host_xrloader.log`; stdout is lost under
+     `proton run`, read `mc2vr_host.log`.
+  OPEN: the session stays SYNCHRONIZED (shouldRender=false after frame 0) for 16 s — never VISIBLE;
+  cause unknown (headset not worn / SteamVR standby / dashboard?).
 - **S4-1 IPC + lifecycle**: shared-memory block + event rings (contract in
   stereo_design.md §S4). Launcher spawns the host before the game and waits
   for its ready line; carrier connects in stage 1 (non-fatal: no host ⇒ the
