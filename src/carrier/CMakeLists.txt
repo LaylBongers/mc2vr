@@ -12,7 +12,6 @@ add_library(mc2vr_carrier SHARED
     stub_trace.cpp
     stream_capture.cpp
     eye_replay.cpp
-    openvr_bridge.cpp
     vm_dump.cpp
     log.cpp
     sha256.c
