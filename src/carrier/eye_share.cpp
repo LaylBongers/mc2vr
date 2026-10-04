@@ -19,8 +19,12 @@ namespace {
 // in eye_replay.cpp — GetBackBuffer=18, CreateRenderTarget=28, StretchRect=34).
 constexpr size_t DSLOT_CreateTexture = 23;
 constexpr size_t DSLOT_CreateQuery = 118;
-// IDirect3DTexture9 vtable: IUnknown 0-2, ... GetLevelDesc=11, GetSurfaceLevel=12.
-constexpr size_t TSLOT_GetSurfaceLevel = 12;
+// IDirect3DTexture9 vtable (d3d9.h full count, verified live 2026-10-04 after
+// the slot-12 mistake): IUnknown 0-2, resource 3-10, BaseTexture9 11-16
+// (SetLOD, GetLOD, GetLevelCount, SetAutoGenFilterType, GetAutoGenFilterType,
+// GenerateMipSubLevels), then 17 GetLevelDesc, 18 GetSurfaceLevel, 19
+// LockRect, 20 UnlockRect, 21 AddDirtyRect.
+constexpr size_t TSLOT_GetSurfaceLevel = 18;
 constexpr size_t COM_Release = 2;
 // IDirect3DQuery9 vtable: IUnknown 0-2, GetDevice=3, GetType=4, GetDataSize=5,
 // GetData=6, Issue=7.
