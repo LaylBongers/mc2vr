@@ -42,6 +42,8 @@ constexpr size_t SLOT_SetVertexShaderConstantF = 94;
 // and must not receive the eye shift.
 constexpr size_t SLOT_SetRenderTarget = 37;
 constexpr size_t SLOT_StretchRect = 34;
+constexpr size_t SLOT_UpdateSurface = 30;
+constexpr size_t SLOT_UpdateTexture = 31;
 constexpr size_t SLOT_Surface_GetDesc = 12;
 // IDirect3DSwapChain9::GetPresentParameters
 constexpr size_t SLOT_SC_GetPresentParameters = 9;
@@ -58,6 +60,9 @@ using GetPresentParams_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *)
 using SetRenderTarget_t = HRESULT(__stdcall *)(void *, DWORD, void *);
 using StretchRect_t = HRESULT(__stdcall *)(void *, void *, const RECT *,
                                            void *, const RECT *, DWORD);
+using UpdateSurface_t = HRESULT(__stdcall *)(void *, void *, void *, const RECT *,
+                                             const POINT *);
+using UpdateTexture_t = HRESULT(__stdcall *)(void *, void *, void *);
 using SetVertexShaderConstantF_t = HRESULT(__stdcall *)(void *, UINT, const float *, UINT);
 
 // Leaked by design (see device.hpp).
@@ -69,6 +74,8 @@ safetyhook::VmHook *g_reset_hook = nullptr;
 safetyhook::VmHook *g_setvsconstf_hook = nullptr;
 safetyhook::VmHook *g_setrt_hook = nullptr;
 safetyhook::VmHook *g_stretchrect_hook = nullptr;
+safetyhook::VmHook *g_updatesurface_hook = nullptr;
+safetyhook::VmHook *g_updatetexture_hook = nullptr;
 
 void *g_device = nullptr;
 bool g_params_logged = false;
@@ -250,6 +257,29 @@ HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
                                                 filter);
 }
 
+// UpdateSurface (slot 30): same pass-2 rules as StretchRect (pin skips
+// backbuffer writes; main-RT sources read the eye RT instead) — closes the
+// "post-effects reading the main RT via other paths" watch item.
+HRESULT __stdcall updatesurface_hook(void *self, void *src, void *dst,
+                                     const RECT *src_rect, const POINT *dst_pt)
+{
+    bool skip = false;
+    src = eye::on_update_surface_src(src, dst, &skip);
+    if (skip) {
+        return S_OK;
+    }
+    return g_updatesurface_hook->stdcall<HRESULT>(self, src, dst, src_rect, dst_pt);
+}
+
+// UpdateTexture (slot 31): diagnostic only for now (the source is a texture;
+// it cannot be pointer-matched against the main RT surface). Counts pass-2
+// activity so the next audit knows whether this path exists at all.
+HRESULT __stdcall updatetexture_hook(void *self, void *src, void *dst)
+{
+    eye::on_update_texture(src, dst);
+    return g_updatetexture_hook->stdcall<HRESULT>(self, src, dst);
+}
+
 HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
 {
     // S2c-2: pass-2 slot-0 sets of the main RT go to the eye RT (device-level
@@ -336,6 +366,10 @@ bool capture_and_hook()
          "SetRenderTarget"},
         {SLOT_StretchRect, (void *)&stretchrect_hook, &g_stretchrect_hook,
          "StretchRect"},
+        {SLOT_UpdateSurface, (void *)&updatesurface_hook, &g_updatesurface_hook,
+         "UpdateSurface"},
+        {SLOT_UpdateTexture, (void *)&updatetexture_hook, &g_updatetexture_hook,
+         "UpdateTexture"},
     };
 
     for (const SlotSpec &spec : slots) {

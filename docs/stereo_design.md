@@ -225,9 +225,14 @@ the consumer never reads view camera data.)
    two Presents alternate them on the monitor (visually: rapid horizontal
    camera oscillation = working temporal stereo). Main scene RT is fp16 HDR
    (D3DFMT_A16B16G16R16F) — the fp16 decode + tonemap BMP path and the
-   `eye_monitor_pin` monitor pin (skip pass-2 EndSubmit copy, backbuffer
-   keeps LEFT = S4 steady state) are implemented (2026-10-04, awaiting live
-   run) — see docs/s2c_handover.md "S2c-2 next steps IMPLEMENTED".
+   `eye_monitor_pin` monitor pin are implemented and first-run verified
+   (2026-10-04 14:00: pipeline works; dumps were black because the window
+   opened during loading — now content-gated; the menu pin works, and a new
+   RE fact: gameplay's final composite into the backbuffer is NOT a
+   StretchRect (pin never fired in gameplay while the monitor alternated)
+   — pin v2 + sink-RT draw-path pin + UpdateSurface/UpdateTexture hooks
+   shipped for the next run). See docs/s2c_handover.md "S2c-2 next steps
+   IMPLEMENTED" + "FIRST LIVE RUN".
 
 ### S4 — Presentation / HMD runtime
 

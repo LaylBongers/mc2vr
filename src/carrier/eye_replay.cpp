@@ -57,13 +57,25 @@ D3DSURFACE_DESC g_main_desc = {};
 void *g_backbuffer = nullptr;
 bool g_backbuffer_failed = false;
 
+// Pass-2 stand-in for the backbuffer (draw-path monitor pin): the game's
+// final composite may be a DRAW into RT0=backbuffer rather than a blit, so
+// pass-2 slot-0 sets of the backbuffer are redirected here. Created lazily
+// from the backbuffer's own desc; dropped on Reset.
+void *g_sink_rt = nullptr;
+
 // ---- window counters (main thread writes; poller reads+resets) -------------
 
 uint64_t g_redirects = 0;
 uint64_t g_blit_redirects = 0;
 uint64_t g_pin_skips = 0;
+uint64_t g_bb_rt_redirects = 0;     // pass-2 SetRenderTarget(0, backbuffer) -> sink
+uint64_t g_update_redirects = 0;    // pass-2 UpdateSurface src==mainRT redirected
+uint64_t g_update_pin_skips = 0;    // pass-2 UpdateSurface into backbuffer skipped
+uint64_t g_update_texture_calls = 0; // pass-2 UpdateTexture (diagnostic; src is a
+                                    // texture and can't be matched vs the RT surface)
 uint64_t g_dumps_written = 0;
 uint64_t g_dump_failures = 0;
+uint64_t g_dump_empty = 0;          // empty-surface dump attempts (black loading RT)
 
 // ---- dump window --------------------------------------------------------------
 
@@ -178,11 +190,31 @@ uint8_t tonemap(float v)
     return g_tonemap_lut[(uint32_t)scaled];
 }
 
-// Read a render target into system memory and write it as a BMP.
-// Handles 32-bit RGB (A8R8G8B8=21, X8R8G8B8=22) and fp16 HDR
-// (A16B16G16R16F=113); anything else is logged and skipped rather than
-// misread.
-void dump_surface(const char *tag, void *surface, uint64_t frame)
+// Rate limit for empty-surface dump attempts: loading screens / videos hold
+// fully-black RTs, and without this the dump window would re-copy the RT on
+// every frame boundary until real content shows up.
+bool dump_attempt_due()
+{
+    static LARGE_INTEGER freq = {};
+    static LARGE_INTEGER until = {};
+    if (freq.QuadPart == 0) {
+        QueryPerformanceFrequency(&freq);
+    }
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (until.QuadPart != 0 && now.QuadPart < until.QuadPart) {
+        return false;
+    }
+    until.QuadPart = now.QuadPart + freq.QuadPart / 2; // retry every 0.5s
+    return true;
+}
+
+// Read a render target into system memory and write it as a BMP. Returns
+// true only when a non-empty BMP was written (empty/black surfaces do not
+// count against the dump window). Handles 32-bit RGB (A8R8G8B8=21,
+// X8R8G8B8=22) and fp16 HDR (A16B16G16R16F=113); anything else is logged
+// and skipped rather than misread.
+bool dump_surface(const char *tag, void *surface, uint64_t frame)
 {
     uint32_t bpp = 0;
     if (g_main_desc.Format == 21 || g_main_desc.Format == 22) {
@@ -197,7 +229,7 @@ void dump_surface(const char *tag, void *surface, uint64_t frame)
             MC2VR_LOG("eye: dump skipped — main RT format %u not 32-bit RGB or fp16",
                       (unsigned)g_main_desc.Format);
         }
-        return;
+        return false;
     }
     void **vt = *(void ***)g_device;
 
@@ -211,7 +243,7 @@ void dump_surface(const char *tag, void *surface, uint64_t frame)
     if (FAILED(hr) || !sysmem) {
         g_dump_failures++;
         MC2VR_LOG("eye: dump %s FAILED at CreateOffscreenPlainSurface hr=%08lx", tag, (unsigned long)hr);
-        return;
+        return false;
     }
     auto grab = (HRESULT(__stdcall *)(void *, void *, void *))vt[DSLOT_GetRenderTargetData];
     hr = grab(g_device, surface, sysmem);
@@ -228,7 +260,32 @@ void dump_surface(const char *tag, void *surface, uint64_t frame)
                       tag, locked.pBits, (int)locked.Pitch);
             ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
             ((Release_t)sys_vt[SSLOT_Release])(sysmem);
-            return;
+            return false;
+        }
+        // Empty probe: subsample every 64 bytes (8 px at fp16). A fully
+        // black RT = loading/video frame — skip it; the window retries
+        // until real (gameplay) content appears.
+        {
+            const uint8_t *p = (const uint8_t *)locked.pBits;
+            const uint32_t bytes = (uint32_t)locked.Pitch * h;
+            bool nonempty = false;
+            for (uint32_t i = 0; i < bytes; i += 64) {
+                if (p[i] != 0) {
+                    nonempty = true;
+                    break;
+                }
+            }
+            if (!nonempty) {
+                g_dump_empty++;
+                if (g_dump_empty == 1 || g_dump_empty % 100 == 0) {
+                    MC2VR_LOG("eye: dump %s skipped — surface empty "
+                              "(loading/video; %llu attempts so far)",
+                              tag, (unsigned long long)g_dump_empty);
+                }
+                ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
+                ((Release_t)sys_vt[SSLOT_Release])(sysmem);
+                return false;
+            }
         }
         const uint32_t row = ((w * 3 + 3) / 4) * 4;
         uint8_t *bgr = new (std::nothrow) uint8_t[row * h];
@@ -268,15 +325,31 @@ void dump_surface(const char *tag, void *surface, uint64_t frame)
                     *slash = L'\0';
                 }
             }
-            _snwprintf(path, MAX_PATH, L"%s\\mc2vr_eye_%s_frame%llu.bmp", dir, tag,
+            // Widen the tag by hand: in a WIDE printf plain %s means a WIDE
+            // string (MSVCRT + C99 agree), so passing the narrow "left"/
+            // "right" literal reinterprets its bytes (plus adjacent merged
+            // literals) as UTF-16 — the 2026-10-04 run produced mojibake
+            // filenames that broke the analysis regex (bit us once).
+            wchar_t wtag[8] = {};
+            size_t tlen = strlen(tag);
+            if (tlen > 7) {
+                tlen = 7;
+            }
+            for (size_t i = 0; i < tlen; i++) {
+                wtag[i] = (wchar_t)(unsigned char)tag[i];
+            }
+            _snwprintf(path, MAX_PATH, L"%s\\mc2vr_eye_%s_frame%llu.bmp", dir, wtag,
                        (unsigned long long)frame);
             if (write_bmp(path, bgr, w, h)) {
                 g_dumps_written++;
                 MC2VR_LOG("eye: dumped %s eye -> %ls (%ux%u)", tag, path, w, h);
-            } else {
-                g_dump_failures++;
-                MC2VR_LOG("eye: dump %s FAILED to write BMP", tag);
+                delete[] bgr;
+                ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
+                ((Release_t)sys_vt[SSLOT_Release])(sysmem);
+                return true;
             }
+            g_dump_failures++;
+            MC2VR_LOG("eye: dump %s FAILED to write BMP", tag);
             delete[] bgr;
         }
         ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
@@ -285,6 +358,7 @@ void dump_surface(const char *tag, void *surface, uint64_t frame)
         MC2VR_LOG("eye: dump %s FAILED hr=%08lx", tag, (unsigned long)hr);
     }
     ((Release_t)sys_vt[SSLOT_Release])(sysmem);
+    return false;
 }
 
 // ---- eye RT --------------------------------------------------------------------
@@ -342,6 +416,40 @@ void *backbuffer()
     return g_backbuffer;
 }
 
+// Pass-2 stand-in for the backbuffer (draw-path monitor pin). Same desc as
+// the cached backbuffer (X8R8G8B8-sized, not the fp16 main RT).
+bool ensure_sink_rt()
+{
+    if (g_sink_rt || !g_backbuffer || !g_device) {
+        return g_sink_rt != nullptr;
+    }
+    D3DSURFACE_DESC desc = {};
+    if (FAILED(((SurfaceDesc_t)(*(void ***)g_backbuffer)[SSLOT_GetDesc])(
+            g_backbuffer, &desc))) {
+        return false;
+    }
+    void **vt = *(void ***)g_device;
+    auto create = (HRESULT(__stdcall *)(void *, UINT, UINT, D3DFORMAT, D3DMULTISAMPLE_TYPE,
+                                        DWORD, BOOL, void **, void **))vt[DSLOT_CreateRenderTarget];
+    void *rt = nullptr;
+    HRESULT hr = create(g_device, desc.Width, desc.Height, desc.Format,
+                        desc.MultiSampleType, desc.MultiSampleQuality, FALSE, &rt, nullptr);
+    if (FAILED(hr) || !rt) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            MC2VR_LOG("eye: sink RT CreateRenderTarget FAILED hr=%08lx — "
+                      "pass-2 backbuffer draws run unredirected",
+                      (unsigned long)hr);
+        }
+        return false;
+    }
+    g_sink_rt = rt;
+    MC2VR_LOG("eye: created sink RT %ux%u fmt=%u (pass-2 backbuffer stand-in)",
+              desc.Width, desc.Height, (unsigned)desc.Format);
+    return true;
+}
+
 } // namespace
 
 // ---- public entry points ---------------------------------------------------------
@@ -356,7 +464,8 @@ void *on_set_render_target(void *device, uint32_t index, void *game_surface)
 
     // Record the game's main scene target: the first slot-0 surface observed
     // after boot/Reset. (BeginSubmit sets it every frame; menus included.)
-    if (!g_main_rt && game_surface && g_pass != 2) {
+    // Never the backbuffer itself (boot screens may draw straight to it).
+    if (!g_main_rt && game_surface && g_pass != 2 && game_surface != g_backbuffer) {
         D3DSURFACE_DESC desc = {};
         if (SUCCEEDED(((SurfaceDesc_t)(*(void ***)game_surface)[SSLOT_GetDesc])(
                 game_surface, &desc))) {
@@ -365,6 +474,17 @@ void *on_set_render_target(void *device, uint32_t index, void *game_surface)
             MC2VR_LOG("eye: main scene RT recorded: %p %ux%u fmt=%u", game_surface,
                       desc.Width, desc.Height, (unsigned)desc.Format);
         }
+    }
+
+    // Draw-path monitor pin: the gameplay final composite may be a DRAW into
+    // RT0=backbuffer (the 2026-10-04 run showed ZERO pass-2 StretchRects into
+    // the backbuffer during gameplay, yet the monitor still alternated —
+    // so the write is not a blit we can skip). Redirect pass-2 slot-0 sets of
+    // the backbuffer to the sink RT; the backbuffer keeps pass 1's LEFT.
+    if (g_pin_enabled && g_pass == 2 && game_surface == backbuffer() &&
+        ensure_sink_rt()) {
+        g_bb_rt_redirects++;
+        return g_sink_rt;
     }
 
     if (!g_rt_enabled || g_pass != 2 || game_surface != g_main_rt || !ensure_eye_rt()) {
@@ -378,27 +498,65 @@ void *on_set_render_target(void *device, uint32_t index, void *game_surface)
 void *on_stretch_src(void *game_src, void *dst, bool *skip)
 {
     *skip = false;
-    if (!g_rt_enabled || g_pass != 2 || game_src != g_main_rt || !g_eye_rt) {
+    if (g_pass != 2) {
         return game_src;
     }
-    g_blit_redirects++;
-    // Monitor pin: pass 2's EndSubmit RT0->backbuffer copy is skipped so the
-    // backbuffer keeps pass 1's LEFT image (stable monitor; the pass-2 RIGHT
-    // image stays in the eye RT — this is also the S4 steady state, where
-    // the compositor consumes the eye RT and Present keeps showing pass 1).
-    // Mid-frame reads (dst != backbuffer) still run: they feed pass-2 post
-    // effects and must see the redirected source.
+    // Monitor pin v2: ANY pass-2 blit into the backbuffer is skipped so the
+    // backbuffer keeps pass 1's LEFT image (stable monitor; pass 2's RIGHT
+    // image stays in the eye RT — also the S4 steady state, where the
+    // compositor consumes the eye RT and Present keeps showing pass 1).
+    // v1 required the source to be the redirected main RT, which matched the
+    // menu's EndSubmit copy but never fired in gameplay (final hop comes
+    // from an intermediate post surface or is a draw — see the sink RT path).
     if (g_pin_enabled && dst == backbuffer()) {
         g_pin_skips++;
         *skip = true;
+        return game_src;
     }
+    if (!g_rt_enabled || game_src != g_main_rt || !g_eye_rt) {
+        return game_src;
+    }
+    g_blit_redirects++;
     return g_eye_rt;
+}
+
+void *on_update_surface_src(void *game_src, void *dst, bool *skip)
+{
+    // UpdateSurface (slot 30): same pass-2 rules as StretchRect — pin skips
+    // copies into the backbuffer, main-RT sources read the eye RT instead.
+    *skip = false;
+    if (g_pass != 2) {
+        return game_src;
+    }
+    if (g_pin_enabled && dst == backbuffer()) {
+        g_update_pin_skips++;
+        *skip = true;
+        return game_src;
+    }
+    if (!g_rt_enabled || game_src != g_main_rt || !g_eye_rt) {
+        return game_src;
+    }
+    g_update_redirects++;
+    return g_eye_rt;
+}
+
+void on_update_texture(void *src_tex, void *dst_tex)
+{
+    // UpdateTexture (slot 31): diagnostic only — the source is a TEXTURE and
+    // cannot be pointer-matched against the main RT surface. Counter tells
+    // us whether this path even exists in pass 2 (open watch item).
+    (void)src_tex;
+    (void)dst_tex;
+    if (g_pass == 2) {
+        g_update_texture_calls++;
+    }
 }
 
 void set_pass(uint32_t pass)
 {
     static uint32_t dump_remaining = 0;
     static bool window_done = false;
+    static bool left_pending = false; // left BMP written this frame, awaiting right
     const uint64_t frame = hooks::frame_count();
 
     if (pass == g_pass) {
@@ -410,20 +568,26 @@ void set_pass(uint32_t pass)
     if (!window_done && dump_remaining == 0 && pass == 1 && dump_armed()) {
         window_done = true;
         dump_remaining = g_dump_frames;
-        MC2VR_LOG("eye: dump window open — dumping the next %u frame pairs", g_dump_frames);
+        MC2VR_LOG("eye: dump window open — dumping the next %u NON-EMPTY frame pairs",
+                  g_dump_frames);
     }
 
     // Pass boundaries: pass 1 -> 2 = pass 1 finished (dump left = main RT);
-    // pass 2 -> 0 = pass 2 finished (dump right = eye RT).
-    if (dump_remaining > 0 && g_rt_enabled && g_pass == 1 && g_main_rt) {
-        dump_surface("left", g_main_rt, frame);
+    // pass 2 -> 0 = pass 2 finished (dump right = eye RT). A pair counts
+    // only when BOTH sides are non-empty (empty = black loading/video frame:
+    // skip the pair, window stays open, retry at the 0.5s cadence).
+    if (dump_remaining > 0 && g_rt_enabled && g_pass == 1 && g_main_rt &&
+        dump_attempt_due()) {
+        left_pending = dump_surface("left", g_main_rt, frame);
     }
-    if (dump_remaining > 0 && g_rt_enabled && g_pass == 2 && g_eye_rt) {
-        dump_surface("right", g_eye_rt, frame);
-        dump_remaining--;
-        if (dump_remaining == 0) {
-            MC2VR_LOG("eye: dump window closed");
+    if (dump_remaining > 0 && g_rt_enabled && g_pass == 2 && g_eye_rt && left_pending) {
+        if (dump_surface("right", g_eye_rt, frame)) {
+            dump_remaining--;
+            if (dump_remaining == 0) {
+                MC2VR_LOG("eye: dump window closed");
+            }
         }
+        left_pending = false;
     }
 
     g_pass = pass;
@@ -447,26 +611,43 @@ void on_reset()
         ((Release_t)(*(void ***)g_eye_rt)[SSLOT_Release])(g_eye_rt);
         g_eye_rt = nullptr;
     }
+    if (g_sink_rt) {
+        ((Release_t)(*(void ***)g_sink_rt)[SSLOT_Release])(g_sink_rt);
+        g_sink_rt = nullptr;
+    }
     g_main_rt = nullptr;
     g_main_desc = {};
-    MC2VR_LOG("eye: Reset — eye RT dropped, main RT recording cleared");
+    MC2VR_LOG("eye: Reset — eye/sink RT dropped, main RT recording cleared");
 }
 
 void report_window()
 {
     if (g_redirects > 0 || g_blit_redirects > 0 || g_pin_skips > 0 ||
-        g_dump_failures > 0 || g_dumps_written > 0) {
+        g_bb_rt_redirects > 0 || g_update_redirects > 0 || g_update_pin_skips > 0 ||
+        g_update_texture_calls > 0 || g_dump_failures > 0 || g_dumps_written > 0 ||
+        g_dump_empty > 0) {
         MC2VR_LOG("eye window: rtRedirects=%llu blitRedirects=%llu pinSkips=%llu "
-                  "dumps=%llu dumpFails=%llu",
+                  "bbRtRedirects=%llu updRedirects=%llu updPinSkips=%llu updTex=%llu "
+                  "dumps=%llu dumpFails=%llu dumpEmpty=%llu",
                   (unsigned long long)g_redirects, (unsigned long long)g_blit_redirects,
                   (unsigned long long)g_pin_skips,
+                  (unsigned long long)g_bb_rt_redirects,
+                  (unsigned long long)g_update_redirects,
+                  (unsigned long long)g_update_pin_skips,
+                  (unsigned long long)g_update_texture_calls,
                   (unsigned long long)g_dumps_written,
-                  (unsigned long long)g_dump_failures);
+                  (unsigned long long)g_dump_failures,
+                  (unsigned long long)g_dump_empty);
     }
     g_redirects = 0;
     g_blit_redirects = 0;
     g_pin_skips = 0;
+    g_bb_rt_redirects = 0;
+    g_update_redirects = 0;
+    g_update_pin_skips = 0;
+    g_update_texture_calls = 0;
     g_dump_failures = 0;
+    g_dump_empty = 0;
 }
 
 bool set_pass_enabled(const char *value)

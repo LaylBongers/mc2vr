@@ -188,10 +188,11 @@ installed as the stream tap — extend it, don't re-site it.
   eye RT, Present keeps showing pass 1). Conf template updated; the
   DEPLOYED conf at <GAME_DIR>/mc2vr/ is manual — add the key there.
   LIVE-RUN RECIPE: keep frame_replay=on eye_pass=on eye_rt=on
-  eye_dump_frames=5 stream_dump_delay=15, add eye_monitor_pin=on, get into
-  GAMEPLAY; expected: stable LEFT image on the monitor (no L/R flicker),
-  10 BMP dumps (5 pairs), log lines "eye: dumped left/right ...", pinSkips≈
-  rtRedirects>0 in the eye window report, delta=0, Present=2x frames. Then
+  eye_dump_frames=5, eye_monitor_pin=on, stream_dump_delay=60 (be in
+  GAMEPLAY by then; black frames are auto-skipped), expected: stable LEFT
+  image on the monitor (no L/R flicker), 10 BMP dumps (5 pairs), log lines
+  "eye: dumped left/right ...", pinSkips/bbRtRedirects>0 in the eye window
+  report, delta=0, Present=2x frames. Then
   `tools/analyze_dumps.py <GAME_DIR>/mc2vr/mc2vr_carrier.log` reports the
   measured horizontal parallax per pair at 1-px resolution (upgraded
   2026-10-04: full-res numpy shift search, +/-64px window, sign convention
@@ -201,6 +202,42 @@ installed as the stream tap — extend it, don't re-site it.
   shift << shift-0 SAD = stereoscopy proven. If dumps come out washed out,
   note it — a future `eye_dump_exposure` key is the knob (not needed for
   parallax math).
+- **S2c-2 FIRST LIVE RUN of the fp16/pin build (2026-10-04 14:00, menu ->
+  gameplay ~50s in)**: fp16 dump pipeline WORKED (10 BMPs, 2560x1440,
+  delta=0, replay 1:1, rewrite active in gameplay ~190k rows/10s window)
+  but two failures + one new RE fact:
+  (a) BMPs were pitch-black — the dump window opened at 15s = intro/loading
+    (gameplay starts ~52s after boot; streams/frame jumps to 264+ only
+    then). FIXED: dumps are now CONTENT-GATED (nonempty probe; black pairs
+    don't count against eye_dump_frames, retries at 0.5s cadence) and the
+    deployed conf moved stream_dump_delay 15 -> 60.
+  (b) BMP filenames were mojibake (e.g. mc2vr_eye_<CJK>_frame453.bmp):
+    `_snwprintf(L"...%s...", narrow_tag)` — plain %s in a WIDE printf means
+    a WIDE string (MSVCRT + C99 agree), so the narrow "left"/"right" literal
+    bytes (plus GCC-merged adjacent literals, e.g. "eye: dump window
+    closed") were reinterpreted as UTF-16. Also truncated the log's %ls
+    display (CJK unmappable in cp1252). FIXED: tag widened by hand (no
+    printf-format ambiguity). Same-class lesson: never pass narrow strings
+    to wide printf formats in this codebase.
+  (c) NEW RE FACT — gameplay's final composite into the backbuffer is NOT
+    a StretchRect from mainRT: the pin (v1: skip pass-2 blits with
+    src==mainRT && dst==backbuffer) fired 112/79/301/172x per 10s window in
+    MENU/loading (backbuffer identity via GetBackBuffer(0) slot 18 is
+    CORRECT — menu EndSubmit copy is mainRT->backbuffer and got pinned) but
+    ZERO in gameplay while the monitor still alternated L/R — so in
+    gameplay no pass-2 StretchRect writes the backbuffer at all; the pass-2
+    final image reaches the presented surface via another path (draw with
+    RT0=backbuffer, or UpdateSurface/UpdateTexture). Present params plated:
+    backbuffer 2560x1440 fmt=22 (X8R8G8B8), fullscreen, swapeffect=1
+    (DISCARD), count=1 — the EndSubmit copy is an fp16->X8R8G8B8 conversion
+    blit. FIXES SHIPPED (awaiting next run): pin v2 skips ANY pass-2 blit
+    into the backbuffer; pass-2 SetRenderTarget(0, backbuffer) is
+    redirected to a carrier sink RT (draw-path pin, backbuffer-desc-sized);
+    UpdateSurface (slot 30, same rules as StretchRect) + UpdateTexture
+    (slot 31, counter only — texture src can't be matched vs the RT surface)
+    are now hooked; window report adds bbRtRedirects / updRedirects /
+    updPinSkips / updTex / dumpEmpty so the next audit pinpoints the actual
+    gameplay mechanism if the monitor still alternates.
 - **S2c-2 (staging bullet, historical)**: replay into a second eye RT with the OTHER eye's rewrite active;
   A/B via the existing hold timer driving eye selection, dump both RTs to PNG
   (extend `tools/analyze_dumps.py` if needed) and check parallax geometry.
