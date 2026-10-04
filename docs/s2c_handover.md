@@ -1,5 +1,10 @@
 # S2c Handover — Second Draw Pass (Stream Replay)
 
+> **MILESTONE COMPLETE (2026-10-04)** — S2c-0/1/2/3 are all live-verified;
+> this file is now the milestone RECORD (run lessons: DISCARD, wide-printf,
+> content-gating, the composite-is-a-draw proof). The ACTIVE handover for
+> the next agent is `docs/s4_handover.md` (HMD presentation / OpenVR).
+
 Self-contained brief for the agent picking up S2c. Everything here is also in the
 referenced docs; per-address facts live in Ghidra plates, not repeated here.
 

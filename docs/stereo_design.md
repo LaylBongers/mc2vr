@@ -12,7 +12,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 |---|---|
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
-| S2 per-eye injection | camera pan **done and visually clean at game scale**; `stereo` mode **verified in-game 2026-10-04** (right axis tracks camera rotation, unit-length, flips at 2s; log evidence in the handover note below); stream replay (S2c) pending |
+| S2 per-eye injection | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel in-game verified; S2c second draw pass built on it — deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Record: `docs/s2c_handover.md`; active brief: `docs/s4_handover.md` |
 | S4 HMD presentation, S5 motion controls | not started — **OpenXR ruled out** (Valve's OpenXR driver has no 32-bit+DX9 support); S4 targets OpenVR/SteamVR |
 
 ## Handover — state and next steps (2026-10-03)
