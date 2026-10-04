@@ -7,6 +7,7 @@ add_executable(mc2vr_host
     eyes.cpp
     mock.cpp
     xr_session.cpp
+    shared_eyes.cpp
 )
 
 target_link_libraries(mc2vr_host PRIVATE openxr_loader d3d11 dxgi)

@@ -183,5 +183,42 @@ void send_shutdown()
     }
 }
 
+bool push_command(Mc2IpcMsg *m)
+{
+    if (!connected()) return false;
+    return mc2_ring_push(&g.blk->commands, m) == 0;
+}
+
+bool send_config(uint32_t width, uint32_t height, uint32_t format)
+{
+    if (!connected()) return false;
+    Mc2IpcMsg m;
+    ZeroMemory(&m, sizeof m);
+    m.type = MC2VR_CMD_CONFIG;
+    m.a = width;
+    m.b = height;
+    m.c = format;
+    m.d = 0;
+    if (!push_command(&m)) return false;
+    MC2VR_LOG("ipc: Config queued (%ux%u fmt %u)", width, height, format);
+    return true;
+}
+
+bool send_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
+                      uint32_t eye, uint32_t width, uint32_t height)
+{
+    if (!connected()) return false;
+    Mc2IpcMsg m;
+    ZeroMemory(&m, sizeof m);
+    m.type = MC2VR_CMD_FRAME_READY;
+    m.x = frameId;
+    m.y = handle;
+    m.a = slot;
+    m.b = eye;
+    m.c = width;
+    m.d = height;
+    return push_command(&m);
+}
+
 }  // namespace ipc
 }  // namespace mc2vr

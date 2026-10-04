@@ -15,6 +15,7 @@
 #include "ipc.hpp"
 #include "log.hpp"
 #include "pose.hpp"
+#include "shared_eyes.hpp"
 
 namespace xrs {
 
@@ -365,6 +366,10 @@ int run(const Options& opt) {
     }
     hostlog::write("mc2vr_host: ready (openxr session up)");
 
+    // S4-2: shared-eye mirror (diagnostic window; independent of OpenXR —
+    // its failure changes nothing).
+    seyes::init(&s.d3d);
+
     unsigned n = 0;
     bool ok = true;
     while (!s.exiting && ok) {
@@ -379,10 +384,16 @@ int run(const Options& opt) {
                                ipc::carrier_pid());
                 if (s.running) xrRequestExitSession(s.session);
                 s.exiting = true;
+            } else if (cmd.type == MC2VR_CMD_FRAME_READY) {
+                // S4-2: {x=frameId y=handle a=slot b=eye c=w d=h}
+                seyes::on_frame_ready(cmd.x, cmd.y, cmd.a, cmd.b, cmd.c, cmd.d);
+            } else if (cmd.type == MC2VR_CMD_CONFIG) {
+                seyes::on_config(cmd.a, cmd.b, cmd.c);
             } else {
                 hostlog::write("openxr: unexpected command %u ignored", cmd.type);
             }
         }
+        seyes::pump();
         if (ipc::carrier_died(1000)) {
             if (s.running) xrRequestExitSession(s.session);
             s.exiting = true;

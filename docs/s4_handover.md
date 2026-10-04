@@ -41,13 +41,23 @@ D3D11 + IPC server. Design, IPC contract and risks: `docs/stereo_design.md` §S4
 
 ## Next session — start here
 
-1. S4-0 and S4-1 are DONE (S4-1 selftest-verified 2026-10-04; live `./launch.sh`
-   verification of the carrier↔host attach still pending — see the S4-1 entry
-   in the engineering list below). Start S4-2.
-2. S4-2 (shared-handle image path), per the list below. It builds on the IPC
-   `FRAME_READY` command (shape already defined in `src/common/mc2vr_ipc.h`);
-   start with the 20-line two-process DXVK D3D9→D3D11 `pSharedHandle` probe
-   before building anything else on it.
+1. S4-0 and S4-1 are DONE (both selftest- and live-verified). S4-2 is
+   CODE-COMPLETE and selftest-verified (2026-10-04) — the two-process probe
+   PROVED the shared-handle mechanism, the carrier capture path and the host
+   mirror are implemented, and the selftest exercises the new IPC commands.
+   What remains for S4-2: the live `./launch.sh` verification (see the S4-2
+   entry in the engineering list + "live checklist" below). After that, S4-3.
+2. The S4-2 probe result (do not re-litigate): DXVK D3D9 legacy `pSharedHandle`
+   textures OPEN in DXVK D3D11 (`OpenSharedResource`) across processes in
+   every combination tested (D3D9Ex/plain device × A8R8G8B8/X8R8G8B8; probe:
+   `tools/probe/run_shared_handle.sh`, matrix all-PASS 2026-10-04).
+   A8R8G8B8→DXGI 87 (B8G8R8A8_UNORM), X8R8G8B8→88 (B8G8R8X8_UNORM, alpha reads
+   0xFF). Cross-process GPU sync needs ONLY a producer-side event-query flush
+   (no fence on legacy handles): **`GetData` must pass `D3DGETDATA_FLUSH`** —
+   without the flag DXVK never submits the command buffer and the copy never
+   lands (lived through in this probe: all-zero reads + 10s query timeouts
+   until the flag was added). This gotcha applies to any future carrier-side
+   GPU-sync spin.
 3. S4-1 code and its docs are committed; the working tree is clean.
 
 Host source map (`src/host/`): `main.cpp` (args `--mock --frames N --xr-debug`, log setup),
@@ -135,7 +145,8 @@ working regardless).
 ### Conf keys
 
 Documented in `conf/mc2vr.conf` (read at DLL attach). Stereo pipeline keys: `view_row_rewrite=stereo`,
-`view_ipd`, `view_asym_x/y`, `frame_replay`, `eye_pass`, `eye_rt`, `eye_monitor_pin`; diagnostics are
+`view_ipd`, `view_asym_x/y`, `frame_replay`, `eye_pass`, `eye_rt`, `eye_monitor_pin`, `eye_share` (S4-2,
+default off — flip it in the DEPLOYED conf for the live run); diagnostics are
 all `debug_*` and default off. The DEPLOYED conf at `<GAME_DIR>/mc2vr/` is never overwritten by
 `launch.sh` — edit it there manually. Analysis tools: `tools/analyze_dumps.py` (parses view/S2c/eye
 evidence), `tools/eye_pair_fixture.py`. S4-1 env vars (not conf keys): `MC2VR_NO_HOST` (launcher skips
@@ -212,6 +223,49 @@ selftested first without the game.
   DXVK's D3D9 `pSharedHandle` handles open in DXVK's D3D11 across processes
   is the key S4 risk; fallbacks are listed in stereo_design.md §S4. Decide
   with a 20-line two-process probe before building anything else on it.
+  **Status (2026-10-04)**: MECHANISM PROVEN + PIPELINE IMPLEMENTED; live run
+  pending. Probe (`tools/probe/run_shared_handle.sh`, two-process win32 D3D9
+  producer × win64 D3D11 consumer under the game's Proton prefix, matrix
+  {D3D9Ex,plain} × {A8R8G8B8,X8R8G8B8}): ALL PASS — handles open
+  cross-process, pattern page-exact, live redraws observable with only a
+  producer-side event-query sync (see "Next session" item 2 for the formats +
+  the D3DGETDATA_FLUSH gotcha; gotchas live in the probe sources too).
+  Implemented on top of it:
+  - Carrier: `src/carrier/eye_share.cpp` (conf `eye_share=off|on`, needs
+    `frame_replay=on`; default OFF — flip it in the DEPLOYED conf at
+    `<GAME_DIR>/mc2vr/mc2vr.conf`, which launch.sh never overwrites). At the
+    pass boundaries `eye_replay::set_pass` calls
+    `share::on_pass_boundary`: 1→2 blits the backbuffer (LEFT final) into
+    ring slot N, 2→0 blits the backbuffer (RIGHT final, BEFORE the monitor-pin
+    restore) into the same slot N, each followed by a bounded (8 ms) event-query
+    GPU sync (`D3DGETDATA_FLUSH`!) and a `FRAME_READY` push; the slot advances
+    after both eyes publish. Ring = 4 slots/eye of RENDERTARGET-usage textures
+    (StretchRect requires RT surfaces) created with `pSharedHandle` via
+    device-slot 23 (`CreateTexture`; slot verified against d3d9.h + the
+    live-verified slot family). `CONFIG` (w/h/fmt) is sent once per ring
+    creation. No host ⇒ module inert (no allocation); Reset drops and re-creates
+    the ring lazily. Counters in the 10s `share window:` line (capturesL/R,
+    published, ringFull, syncTimeouts, noHostSkips).
+  - IPC: carrier `ipc::send_config`/`send_frame_ready` (`src/carrier/ipc.cpp`);
+    shapes unchanged from the header (`x=frameId y=handle a=slot b=eye c=w d=h`).
+  - Host: `src/host/shared_eyes.cpp` opens every handle once (cache, 64 cap),
+    keeps the newest per eye, and mirrors the pair to a 1280×720 desktop
+    window `mc2vr host mirror [ L | R ]` (GDI StretchDIBits from a staging
+    read — no shaders/swapchain, cannot disturb the OpenXR session). Wired
+    into `xr_session.cpp`'s command drain + `seyes::pump()` per host frame;
+    `--mock` logs the new commands (no mirror) — the selftest probe now sends
+    CONFIG + FRAME_READY(handle 0) as a shape check.
+  - **Live checklist (the remaining S4-2 work)**: edit the DEPLOYED conf
+    (`eye_share=on`), run `./launch.sh` into GAMEPLAY with SteamVR up, then
+    audit: carrier log `share: shared RT ring ready` + per-window
+    `share window:` counters (capturesL≈capturesR≈published, ringFull=0,
+    syncTimeouts≈0); host log `seyes: mirror window up`, `seyes: opened handle
+    0x...` per slot (8), per-window `seyes: window stats recv/drawn` lines; and
+    the mirror window showing the live stereo pair side-by-side (L|R parallax
+    visible vs a static single image). Watch for: RT+shared `CreateTexture`
+    failing (probe only proved usage-0), staging `Map` failures on the 2560×1440
+    X8R8G8B8 surfaces, and syncTimeouts>0 (would mean the flush spin is
+    budget-starved).
 - **S4-3 OpenXR submission**: host copies/uses the shared images as the
   swapchain content, `xrEndFrame` projection layer with the pose+FOV the
   carrier reports having rendered with (lets the runtime reproject). Host
@@ -267,8 +321,9 @@ selftested first without the game.
 
 ## Open questions the new agent inherits
 
-- DXVK D3D9→D3D11 shared-handle interop across processes (S4-2 probe), and cross-process
-  GPU synchronization for it — see stereo_design.md §S4.
+- S4-2 live run: does the full carrier→host path (capture → shared RT →
+  FRAME_READY → mirror) hold up in GAMEPLAY at 2560×1440 (RT-usage shared
+  textures + staging reads are untested live — the probe proved usage-0)?
 - `g_RenderQueue2` (2D/overlay) consumption timing vs Present — needed for HUD
   handling; add counters when S4 starts.
 - Shaders without `viewContextData`, shadow-map basis, PS-side mono camera data: see

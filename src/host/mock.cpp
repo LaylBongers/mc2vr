@@ -42,7 +42,21 @@ bool stop_requested() {
                            ipc::carrier_pid());
             return true;
         }
-        hostlog::write("mock: unexpected command %u ignored", m.type);
+        if (m.type == MC2VR_CMD_CONFIG) {
+            hostlog::write("mock: ring config %ux%u fmt %u noted (no mirror in "
+                           "mock)", m.a, m.b, m.c);
+        } else if (m.type == MC2VR_CMD_FRAME_READY) {
+            // Mock has no D3D11 mirror; log the first one only (the selftest
+            // probe sends handle 0 as a shape check).
+            static uint64_t seen = 0;
+            if (seen++ < 3)
+                hostlog::write("mock: FRAME_READY frame=%llu handle=0x%llx eye=%u "
+                               "slot=%u %ux%u (not opened in mock)",
+                               (unsigned long long)m.x, (unsigned long long)m.y,
+                               m.b, m.a, m.c, m.d);
+        } else {
+            hostlog::write("mock: unexpected command %u ignored", m.type);
+        }
     }
     return ipc::carrier_died(1000);
 }

@@ -28,5 +28,15 @@ bool pop_event(Mc2IpcMsg *out);
 // Queue the Shutdown command (idempotent, logged once).
 void send_shutdown();
 
+// S4-2: announce the shared-texture ring geometry once (a=width b=height
+// c=format). False when not connected or the ring is full.
+bool send_config(uint32_t width, uint32_t height, uint32_t format);
+
+// S4-2: publish one eye's rendered frame in a shared-texture slot
+// (x=frameId y=sharedHandle a=slot b=eye c=width d=height). False when not
+// connected or the command ring is full.
+bool send_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
+                      uint32_t eye, uint32_t width, uint32_t height);
+
 }  // namespace ipc
 }  // namespace mc2vr

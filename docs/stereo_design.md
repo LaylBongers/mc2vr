@@ -13,7 +13,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
-| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1 IPC + lifecycle DONE (selftest + live-verified 2026-10-04: launcher spawns the host + waits ready, carrier connects non-fatally, seqlock pose/state + SPSC event/command rings cross-bitness win64↔win32, mock round trip incl. Shutdown, host death watch). S4-2..S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
+| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1 IPC + lifecycle DONE (selftest + live-verified 2026-10-04: launcher spawns the host + waits ready, carrier connects non-fatally, seqlock pose/state + SPSC event/command rings cross-bitness win64↔win32, mock round trip incl. Shutdown, host death watch). S4-2 shared-handle image path CODE-COMPLETE 2026-10-04 (shared-handle interop PROVEN cross-process by `tools/probe/run_shared_handle.sh` — all matrix PASS; carrier capture `src/carrier/eye_share.cpp` conf `eye_share`, host mirror `src/host/shared_eyes.cpp`; selftest-verified, live `./launch.sh` run pending). S4-3..S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
 | S5 motion controls | not started |
 
 ## Open RE items
@@ -266,24 +266,45 @@ monitor thread logs state transitions and host death, never touches the
 render thread (S4-4's pose consumer reads the seqlock directly). Selftest
 phase B = win64 host `--mock` ↔ win32 probe stand-in carrier round trip.
 
+**S4-2 implemented (2026-10-04, live run pending)**: the interop risk is
+RESOLVED — `tools/probe/run_shared_handle.sh` (win32 DXVK D3D9 producer ×
+win64 DXVK D3D11 consumer, same Proton prefix) proved legacy `pSharedHandle`
+textures open via `OpenSharedResource` cross-process in every tested
+combination (D3D9Ex/plain × A8R8G8B8/X8R8G8B8; A8R8G8B8→DXGI 87, X8R8G8B8→88).
+Cross-process GPU sync needs only a producer-side event-query, with the
+caveat that DXVK requires `D3DGETDATA_FLUSH` on `GetData` or the command
+buffer is never submitted (copies silently never land — caught live by the
+probe). Carrier: `src/carrier/eye_share.cpp` (`eye_share=off|on`, needs
+`frame_replay=on`): RENDERTARGET-usage shared ring (4/eye, StretchRect needs
+RT surfaces), boundary blits + bounded event-query sync + `FRAME_READY`
+publish + one-time `CONFIG`; inert without a host; ring re-created after
+Reset. Host: `src/host/shared_eyes.cpp` opens handles (cached), tracks the
+newest per eye, mirrors L|R to a desktop window via GDI `StretchDIBits` from
+staging reads (S4-2 acceptance = the mirror shows the live stereo pair;
+OpenXR submission is S4-3). Selftest phase B additionally pushes
+CONFIG/FRAME_READY(handle 0) as command-drain shape checks.
+
 **Lifecycle**: launcher starts the host before the game and waits for its ready
 log line, then proceeds with the suspended-game injection flow (see
 `launcher_plan.md`). Host exits when the carrier signals `Shutdown` or the game
 process ends.
 
 **Open risks (resolve with probes before building on them)**
-1. **DXVK shared-handle interop across processes**: does a D3D9 texture created
-   with `pSharedHandle` under DXVK open in DXVK D3D11 (`OpenSharedResource`) in
-   another process? Probe first (S4-2), two tiny processes. Fallbacks in order:
-   (a) D3D9Ex-created resource / `IDXGIResource`-style NT handle if the DXVK
-   build supports it; (b) a Wine-level bridge (`winevulkan`/`VK_KHR_external_memory`
-   handles passed between the processes); (c) CPU staging through shared memory
-   (2×2560×1440×4 B ≈ 29 MB/frame — feasible only at reduced resolution/rate,
-   last resort).
+1. **DXVK shared-handle interop across processes**: RESOLVED 2026-10-04 — see
+   "S4-2 implemented" above (probe `tools/probe/run_shared_handle.sh`, all
+   matrix PASS; formats 87/88; event-query-only sync with the
+   `D3DGETDATA_FLUSH` caveat). Remaining live unknowns (S4-2 live checklist in
+   `s4_handover.md`): RENDERTARGET-usage shared textures and 2560×1440 staging
+   reads in gameplay. Fallbacks if the live run contradicts the probe:
+   (a) usage-0 shared textures filled via `UpdateTexture` (probe-proven shape);
+   (b) `VK_KHR_external_memory` bridge; (c) CPU staging through shared memory
+   (2×2560×1440×4 B ≈ 29 MB/frame — reduced resolution/rate only, last resort).
 2. **Cross-process GPU sync**: legacy shared handles carry no fence/keyed mutex.
    Plan: carrier issues an event-query flush after the copy before publishing
    `FrameReady` (the game already spins on one per submit), host reads only
-   published slots. Verify no tearing across slots.
+   published slots. Verify no tearing across slots. **Probe-verified 2026-10-04**
+   (live redraws observed, zero torn frames); the carrier implements the
+   bounded flush (`share::gpu_sync`) — see the S4-2 gotcha above.
 3. **OpenXR under wineopenxr**: D3D11 session creation, supported formats
    (sRGB handling of the LDR finals), and cost of host↔runtime hops.
 4. HUD in-composite or not (see s4_handover.md S4-5).

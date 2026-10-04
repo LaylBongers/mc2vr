@@ -124,9 +124,29 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // 5. Send Shutdown; the host must acknowledge by exiting (hostExiting
-    //    flag + process death).
+    // 5. S4-2 command shapes: CONFIG + FRAME_READY (handle 0 = "no texture",
+    //    used by this stand-in; the real carrier sends live shared handles).
+    //    The host must drain them without complaint and stay alive.
     Mc2IpcMsg m;
+    memset(&m, 0, sizeof m);
+    m.type = MC2VR_CMD_CONFIG;
+    m.a = 2560; m.b = 1440; m.c = 22;  // w/h/D3DFMT_X8R8G8B8
+    if (mc2_ring_push(&blk->commands, &m) != 0) {
+        printf("[probe] FAIL: command ring full (CONFIG)\n");
+        return 1;
+    }
+    memset(&m, 0, sizeof m);
+    m.type = MC2VR_CMD_FRAME_READY;
+    m.x = 42; m.y = 0; m.a = 0; m.b = 0; m.c = 2560; m.d = 1440;
+    if (mc2_ring_push(&blk->commands, &m) != 0) {
+        printf("[probe] FAIL: command ring full (FRAME_READY)\n");
+        return 1;
+    }
+    printf("[probe] CONFIG + FRAME_READY(handle 0) queued\n");
+    Sleep(300);  // give the host's drain loop a beat to process them
+
+    // 6. Send Shutdown; the host must acknowledge by exiting (hostExiting
+    //    flag + process death).
     memset(&m, 0, sizeof m);
     m.type = MC2VR_CMD_SHUTDOWN;
     if (mc2_ring_push(&blk->commands, &m) != 0) {

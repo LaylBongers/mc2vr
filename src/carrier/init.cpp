@@ -5,6 +5,7 @@
 #include "build_lock.h"
 #include "device.hpp"
 #include "eye_replay.hpp"
+#include "eye_share.hpp"
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "ipc.hpp"
@@ -145,6 +146,12 @@ static void load_conf()
             // monitor holds pass 1's LEFT image (S4 steady state).
             if (!eye::set_pin_enabled(value)) {
                 MC2VR_LOG("conf: eye_monitor_pin=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "eye_share") == 0) {
+            // S4-2: pass-boundary backbuffer capture into shared-handle RTs +
+            // FRAME_READY publish to the OpenXR host.
+            if (!share::set_enabled(value)) {
+                MC2VR_LOG("conf: eye_share=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_eye_dump_frames") == 0) {
             uint32_t n;

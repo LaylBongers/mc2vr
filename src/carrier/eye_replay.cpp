@@ -13,6 +13,7 @@
 #include "log.hpp"
 #include "view_rewrite.hpp"
 #include "device.hpp"
+#include "eye_share.hpp"
 
 namespace mc2vr::eye {
 
@@ -577,6 +578,12 @@ void set_pass(uint32_t pass)
         }
     }
 
+    // S4-2: the backbuffer holds the pass-1 LEFT final at 1->2 and the pass-2
+    // RIGHT final at 2->0 (the pin restore below would overwrite it — capture
+    // runs first). The 0->1 boundary carries no fresh eye (backbuffer still
+    // holds the previous frame's presented RIGHT) — the callee ignores it.
+    mc2vr::share::on_pass_boundary(pass, g_device, backbuffer());
+
     // Pass boundaries: pass 1 -> 2 = pass 1 finished (dump left = main RT);
     // pass 2 -> 0 = pass 2 finished (dump right = eye RT). A pair counts
     // only when BOTH sides are non-empty (empty = black loading/video frame:
@@ -628,11 +635,13 @@ void on_reset()
     }
     g_main_rt = nullptr;
     g_main_desc = {};
+    mc2vr::share::on_reset();
     MC2VR_LOG("eye: Reset — eye/snapshot RT dropped, main RT recording cleared");
 }
 
 void report_window()
 {
+    mc2vr::share::report_window();
     if (g_redirects > 0 || g_blit_redirects > 0 || g_pin_saves > 0 ||
         g_pin_restores > 0 || g_bb_rt_sets > 0 || g_update_redirects > 0 ||
         g_update_texture_calls > 0 || g_dump_failures > 0 || g_dumps_written > 0 ||
