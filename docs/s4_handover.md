@@ -41,16 +41,19 @@ D3D11 + IPC server. Design, IPC contract and risks: `docs/stereo_design.md` §S4
 
 ## Next session — start here
 
-1. S4-0 and S4-1 are DONE (both selftest- and live-verified). S4-2 is
-   CODE-COMPLETE and selftest-verified (2026-10-04) — the two-process probe
-   PROVED the shared-handle mechanism, the carrier capture path and the host
-   mirror are implemented, and the selftest exercises the new IPC commands.
-   What remains for S4-2: the live `./launch.sh` verification (see the S4-2
-   entry in the engineering list + "live checklist" below). After that, S4-3.
+1. S4-0 through S4-2 are DONE — S4-2 is now LIVE-VERIFIED (2026-10-04,
+   gameplay run: the host mirror showed the live stereo pair, clearly two
+   offset cameras; full pipeline ~30 Hz, zero failures in carrier
+   `share window:` and host `seyes: window stats` counters). Next: S4-3
+   (OpenXR submission — host copies the shared images into the swapchains,
+   `xrEndFrame` projection layer with the carrier-rendered pose+FOV; swapchain
+   formats are sRGB-only 8-bit — 29/91 — which matters, see the S4-0 status).
 2. The S4-2 probe result (do not re-litigate): DXVK D3D9 legacy `pSharedHandle`
    textures OPEN in DXVK D3D11 (`OpenSharedResource`) across processes in
    every combination tested (D3D9Ex/plain device × A8R8G8B8/X8R8G8B8; probe:
-   `tools/probe/run_shared_handle.sh`, matrix all-PASS 2026-10-04).
+   `tools/probe/run_shared_handle.sh`, matrix all-PASS 2026-10-04, and later
+   upgraded to the full live path — RT-usage shared texture + StretchRect
+   from a swapchain backbuffer + Present + event-query sync — also all-PASS).
    A8R8G8B8→DXGI 87 (B8G8R8A8_UNORM), X8R8G8B8→88 (B8G8R8X8_UNORM, alpha reads
    0xFF). Cross-process GPU sync needs ONLY a producer-side event-query flush
    (no fence on legacy handles): **`GetData` must pass `D3DGETDATA_FLUSH`** —
@@ -223,14 +226,18 @@ selftested first without the game.
   DXVK's D3D9 `pSharedHandle` handles open in DXVK's D3D11 across processes
   is the key S4 risk; fallbacks are listed in stereo_design.md §S4. Decide
   with a 20-line two-process probe before building anything else on it.
-  **Status (2026-10-04)**: MECHANISM PROVEN + PIPELINE IMPLEMENTED; live run
-  pending. Probe (`tools/probe/run_shared_handle.sh`, two-process win32 D3D9
-  producer × win64 D3D11 consumer under the game's Proton prefix, matrix
-  {D3D9Ex,plain} × {A8R8G8B8,X8R8G8B8}): ALL PASS — handles open
-  cross-process, pattern page-exact, live redraws observable with only a
-  producer-side event-query sync (see "Next session" item 2 for the formats +
-  the D3DGETDATA_FLUSH gotcha; gotchas live in the probe sources too).
-  Implemented on top of it:
+  **Status (2026-10-04)**: **COMPLETE — LIVE-VERIFIED** (gameplay run: the
+  mirror window showed the live stereo pair, two visibly offset cameras; the
+  carrier `share window:` counters and host `seyes: window stats` both ran
+  ~30 Hz with zero failures). Mechanism proven by the probe (`tools/probe/
+  run_shared_handle.sh`, later upgraded to the full live path — RT-usage
+  shared texture + StretchRect from a swapchain backbuffer + Present +
+  event-query sync; matrix all-PASS; gotchas live in the probe sources and
+  "Next session" item 2). En route the live runs shook out three bugs — all
+  fixed, all lessons recorded: (1) raw-vtable texture slot GetSurfaceLevel=18
+  (not 12), (2) query slots Issue=6/GetData=7 (not reversed — reversed slots
+  crashed the game writing through pointer 0x1), (3) the host mirror never
+  CopyResource'd before Map (black panes). Implemented components:
   - Carrier: `src/carrier/eye_share.cpp` (conf `eye_share=off|on`, needs
     `frame_replay=on`; default OFF — flip it in the DEPLOYED conf at
     `<GAME_DIR>/mc2vr/mc2vr.conf`, which launch.sh never overwrites). At the
@@ -241,40 +248,24 @@ selftested first without the game.
     GPU sync (`D3DGETDATA_FLUSH`!) and a `FRAME_READY` push; the slot advances
     after both eyes publish. Ring = 4 slots/eye of RENDERTARGET-usage textures
     (StretchRect requires RT surfaces) created with `pSharedHandle` via
-    device-slot 23 (`CreateTexture`; slot verified against d3d9.h + the
-    live-verified slot family). `CONFIG` (w/h/fmt) is sent once per ring
-    creation. No host ⇒ module inert (no allocation); Reset drops and re-creates
-    the ring lazily. Counters in the 10s `share window:` line (capturesL/R,
-    published, ringFull, syncTimeouts, noHostSkips).
+    device-slot 23. `CONFIG` (w/h/fmt) is sent once per ring creation. No host
+    ⇒ module inert (no allocation); Reset drops and re-creates the ring
+    lazily. Counters in the 10s `share window:` line (capturesL/R, published,
+    ringFull, syncTimeouts, noHostSkips).
   - IPC: carrier `ipc::send_config`/`send_frame_ready` (`src/carrier/ipc.cpp`);
     shapes unchanged from the header (`x=frameId y=handle a=slot b=eye c=w d=h`).
-  - Host: `src/host/shared_eyes.cpp` opens every handle once (cache, 64 cap),
-    keeps the newest per eye, and mirrors the pair to a 1280×720 desktop
-    window `mc2vr host mirror [ L | R ]` (GDI StretchDIBits from a staging
-    read — no shaders/swapchain, cannot disturb the OpenXR session). Wired
-    into `xr_session.cpp`'s command drain + `seyes::pump()` per host frame;
-    `--mock` logs the new commands (no mirror) — the selftest probe now sends
+  - Host: `src/host/shared_eyes.cpp` opens every handle once (cache, reserved
+    to 64 so Entry pointers stay stable across post-Reset handle waves), keeps
+    the newest per eye, and mirrors the pair to a 1280×720 desktop window
+    `mc2vr host mirror [ L | R ]` (GDI StretchDIBits from a staging read — no
+    shaders/swapchain, cannot disturb the OpenXR session). Wired into
+    `xr_session.cpp`'s command drain + `seyes::pump()` per host frame;
+    `--mock` logs the new commands (no mirror) — the selftest probe sends
     CONFIG + FRAME_READY(handle 0) as a shape check.
-  - **Live checklist (the remaining S4-2 work)**: edit the DEPLOYED conf
-    (`eye_share=on`), run `./launch.sh` into GAMEPLAY with SteamVR up, then
-    audit: carrier log `share: shared RT ring ready` + per-window
-    `share window:` counters (capturesL≈capturesR≈published, ringFull=0,
-    syncTimeouts≈0); host log `seyes: mirror window up`, `seyes: opened handle
-    0x...` per slot (8), per-window `seyes: window stats recv/drawn` lines; and
-    the mirror window showing the live stereo pair side-by-side (L|R parallax
-    visible vs a static single image). Watch for: RT+shared `CreateTexture`
-    failing (probe only proved usage-0 — LIVE-PROVEN OK 2026-10-04), staging
-    `Map` failures on the 2560×1440 X8R8G8B8 surfaces, and syncTimeouts>0 (would
-    mean the flush spin is budget-starved). Slot-count gotcha fixed en route
-    (two live-run bugs from raw-vtable slot counts — the discipline: count from
-    mingw's d3d9.h FULL re-declared interface blocks; DXVK follows it): (1)
-    texture GetSurfaceLevel=18, not 12 (BaseTexture9 carries SetLOD/GetLOD;
-    slot 12 = GetLOD returned S_OK and ignored the out pointer — white mirror);
-    (2) query Issue=6/GetData=7, NOT reversed — reversed slots turned
-    Issue(1) into GetData(pData=1), and a completed event query wrote through
-    pointer 0x1 (game crash at the second boundary; the first survived because
-    the query was never really issued and frame-pointer epilogues healed the
-    arg-count stack drift).
+  - Note for S4-3: the mirror's GDI staging-read path stays useful as a
+    diagnostic; the OpenXR submission replaces it as the primary consumer of
+    the SAME opened shared textures (`seyes::on_frame_ready` cache +
+    `g_latest[]` are the seam to reuse).
 - **S4-3 OpenXR submission**: host copies/uses the shared images as the
   swapchain content, `xrEndFrame` projection layer with the pose+FOV the
   carrier reports having rendered with (lets the runtime reproject). Host
@@ -330,9 +321,10 @@ selftested first without the game.
 
 ## Open questions the new agent inherits
 
-- S4-2 live run: does the full carrier→host path (capture → shared RT →
-  FRAME_READY → mirror) hold up in GAMEPLAY at 2560×1440 (RT-usage shared
-  textures + staging reads are untested live — the probe proved usage-0)?
+- S4-2 residual watch items for S4-3 (live-verified 2026-10-04, but keep an eye
+  out): `ringFull` was 16 in one 10s carrier window during the live run
+  (command-ring backpressure — benign at these rates, but worth a glance if it
+  grows), and the backbuffer MS type is now logged at ring creation.
 - `g_RenderQueue2` (2D/overlay) consumption timing vs Present — needed for HUD
   handling; add counters when S4 starts.
 - Shaders without `viewContextData`, shadow-map basis, PS-side mono camera data: see
