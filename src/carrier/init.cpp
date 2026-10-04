@@ -95,14 +95,6 @@ static void load_conf()
             if (!ovr::set_enabled(value)) {
                 MC2VR_LOG("conf: openvr=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "openvr_init_registry") == 0) {
-            // S4-1 run 5: in-game vrclient_init_registry DEADLOCKED the game
-            // (Background-session teardown race) — off by default, experiments
-            // only (docs/s4_handover.md).
-            if (!ovr::set_init_registry(value)) {
-                MC2VR_LOG("conf: openvr_init_registry=%s not recognized "
-                          "(use on|off)", value);
-            }
         } else if (strcmp(key, "stub_trace") == 0) {
             if (!trace::set_enabled(value)) {
                 MC2VR_LOG("conf: stub_trace=%s not recognized (use on|off)", value);
