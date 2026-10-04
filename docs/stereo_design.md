@@ -1,6 +1,6 @@
 # Stereo Submission Design
 
-Design for dual-eye world rendering + HMD presentation. Per-address facts live
+Design for dual-eye world rendering + HMD presentation (via a separate 64-bit OpenXR host process). Per-address facts live
 in Ghidra plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`,
 `g_ViewContextTable`, `g_PrimitiveBase`, `RenderQueue_SubmitWorldPackets`).
 Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
@@ -13,7 +13,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
-| S4 HMD presentation, S5 motion controls | not started — **OpenXR ruled out** (Valve's OpenXR driver has no 32-bit+DX9 support); S4 targets OpenVR/SteamVR |
+| S4 HMD presentation, S5 motion controls | not started — S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
 
 ## Open RE items
 
@@ -86,7 +86,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
   hooks not needed for the GPU-boundary design).
 - `LtiRenderer_EndSubmit` already StretchRects RT0 → backbuffer
   (`LtiRenderer+0x3ea4`) whenever they differ — an existing RT→backbuffer copy
-  path the compositor can co-opt.
+  path the capture can co-opt.
 
 ## The view channel (implemented)
 
@@ -122,7 +122,7 @@ passes the eye sign alternates every `view_stereo_hold` seconds (A/B check:
 shadows/materials must stay glued at each eye). Asymmetric per-eye projection
 is an edit to the same rows: NDC centre shift `e_k` lands in row_k.w as
 `|row_k.xyz|·e_k·eyeSign` (`view_asym_x/y`, default 0 — real values and sign
-convention come from the HMD runtime in S4).
+convention come from the OpenXR runtime via the host in S4).
 
 **Exact registers come from the game's own resolver, not shape matching**
 (blocks arrive split across upload calls, and register numbers are reused
@@ -150,8 +150,8 @@ space (the VS passes world position to the PS), so they are eye-invariant.
 **GPU-boundary per-eye injection**: the frame renders once per eye. During an
 eye pass the `viewContextData` registers in the uploads are rewritten for that
 eye (pan + asymmetric-projection VP edits). The second draw pass replays the
-frame's command stream through the plaintext interpreter. A compositor at
-`Present` delivers both eye textures to the HMD. (A producer-side design —
+frame's command stream through the plaintext interpreter. The eye images are handed
+to a separate OpenXR host process (§S4) that presents them to the HMD. (A producer-side design —
 duplicating each view's element with shadow ViewEntry/staging — cannot work:
 the consumer never reads view camera data.)
 
@@ -159,7 +159,7 @@ the consumer never reads view camera data.)
 
 ### S2 — remaining work
 
-1. **Real per-eye offsets from HMD pose** (S4 supplies the pose): replace the static
+1. **Real per-eye offsets from HMD pose** (the S4 host supplies the pose over IPC): replace the static
    `±right·IPD/2` with the pose-derived offset plus per-eye asymmetric projection.
 2. **Shaders without `viewContextData` are not rewritten** and will lag the
    pan (not yet observed as visibly wrong — check billboards, rain, particles,
@@ -195,39 +195,95 @@ Code: `src/carrier/debug/stream_capture.cpp` (stream tap + replay hook), `src/ca
 - Details: `docs/s4_handover.md`; run-by-run record in git history
   (`git log --follow -- docs/s2c_handover.md`).
 
-### S4 — Presentation / HMD runtime
+### S4 — Presentation / HMD runtime (OpenXR host process)
 
-- `Present` VmtHook (proven) as the compositor entry: submit both eye textures
-  (or an SBS target) to OpenVR/SteamVR. Interop blit needs no swapchain changes;
-  the game's Present continues to the monitor untouched.
-- Slot-5 (`PostUpdateHook`) claim as the per-frame VR orchestration point:
-  sample HMD pose, marshal to the main thread before the producer loop, feed
-  S2. Slot-4 (`EndOfFrameHook`) for end-of-frame bookkeeping (timewarp input,
-  frame pacing — `main_game_loop.md`).
-- **OpenVR, not OpenXR** (corrected 2026-10-04): Valve's OpenXR driver does not
-  support the 32-bit + DX9 combination, so OpenXR is ruled out — despite wineopenxr
-  being present AND registered in this prefix (both `ActiveRuntime` keys →
-  `C:\openxr\wineopenxr64.json`, 32-bit `wineopenxr.dll` in syswow64; the WOW64
-  filesystem redirect makes the 64-bit manifest loadable from 32-bit processes —
-  presence is NOT the blocker, the driver is). OpenVR bridge IS installed in this
-  exact prefix (SteamVR-for-Proton layout, disk-verified 2026-10-04): `openvrpaths.vrpath`
-  (steamuser AppData/Local/openvr) points runtime → `C:\vrclient\`, which holds both
-  `vrclient.dll` (i386) and `vrclient_x64.dll`; `syswow64` has 32-bit `vrclient.dll` and
-  `openvr_api_dxvk.dll` (the DXVK-interop OpenVR API — D3D9/DXVK texture sharing is the
-  intended submission path for 32-bit apps). Open integration questions: which DLL the
-  carrier should LoadLibrary (no plain `openvr_api.dll` in the prefix), and
-  `IVRCompositor::Submit` with `IDirect3DTexture9` under Proton+DXVK. Pose sampling
-  (`IVRSystem::GetDeviceToAbsoluteTrackingPose`) goes on the slot-5 hook.
-- UI/2D (`g_RenderQueue2`): render once; composite over both eyes in the
-  compositor. Per-eye rects are compositor-owned.
-- Fallback if per-eye RTs can't differ at the D3D level per view: Present-hook
-  interop blit of the single backbuffer into per-eye targets.
+**Why a host process**: the game is 32-bit + D3D9 (DXVK). Valve's OpenXR driver
+has no 32-bit+DX9 support, so no VR runtime can be driven in-process. A **64-bit
+host exe running in the same Wine prefix** with a D3D11 device (the supported
+OpenXR combination) owns the OpenXR instance/session, frame loop and event pump.
+The carrier only captures images and exchanges data. (The prefix already has
+wineopenxr registered for 64-bit: both `ActiveRuntime` keys →
+`C:\openxr\wineopenxr64.json`; to be confirmed in S4-0 that a D3D11 session
+actually comes up.) OpenVR is not used anywhere.
+
+```
+game (i386, D3D9/DXVK)                              host (x86_64, D3D11/DXVK)
+ carrier ── eye copies ──► shared textures ──────────► OpenSharedResource
+    │                                                    │  OpenXR swapchains,
+    └── frame msgs ──────► IPC (shared mem + rings) ◄────┘  xrWaitFrame/xrEndFrame
+        ◄── pose/FOV/state/events ──────────────────────    event pump, actions
+```
+
+**Carrier side**
+- Image source: the per-eye tonemapped LDR finals on the backbuffer at the pass
+  boundaries (1→2 = LEFT, 2→0 = RIGHT, before the pin restore — see
+  `s4_handover.md` design observation). Copy with `device::blit_surfaces` into
+  a ring (N≥3 per eye) of DEFAULT-pool textures created with `pSharedHandle`.
+  Only LDR X8R8G8B8/A8R8G8B8: the fp16 RTs are pre-tonemap.
+- Pose consumption at the slot-5 `PostUpdateHook` (proven 1:1 with frames):
+  lock-free read of the latest pose from the shared block, never blocking the
+  render thread. Slot-4 `EndOfFrameHook` for end-of-frame bookkeeping.
+- `Present` VmtHook is NOT the submit path any more; the host submits. The
+  game's Present continues to the monitor untouched.
+
+**Host side** (`src/host/`, planned): OpenXR instance/session (D3D11 binding),
+`xrWaitFrame` loop at HMD cadence independent of the game, swapchain images
+filled from the opened shared textures, projection layer using the pose+FOV the
+carrier reports having rendered with (lets the runtime reproject the 30 Hz game
+to the display rate). Newest complete pair is re-submitted while no new frame
+arrives. Event pump: session state, reference-space changes, interaction
+profile, action poses (S5). `--mock` mode: synthetic pose + test pattern, no
+runtime — used by the selftest and for IPC development.
+
+**IPC contract** (shared memory section + named events; all primitives work
+under Wine; versioned header, host = server/creator, carrier = client):
+- *Shared block, latest-wins (seqlock)*: HMD pose (position+orientation +
+  predicted display time), per-eye pose/FOV (asym-projection input), IPD,
+  session state, recenter counter, later controller poses/button state.
+- *Ring host→carrier (events)*: session focus/visible/lost, exit requested,
+  recenter, action events (button/axis edges). SPSC, drained at slot 5.
+- *Ring carrier→host (commands)*: `FrameReady{frameId, slot, per-eye shared
+  handle/size/format, rendered pose+FOV}`, config (resolution, format),
+  `Shutdown`. SPSC.
+- Shared handles are legacy D3D9 handles (process-global values, not NT
+  handles) so they travel as plain integers in `FrameReady`; slot lifetime is
+  governed by a per-slot in-use flag (host sets while it reads, carrier skips
+  busy slots rather than blocking).
+- Failure policy: no host / host dies ⇒ carrier keeps running the monitor
+  stereo path unchanged and logs once; host never blocks the game.
+
+**Lifecycle**: launcher starts the host before the game and waits for its ready
+log line, then proceeds with the suspended-game injection flow (see
+`launcher_plan.md`). Host exits when the carrier signals `Shutdown` or the game
+process ends.
+
+**Open risks (resolve with probes before building on them)**
+1. **DXVK shared-handle interop across processes**: does a D3D9 texture created
+   with `pSharedHandle` under DXVK open in DXVK D3D11 (`OpenSharedResource`) in
+   another process? Probe first (S4-2), two tiny processes. Fallbacks in order:
+   (a) D3D9Ex-created resource / `IDXGIResource`-style NT handle if the DXVK
+   build supports it; (b) a Wine-level bridge (`winevulkan`/`VK_KHR_external_memory`
+   handles passed between the processes); (c) CPU staging through shared memory
+   (2×2560×1440×4 B ≈ 29 MB/frame — feasible only at reduced resolution/rate,
+   last resort).
+2. **Cross-process GPU sync**: legacy shared handles carry no fence/keyed mutex.
+   Plan: carrier issues an event-query flush after the copy before publishing
+   `FrameReady` (the game already spins on one per submit), host reads only
+   published slots. Verify no tearing across slots.
+3. **OpenXR under wineopenxr**: D3D11 session creation, supported formats
+   (sRGB handling of the LDR finals), and cost of host↔runtime hops.
+4. HUD in-composite or not (see s4_handover.md S4-5).
+
+- UI/2D (`g_RenderQueue2`): render once; if it is not already inside the per-pass
+  composite, send as a separate layer (quad layer in the host).
+- Fallback if per-eye RTs can't differ at the D3D level per view: single-backbuffer
+  interop blit into per-eye targets.
 
 ### S5 — Motion controls (separate track)
 
 Follows the logic-mod track in `docs/launcher_plan.md` (XInput stubs
 `0x00a64d56/0x00a64d5c`, idle-reset buffer pair `0x017d30e8`/`0x00f7fb90`
-first). Pose marshal point is the slot-5 hook (S4).
+first). Pose/input marshal point is the slot-5 hook (S4); controller poses and button/axis state arrive from the host's OpenXR actions over the same IPC.
 
 ## Hook inventory
 
@@ -237,8 +293,8 @@ first). Pose marshal point is the slot-5 hook (S4).
 | Device `SetRenderTarget` (slot 37) | VmtHook (observe only) | main-pass gate |
 | Upload gate `MC2_VCD_UPLOAD_CMP` `0x00855a78` | MidHook | publish the technique's exact viewContextData/ViewProj map |
 | `RenderCmd_ExecuteStream` opcode `0x008569f5` | MidHook | M3 histogram + S2c stream tap |
-| Device `Present` (17) / `Reset` (16) | VmtHook | S4 compositor / params |
-| `g_RenderShell` slots 4/5 | cloned-vtable claim | S4 orchestration (counting no-op now) |
+| Device `Present` (17) / `Reset` (16) | VmtHook | present params / monitor path (the host, not Present, submits to the HMD) |
+| `g_RenderShell` slots 4/5 | cloned-vtable claim | S4 orchestration: pose read, event drain, FrameReady publish (counting no-op now) |
 | `SubmitWorldPackets` loop head `0x0048e9ea` | MidHook | M3 view aggregation |
 | Stub call `0x004c99f9`/`0x004c99fe` + ~15 plaintext helper entries | MidHook | optional callback tracer (`debug_stub_trace`, see `render_path.md`) |
 
@@ -259,9 +315,10 @@ data. **Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
   units; at IPD scale and for the periphery, re-check. A later
   `SetPixelShaderConstantF` hook could shift camera-derived rows by the eye
   delta (the derivation is VM'd, so correctness is not guaranteed).
-- `g_RenderQueue2` consumption timing relative to Present (the compositor needs
+- `g_RenderQueue2` consumption timing relative to Present (HUD handling needs
   the 2D stream's frame timing) — add queue2 counters when S4 starts.
 - GPU sync: every frame begins by waiting for all prior GPU work (event-query spin in `LtiRenderer_BeginSubmit`, see `render_path.md`). Per-eye passes inherit it; the pacing design must account for it (S2c replay happens after this point).
-- Frame pacing: game vsync-locked 60 Hz; HMD typically 90 Hz. A Present-hook
-  compositor can run at HMD cadence independently (pose extrapolation via the
-  HMD runtime). Decide in S4.
+- Frame pacing: game vsync-locked 60 Hz (30 Hz with two passes); HMD typically 90 Hz.
+  The host runs at HMD cadence independently and re-submits the newest pair with
+  runtime reprojection. Whether the game should be throttled to the HMD or run free
+  is decided in S4-5.

@@ -21,7 +21,7 @@
 //     SNAPSHOTTED (composite+HUD included) before pass 2 and RESTORED after;
 //     the pass-2 composite draw runs unsuppressed and the game presents the
 //     same LEFT image at both per-frame Presents — the S4 steady state (the
-//     compositor will consume the eye RT instead).
+//     S4 host path will consume the eye images instead).
 //   - debug_eye_dump_frames=N: after debug_dump_delay seconds, write BMP pairs
 //     (mc2vr_eye_left/right_frame<N>.bmp) for the parallax check — pairs count
 //     only when NON-EMPTY (black loading/video frames are skipped and retried
@@ -46,7 +46,7 @@ bool set_rt_enabled(const char *value);
 // mc2vr.conf eye_monitor_pin=off|on (default off). When on, the backbuffer is
 // snapshotted before pass 2 (pass 1's final image, composite+HUD included)
 // and restored after it, so every per-frame Present shows the same LEFT
-// image — the S4 steady state (the compositor consumes the eye RT).
+// image — the S4 steady state (the host consumes the eye images).
 // Pass-2 backbuffer writes are NOT suppressed: SwapEffect=DISCARD leaves a
 // stale driver page when they are (live-observed 2026-10-04).
 bool set_pin_enabled(const char *value);

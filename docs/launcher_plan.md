@@ -4,10 +4,10 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 
 ## Architecture
 
-`launch.sh` → `mc2vr_launcher.exe` (win32 i386, in-prefix via Proton) → `CreateProcess` game SUSPENDED → inject `mc2vr_carrier.dll` (win32 i386) → carrier installs its plaintext SafetyHook hooks → launcher resumes the game. Hooks are live before the game's first instruction (**early attach, PROVEN under Proton 2026-10-04**); state-dependent hooks (device, render shell) install in a second carrier stage once the engine has built them.
+`launch.sh` → `mc2vr_launcher.exe` (win32 i386, in-prefix via Proton) → [S4: spawn `mc2vr_host.exe` (win64 OpenXR host), wait for its ready log line] → `CreateProcess` game SUSPENDED → inject `mc2vr_carrier.dll` (win32 i386) → carrier installs its plaintext SafetyHook hooks → launcher resumes the game. Hooks are live before the game's first instruction (**early attach, PROVEN under Proton 2026-10-04**); state-dependent hooks (device, render shell) install in a second carrier stage once the engine has built them.
 
 - Carrier = delivery vehicle only; mechanism stays "patch the code itself". Rejected: external cross-process `WriteProcessMemory` patching (no prologue relocation, no MidHook, messier under Wine).
-- Everything 32-bit; image can't relocate, base fixed `0x00400000` — all hook VAs are literal runtime addresses.
+- Game side (launcher, carrier) is 32-bit; the planned HMD host is the one 64-bit binary (see below). Game image can't relocate, base fixed `0x00400000` — all hook VAs are literal runtime addresses.
 - DXVK runtime in this prefix (D3D9 → Vulkan → RADV): all hooked objects/vtables are DXVK implementations; same COM contract, expect quirk-level behavior differences.
 
 ## Build / deploy / test
@@ -17,9 +17,13 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 - Build lock: carrier verifies exe size + SHA-256 on disk against `src/carrier/build_lock.h`, refuses to hook on mismatch. Regenerate after re-RE: `tools/gen-build-lock.sh <exe>`.
 - `tools/selftest/run.sh`: full chain test under plain Wine using a sleeper stand-in (base 0x400000 + ticking counter at the literal VA). Also verifies build-lock refusal. Run after carrier changes.
 
+## HMD host process (planned, S4)
+
+`mc2vr_host.exe` (x86_64 mingw, `cmake/x86_64-w64-mingw32.cmake` → `build/win64/bin/`, deployed beside the carrier) runs in the same Proton prefix with DXVK D3D11 and owns the OpenXR session, presentation and event pump. Carrier ↔ host: shared textures (D3D9 shared handles) for images, shared memory + rings for pose/FOV/state/events/commands. Design, IPC contract and risks: `stereo_design.md` §S4; milestones S4-0..S4-5: `s4_handover.md`. Rules: the host never blocks the game (no host ⇒ game runs as today, logged once); the carrier never blocks on the host; host log `mc2vr_host.log` in the deploy dir; the host is not subject to the SecuROM/hooking rules (it is our own process), the game side still is. Lifecycle: launcher spawns host → waits for ready → starts game; host exits on carrier `Shutdown` or game exit. Selftest: host `--mock` round trip with the sleeper stand-in.
+
 ## Launch sequence (launcher)
 
-1. Resolve paths from deploy location (`<game dir>/mc2vr/`).
+1. Resolve paths from deploy location (`<game dir>/mc2vr/`). (S4: spawn the host first and wait for `ready`.)
 2. `CreateProcessW` game `CREATE_SUSPENDED`. Stale `mc2vr_carrier.log` deleted first. No exe-base check in the launcher (suspended process has no module list yet) — the carrier verifies base + build lock in-process.
 3. Inject: `CreateRemoteThread` + `LoadLibraryW` into the suspended process. Works under Proton and plain Wine (selftest). Launcher waits for the carrier log line `early init done` (stage 1 finished), then `ResumeThread`; if it never appears the game is killed, not resumed.
 4. Carrier stages:
@@ -70,7 +74,7 @@ Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device
   - Command histogram: gameplay ~21 opcodes (menu 9), 1.5k–3.4k cmds/frame; bins 00/01/02/03 dominate; 27 opcodes defined.
   - Queue+0x10 is a ring POSITION (wraps 0..cap-1; capacity 4096, elem 96); +0x14 stayed 0. — **reinterpreted in S0**: +0x10 = countersA (consumer-advanced), +0x14 = countersB (producer-advanced); see `render_path.md`.
   - Carrier keeps the M3 instrumentation as ambient telemetry for future runs.
-- M4: stereo rendering (design and status: `stereo_design.md`). **S0/S1/S2 (incl. S2c second draw pass) COMPLETE and live-verified** (the draw camera never surfaces in patchable plaintext data — the GPU-boundary `SetVertexShaderConstantF` rewrite is the per-eye channel). Remaining: S4 HMD presentation + pose (`s4_handover.md`). **S4 targets OpenVR/SteamVR — OpenXR is RULED OUT** (Valve's OpenXR driver has no 32-bit+DX9 support; wineopenxr is present+registered in the prefix but unusable — see stereo_design.md §S4). The carrier now loads before the game creates its device (early attach), so creation params can be changed at `Direct3DCreate9`/`CreateDevice` instead of via device-lost + `Reset`; the Present-hook interop blit needs neither.
+- M4: stereo rendering (design and status: `stereo_design.md`). **S0/S1/S2 (incl. S2c second draw pass) COMPLETE and live-verified** (the draw camera never surfaces in patchable plaintext data — the GPU-boundary `SetVertexShaderConstantF` rewrite is the per-eye channel). Remaining: S4 HMD presentation + pose via the separate 64-bit OpenXR host (`s4_handover.md`; design `stereo_design.md` §S4). OpenVR is not used; OpenXR is not possible inside the 32-bit DX9 game process, hence the host. The carrier now loads before the game creates its device (early attach), so creation params can be changed at `Direct3DCreate9`/`CreateDevice` instead of via device-lost + `Reset`; the shared-texture copy needs no swapchain changes.
 
 ## Motion-control / logic-mod track (long-term)
 
@@ -78,6 +82,7 @@ Same rules, plus:
 
 - VM-virtualized functions are denser in logic code: hook plaintext thunks/callers, never VM stubs; calling stubs is fine (proven).
 - Keep the carrier thin (inject + install + mod host); gameplay mod logic goes in a separate hot-swappable module the carrier hosts.
+- Controller/HMD input source: the host's OpenXR actions, delivered over the S4 IPC and applied at the slot-5 hook.
 - Input injection point: `XInputGetState`/`XInputSetState` import stubs `0x00a64d56`/`0x00a64d5c` (plaintext thunks); no dedicated input-update call exists (state-stack flow — `main_game_loop.md`). Marshal motion poses to the main thread at a defined frame point.
 - Resolve the idle-reset buffer pair (`0x017d30e8` count/array, `0x00f7fb90` 0x1000 buffer) before designing input injection.
 - Gameplay object models (player/camera/weapon, G-engine classes) need mapping via the `vtables.md` recipe — workload, not risk.
