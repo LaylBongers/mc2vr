@@ -113,9 +113,17 @@ int main()
     // Software\Wine\VR values that vrclient/DXVK hard-require). On normal
     // Steam launches something invokes this during VR prefix preparation;
     // direct `proton run` never does.
-    {
-        HMODULE vrc = LoadLibraryW(L"vrclient.dll");
-        if (vrc != nullptr) {
+    //
+    // MC2VR_PROBE_SKIP_INITREG=1 skips it — the err-105 disambiguation
+    // experiment (run 5): does init2 still succeed without in-process
+    // init_registry, and if not, does an EARLIER out-of-process run's
+    // registry write suffice? Answers where the setup must live for the
+    // game (see docs/s4_handover.md run 5 analysis).
+    if (getenv("MC2VR_PROBE_SKIP_INITREG") != nullptr) {
+        printf("attempt 0: SKIPPED (MC2VR_PROBE_SKIP_INITREG set)\n");
+    } else {
+    HMODULE vrc = LoadLibraryW(L"vrclient.dll");
+    if (vrc != nullptr) {
             typedef int(__cdecl *init_registry_t)(void *);
             auto p_initreg = (init_registry_t)GetProcAddress(
                 vrc, "vrclient_init_registry");
@@ -130,17 +138,31 @@ int main()
         } else {
             printf("attempt 0: vrclient.dll load failed (%lu)\n", GetLastError());
         }
-        // Read back what (if anything) it wrote — try both hives/views.
+        // Read back the persistent VR key (HKCU — vrclient reads this hive;
+        // 2026-10-04 RE). The err-105 recipe needs PROTON_VR_RUNTIME, state,
+        // and openvr_vulkan_instance_extensions here.
         char val[1024] = {0};
         DWORD size = sizeof(val);
-        if (RegGetValueA(HKEY_LOCAL_MACHINE, "Software\\Wine\\VR",
+        if (RegGetValueA(HKEY_CURRENT_USER, "Software\\Wine\\VR",
                         "openvr_vulkan_instance_extensions", RRF_RT_REG_SZ,
                         nullptr, val, &size) == ERROR_SUCCESS) {
-            printf("HKLM Software\\Wine\\VR = \"%s\"\n", val);
+            printf("HKCU Software\\Wine\\VR ext = \"%s\"\n", val);
         } else {
-            printf("HKLM Software\\Wine\\VR value missing\n");
+            printf("HKCU Software\\Wine\\VR ext value missing\n");
         }
+        // SETTLE (2026-10-04 run-5 + probe forensics): vrclient_init_registry
+        // leaves a Background vrclient session alive whose delayed internal
+        // VR_Shutdown (~20-200 ms) otherwise lands ON TOP of our
+        // VR_InitInternal2 — "Attempt to init shared state ... twice" asserts,
+        // "Destroying a held mutex", then every IPC query returns garbage or
+        // blocks forever (took the game's render thread down with it, run 5).
+        // Wait for its teardown to finish before our init. Empirically the
+        // cache that fixes err 105 must survive this teardown for the next
+        // step to pass — this run is exactly that experiment.
+        printf("attempt 0: settling 1000 ms for the registry session teardown\n");
+        Sleep(1000);
     }
+    flush_log();
 
     int32_t err = 0;
     uint32_t token = 0;
@@ -201,6 +223,13 @@ int main()
     }
 
     printf("=== probe result: CONNECTED (stage %d) ===\n", stage);
+    printf("post-init: runtime installed=%d hmd present=%d\n", p_rt(), p_hmd());
+    // Let the HMD settle: a Scene connect WAKES a standby HMD, and queries
+    // fired within ~2 s of the wake observe a half-transitioned device
+    // (observed: recommended target 2240x0, GetProjectionRaw crash + vrserver
+    // watchdog abort). SteamVR needs a moment to finish the transition.
+    printf("settling 2000 ms for the HMD wake transition ...\n");
+    Sleep(2000);
     const char *probes[] = {"IVRSystem_026", "IVRSystem_022",
                             "IVRCompositor_029", "IVRCompositor_022"};
     for (const char *v : probes) {
@@ -211,29 +240,35 @@ int main()
     void *sys = p_iface("FnTable:IVRSystem_022", &ie);
     printf("FnTable:IVRSystem_022 -> %p (err=%d)\n", sys, ie);
     if (sys != nullptr && ie == 0) {
-        // 1.16.8 IVRSystem_022 layout (pinned header — do NOT use master):
-        // slot 0 GetRecommendedRenderTargetSize(self,w,h), slot 2
-        // GetProjectionRaw, slot 6 GetD3D9AdapterIndex(self), slot 11
-        // GetDeviceToAbsoluteTrackingPose(self,origin,pred,poses,count),
-        // slot 27 GetStringTrackedDeviceProperty(self,idx,prop,buf,size,err)
+        // 1.16.8 IVRSystem_022 layout (pinned header — do NOT use master).
+        // ABI (2026-10-04 live-proven): FnTable entries are Proton-built
+        // THISCALL thunks that load the object into ECX themselves — the
+        // first STACK arg is the method's first parameter, NOT self.
+        // Passing self as a leading arg shifts every argument one slot
+        // (observed: RT size came back 2240x0 — real height in *w, real
+        // width scribbled over the table — and GetProjectionRaw crashed
+        // vrserver through a NULL out-pointer).
+        // slot 0 GetRecommendedRenderTargetSize(w,h), slot 2
+        // GetProjectionRaw(eye,l,r,t,b), slot 6 GetD3D9AdapterIndex(),
+        // slot 11 GetDeviceToAbsoluteTrackingPose(origin,pred,poses,count),
+        // slot 27 GetStringTrackedDeviceProperty(idx,prop,buf,size,err)
         struct Fn {
             void *slot[28];
         } *fn = (Fn *)sys;
         uint32_t w = 0, h = 0;
-        ((void(__cdecl *)(void *, uint32_t *, uint32_t *))fn->slot[0])(
-            fn, &w, &h);
+        ((void(__cdecl *)(uint32_t *, uint32_t *))fn->slot[0])(&w, &h);
         printf("recommended target: %ux%u\n", w, h);
         printf("D3D9 adapter: %d\n",
-               ((int(__cdecl *)(void *))fn->slot[6])(fn));
+               ((int(__cdecl *)(void))fn->slot[6])());
         float pl, pr, pt, pb;
-        ((void(__cdecl *)(void *, int, float *, float *, float *, float *))
-             fn->slot[2])(fn, 0, &pl, &pr, &pt, &pb);
+        ((void(__cdecl *)(int, float *, float *, float *, float *))
+             fn->slot[2])(0, &pl, &pr, &pt, &pb);
         printf("proj raw L: [%.4f %.4f %.4f %.4f]\n", pl, pr, pt, pb);
         char buf[256] = {0};
         int32_t pe = 0;
-        ((uint32_t(__cdecl *)(void *, uint32_t, int32_t, char *, uint32_t,
+        ((uint32_t(__cdecl *)(uint32_t, int32_t, char *, uint32_t,
                               int32_t *))fn->slot[27])(
-            fn, 0, 1005 /*Prop_ManufacturerName_String*/, buf, sizeof(buf),
+            0, 1005 /*Prop_ManufacturerName_String*/, buf, sizeof(buf),
             &pe);
         printf("HMD manufacturer: \"%s\" (err=%d)\n", buf, pe);
         struct Pose {
@@ -245,8 +280,8 @@ int main()
             uint8_t connected;
         } pose;
         memset(&pose, 0, sizeof(pose));
-        ((void(__cdecl *)(void *, int, float, void *, uint32_t))fn->slot[11])(
-            fn, 1 /*Standing*/, 0.0f, &pose, 1);
+        ((void(__cdecl *)(int, float, void *, uint32_t))fn->slot[11])(
+            1 /*Standing*/, 0.0f, &pose, 1);
         printf("pose: valid=%d connected=%d result=%d\n", pose.valid,
                pose.connected, pose.result);
         printf("pose m = [%.3f %.3f %.3f %.3f; %.3f %.3f %.3f %.3f; "
@@ -273,8 +308,8 @@ int main()
         printf("comp slot 39 (instance ext) = %p\n", cf->slot[39]);
         char ext[1024] = {0};
         if (cf->slot[39] != nullptr) {
-            ((uint32_t(__cdecl *)(void *, char *, uint32_t))cf->slot[39])(
-                cf, ext, sizeof(ext));
+            ((uint32_t(__cdecl *)(char *, uint32_t))cf->slot[39])(
+                ext, sizeof(ext));
             printf("instance extensions: \"%s\"\n", ext);
         }
     }

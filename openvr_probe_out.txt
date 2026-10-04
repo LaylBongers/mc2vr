@@ -1,4 +1,0 @@
-=== mc2vr openvr probe (pid=372) ===
-env: SteamAppId=<unset> SteamPath=<unset>
-openvr_api_dxvk: C:\windows\system32\openvr_api_dxvk.dll
-exports: hmd=7b8c1ea0 rt=7b8c1f90 valid=7b8c1f30 init2=7b8c1e00 init1=7b8c1de0 iface=7b8c1bc0

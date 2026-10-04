@@ -90,21 +90,30 @@ typedef const char *(__cdecl *VR_GetVRInitErrorAsEnglishDescription_t)(
 // Unused slots are kept as void* so the used slots sit at the right indices;
 // the static_asserts below lock the ones we rely on.
 
+// ABI NOTE (2026-10-04 live-proven): the FnTable entries Proton serves are
+// THISCALL thunks that load the IVRSystem object into ECX THEMSELVES (built
+// in create_winIVRSystem_IVRSystem_022_FnTable: "mov ecx, obj; mov edx,
+// wrapper; jmp edx"). The first STACK argument is the method's first
+// parameter — NOT self. Passing an explicit self shifts every argument one
+// slot: run 5's "device 0 is not the HMD" was the class query reading the
+// table pointer as the device index, the string query then fed a NULL
+// buffer pointer into the server, and the probe's RT-size query printed the
+// real HEIGHT in *w (2240) with *h never written (0) while the real width
+// was scribbled over the table object. Call these WITHOUT self.
 struct VRSystem_FnTable_022 {
-    void (*GetRecommendedRenderTargetSize)(void *self, uint32_t *w, uint32_t *h); // 0
+    void (*GetRecommendedRenderTargetSize)(uint32_t *w, uint32_t *h);             // 0
     void *GetProjectionMatrix;                                                    // 1
-    void (*GetProjectionRaw)(void *self, EVREye eye, float *left, float *right,
+    void (*GetProjectionRaw)(EVREye eye, float *left, float *right,
                              float *top, float *bottom);                          // 2
     void *ComputeDistortion;                                                      // 3
     void *GetEyeToHeadTransform;                                                  // 4 (struct return — S4-3)
-    void *GetTimeSinceLastVsync;                                                 // 5
-    int32_t (*GetD3D9AdapterIndex)(void *self);                                   // 6
+    void *GetTimeSinceLastVsync;                                                  // 5
+    int32_t (*GetD3D9AdapterIndex)();                                             // 6
     void *GetDXGIOutputInfo;                                                     // 7
     void *GetOutputDevice;                                                        // 8
     void *IsDisplayOnDesktop;                                                     // 9
     void *SetDisplayVisibility;                                                   // 10
-    void (*GetDeviceToAbsoluteTrackingPose)(void *self,
-                                            ETrackingUniverseOrigin origin,
+    void (*GetDeviceToAbsoluteTrackingPose)(ETrackingUniverseOrigin origin,
                                             float predicted_seconds,
                                             TrackedDevicePose_t *poses,
                                             uint32_t count);                      // 11
@@ -115,17 +124,17 @@ struct VRSystem_FnTable_022 {
     void *ApplyTransform;                                                         // 16
     void *GetTrackedDeviceIndexForControllerRole;                                 // 17
     void *GetControllerRoleForTrackedDeviceIndex;                                 // 18
-    int32_t (*GetTrackedDeviceClass)(void *self, uint32_t index);                 // 19
+    int32_t (*GetTrackedDeviceClass)(uint32_t index);                              // 19
     void *IsTrackedDeviceConnected;                                              // 20
     void *GetBoolTrackedDeviceProperty;                                          // 21
-    float (*GetFloatTrackedDeviceProperty)(void *self, uint32_t index,
+    float (*GetFloatTrackedDeviceProperty)(uint32_t index,
                                            int32_t prop, int32_t *error);         // 22
-    int32_t (*GetInt32TrackedDeviceProperty)(void *self, uint32_t index,
+    int32_t (*GetInt32TrackedDeviceProperty)(uint32_t index,
                                              int32_t prop, int32_t *error);       // 23
     void *GetUint64TrackedDeviceProperty;                                        // 24
     void *GetMatrix34TrackedDeviceProperty;                                      // 25
     void *GetArrayTrackedDeviceProperty;                                          // 26
-    uint32_t (*GetStringTrackedDeviceProperty)(void *self, uint32_t index,
+    uint32_t (*GetStringTrackedDeviceProperty)(uint32_t index,
                                                int32_t prop, char *value,
                                                uint32_t size,
                                                int32_t *error);                   // 27
@@ -159,6 +168,7 @@ static const char *kProbeVersions[] = {
 // ---------------------------------------------------------------------------
 
 static bool g_enabled = false;
+static bool g_init_registry = false;
 static bool g_ready = false;
 static HMODULE g_vr_dll = nullptr;
 
@@ -173,6 +183,83 @@ static VR_GetVRInitErrorAsEnglishDescription_t
 
 static VRSystem_FnTable_022 *g_system = nullptr;
 
+// The err-105 fix (RE-proven in load_vrclient): vrclient requires
+// HKCU\Software\Wine\VR with PROTON_VR_RUNTIME, state (DWORD, nonzero =
+// ready; 0 makes the reader BLOCK on a registry-change notification) and
+// openvr_vulkan_instance_extensions, else it unloads with "Could not create
+// key, status 0x2" and VR_InitInternal2 returns 105.
+//
+// WHY THE CARRIER WRITES THESE ITSELF (run 6a, live-proven 2026-10-04):
+// the same registry key arms DXVK's d3d9 BOOT-TIME OpenVR interop — with
+// the values present at process start, the game hung before the main loop
+// (boot marker never ticked; SteamVR was mid-flap at the time, exactly the
+// white-screen landmine). DXVK reads the key at DEVICE CREATION (game boot,
+// before we exist); vrclient reads it at VR_InitInternal2 time (post-attach).
+// Writing here — after the device exists, before our init — serves vrclient
+// while keeping every game boot interop-free and SteamVR-state-independent.
+// S4-2 implication: DXVK's boot-time interop stays OFF by design; the S4-2
+// texture-sharing decision must either use a runtime-interop path or
+// deliberately re-arm the boot value with a SteamVR-stability gate.
+static bool ensure_vr_registry()
+{
+    HKEY key = nullptr;
+    DWORD disp = 0;
+    LSTATUS rc = RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\VR", 0,
+                                nullptr, 0, KEY_SET_VALUE, nullptr, &key,
+                                &disp);
+    if (rc != ERROR_SUCCESS) {
+        MC2VR_LOG("ovr: RegCreateKeyExA(Software\\Wine\\VR) failed %lu",
+                  rc);
+        return false;
+    }
+
+    char rt[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableA("PROTON_VR_RUNTIME", rt,
+                                            sizeof(rt));
+    if (n == 0 || n >= sizeof(rt)) {
+        RegCloseKey(key);
+        MC2VR_LOG("ovr: PROTON_VR_RUNTIME env missing (proton run always "
+                  "sets it) — cannot write the runtime path");
+        return false;
+    }
+
+    bool ok = true;
+    if (RegSetValueExA(key, "PROTON_VR_RUNTIME", 0, REG_SZ,
+                       reinterpret_cast<const BYTE *>(rt), n) !=
+        ERROR_SUCCESS) {
+        ok = false;
+    }
+    const DWORD state = 1; // ready — probe-proven; see the comment above
+    if (RegSetValueExA(key, "state", 0, REG_DWORD,
+                       reinterpret_cast<const BYTE *>(&state),
+                       sizeof(state)) != ERROR_SUCCESS) {
+        ok = false;
+    }
+    // The compositor reports EMPTY required instance extensions — "" is the
+    // semantically correct value (probe-verified).
+    if (RegSetValueExA(key, "openvr_vulkan_instance_extensions", 0, REG_SZ,
+                       reinterpret_cast<const BYTE *>(""), 1) !=
+        ERROR_SUCCESS) {
+        ok = false;
+    }
+    RegCloseKey(key);
+    MC2VR_LOG("ovr: VR registry values written (disp=%lu, %s)",
+              disp, ok ? "ok" : "PARTIAL — some writes failed");
+    return ok;
+}
+
+// Remove the key again once vrclient has loaded (the values are only read at
+// load time, guarded by _vrclient_loaded). Without this the values persist
+// and arm DXVK's boot-time interop for the NEXT game start (run 6a).
+static void cleanup_vr_registry()
+{
+    if (RegDeleteKeyA(HKEY_CURRENT_USER, "Software\\Wine\\VR") ==
+        ERROR_SUCCESS) {
+        MC2VR_LOG("ovr: VR registry values removed (next boot stays "
+                  "interop-free)");
+    }
+}
+
 bool set_enabled(const char *value)
 {
     if (strcmp(value, "on") == 0) {
@@ -182,6 +269,19 @@ bool set_enabled(const char *value)
     } else {
         return false;
     }
+    return true;
+}
+
+bool set_init_registry(const char *value)
+{
+    if (strcmp(value, "on") == 0) {
+        g_init_registry = true;
+    } else if (strcmp(value, "off") == 0) {
+        g_init_registry = false;
+    } else {
+        return false;
+    }
+    MC2VR_LOG("ovr: openvr_init_registry=%s", value);
     return true;
 }
 
@@ -250,7 +350,7 @@ static void log_pose_sample()
 {
     TrackedDevicePose_t pose;
     memset(&pose, 0, sizeof(pose));
-    g_system->GetDeviceToAbsoluteTrackingPose(g_system, TrackingUniverseStanding,
+    g_system->GetDeviceToAbsoluteTrackingPose(TrackingUniverseStanding,
                                               0.0f, &pose, 1);
     MC2VR_LOG("ovr: pose sample: valid=%d connected=%d result=%d",
               pose.bPoseIsValid ? 1 : 0, pose.bDeviceIsConnected ? 1 : 0,
@@ -284,6 +384,16 @@ static void bootstrap()
     MC2VR_LOG("ovr: runtime installed=%d hmd present=%d",
               p_VR_IsRuntimeInstalled() ? 1 : 0, p_VR_IsHmdPresent() ? 1 : 0);
 
+    // err-105 fix, carrier-side (see ensure_vr_registry): must run BEFORE
+    // VR_InitInternal2 — vrclient reads these values at init2 time. Writing
+    // them AFTER the game's device creation keeps DXVK's boot-time interop
+    // disarmed (run 6a live-proven: the value present at boot hung the game
+    // pre-main-loop with SteamVR mid-transition).
+    if (!ensure_vr_registry()) {
+        MC2VR_LOG("ovr: registry ensure failed — VR_InitInternal2 will "
+                  "likely err 105; continuing (bootstrap retries fail-soft)");
+    }
+
     // Prefix-VR setup (2026-10-04 root cause of err 105): the current Proton
     // vrclient hard-requires the VR Vulkan instance-extension cache that
     // vrclient_init_registry populates IN-PROCESS (it is not persisted to the
@@ -292,7 +402,30 @@ static void bootstrap()
     // it, vrclient fails at load_vrclient with "Could not create key, status
     // 0x2" and VR_InitInternal2 returns 105 before any IPC. Calling it here
     // made the standalone probe connect instantly (proven, twice).
-    {
+    //
+    // DEFAULT OFF since run 5 (2026-10-04): in-game this call is a
+    // LIVE-PROVEN DEADLOCK. vrclient_init_registry starts a Background-type
+    // vrclient session (compositor connect + Vulkan extension enumeration —
+    // the VK_EXT_debug_utils warnings in vrclient_MERCENARIES2.txt), returns,
+    // and its internal VR_Shutdown fires ~200 ms LATER — after our own
+    // VR_InitInternal2 — tearing down the shared vrclient state under our
+    // FnTable (vrserver logs "Socket closed"/"disconnected" for this pid).
+    // The version probes kept answering from cached state, then
+    // GetTrackedDeviceClass returned garbage and GetStringTrackedDeviceProperty
+    // BLOCKED FOREVER; the render thread froze within 5 ms of that call —
+    // the Vulkan/compositor work couples to DXVK, which the render thread
+    // was stuck in. Complete game hang, first in-game Stage-1 attempt.
+    // The standalone probe never reproduced this: without a live DXVK
+    // device the compositor-connect path doesn't run, so no Background
+    // session and no teardown race. Re-enable ONLY as a deliberate
+    // experiment with a kill plan.
+    if (!g_init_registry) {
+        MC2VR_LOG("ovr: vrclient_init_registry SKIPPED "
+                  "(openvr_init_registry=off; in-game it deadlocks — see "
+                  "docs/s4_handover.md run 5; without it init may err 105)");
+    } else {
+        MC2VR_LOG("ovr: WARNING — calling vrclient_init_registry in-game "
+                  "(openvr_init_registry=on) — live-proven deadlock risk");
         HMODULE vrc = LoadLibraryW(L"vrclient.dll");
         if (vrc == nullptr) {
             MC2VR_LOG("ovr: vrclient.dll load failed (%lu) — init may fail",
@@ -330,11 +463,18 @@ static void bootstrap()
                   err, p_VR_GetVRInitErrorAsEnglishDescription(err));
         if (attempt >= 3) {
             MC2VR_LOG("ovr: giving up on SteamVR — bridge stays idle");
+            cleanup_vr_registry();
             return;
         }
         Sleep(5000);
     }
     MC2VR_LOG("ovr: VR_InitInternal2 ok (token=%u) — SteamVR connected", token);
+
+    // vrclient has now loaded (or failed permanently) — the registry values
+    // served their purpose. Remove them so the NEXT game boot finds the key
+    // absent (DXVK boot-time interop stays disarmed; vrclient does not
+    // re-read them, _vrclient_loaded guards the load).
+    cleanup_vr_registry();
 
     // Post-init probes: NOW these reflect what the runtime actually serves.
     log_version_probes();
@@ -360,66 +500,76 @@ static void bootstrap()
     MC2VR_LOG("ovr: IVRSystem_022 FnTable acquired");
 
     // ---- Smoke-test facts (S4-2/3 inputs) ----
-
-    if (g_system->GetTrackedDeviceClass(g_system, 0) != TrackedDeviceClass_HMD) {
-        MC2VR_LOG("ovr: device 0 is not the HMD (unexpected)");
+    // Run-5 lesson: after a session teardown, cached calls keep answering but
+    // the first real IPC call BLOCKED FOREVER and took the render thread down
+    // with it. So: (1) device 0 must be the HMD before anything else — a
+    // wrong class means the session is suspect (torn down, or no HMD) and we
+    // ABORT instead of calling deeper; (2) every remaining call is preceded
+    // by an enter-log so any future hang pinpoints the exact call.
+    // Call entries WITHOUT self (see the ABI note at the struct).
+    const int32_t dev_class = g_system->GetTrackedDeviceClass(0);
+    MC2VR_LOG("ovr: device 0 class = %d (want 1 = HMD)", dev_class);
+    if (dev_class != TrackedDeviceClass_HMD) {
+        MC2VR_LOG("ovr: device 0 is not the HMD — session suspect; aborting "
+                  "smoke test, bridge stays not-ready (fail-soft)");
+        return;
     }
 
     char str[256];
     int32_t prop_err = TrackedProp_Success;
     memset(str, 0, sizeof(str));
-    g_system->GetStringTrackedDeviceProperty(g_system, 0,
-                                             Prop_ManufacturerName_String, str,
-                                             sizeof(str), &prop_err);
+    MC2VR_LOG("ovr: querying manufacturer ...");
+    g_system->GetStringTrackedDeviceProperty(0,
+                                              Prop_ManufacturerName_String, str,
+                                              sizeof(str), &prop_err);
     MC2VR_LOG("ovr: HMD manufacturer = \"%s\" (err=%d)", str, prop_err);
     memset(str, 0, sizeof(str));
-    g_system->GetStringTrackedDeviceProperty(g_system, 0,
+    MC2VR_LOG("ovr: querying model ...");
+    g_system->GetStringTrackedDeviceProperty(0,
                                              Prop_ModelNumber_String, str,
                                              sizeof(str), &prop_err);
     MC2VR_LOG("ovr: HMD model = \"%s\" (err=%d)", str, prop_err);
     memset(str, 0, sizeof(str));
-    g_system->GetStringTrackedDeviceProperty(g_system, 0,
+    MC2VR_LOG("ovr: querying serial ...");
+    g_system->GetStringTrackedDeviceProperty(0,
                                              Prop_SerialNumber_String, str,
                                              sizeof(str), &prop_err);
     MC2VR_LOG("ovr: HMD serial = \"%s\" (err=%d)", str, prop_err);
 
     uint32_t w = 0, h = 0;
-    g_system->GetRecommendedRenderTargetSize(g_system, &w, &h);
+    MC2VR_LOG("ovr: querying recommended target size ...");
+    g_system->GetRecommendedRenderTargetSize(&w, &h);
     MC2VR_LOG("ovr: recommended render target = %ux%u", w, h);
 
-    MC2VR_LOG("ovr: D3D9 adapter index = %d",
-              g_system->GetD3D9AdapterIndex(g_system));
+    MC2VR_LOG("ovr: querying D3D9 adapter index ...");
+    MC2VR_LOG("ovr: D3D9 adapter index = %d", g_system->GetD3D9AdapterIndex());
 
+    MC2VR_LOG("ovr: querying IPD + display frequency ...");
     float ipd = g_system->GetFloatTrackedDeviceProperty(
-        g_system, 0, Prop_UserIpdMeters_Float, &prop_err);
+        0, Prop_UserIpdMeters_Float, &prop_err);
     float freq = g_system->GetFloatTrackedDeviceProperty(
-        g_system, 0, Prop_DisplayFrequency_Float, &prop_err);
+        0, Prop_DisplayFrequency_Float, &prop_err);
     MC2VR_LOG("ovr: HMD IPD = %.4f m, display freq = %.1f Hz", ipd, freq);
 
     float pl, pr, pt, pb;
-    g_system->GetProjectionRaw(g_system, Eye_Left, &pl, &pr, &pt, &pb);
+    MC2VR_LOG("ovr: querying raw projection L ...");
+    g_system->GetProjectionRaw(Eye_Left, &pl, &pr, &pt, &pb);
     MC2VR_LOG("ovr: proj raw L = [l%.4f r%.4f t%.4f b%.4f]", pl, pr, pt, pb);
-    g_system->GetProjectionRaw(g_system, Eye_Right, &pl, &pr, &pt, &pb);
+    MC2VR_LOG("ovr: querying raw projection R ...");
+    g_system->GetProjectionRaw(Eye_Right, &pl, &pr, &pt, &pb);
     MC2VR_LOG("ovr: proj raw R = [l%.4f r%.4f t%.4f b%.4f]", pl, pr, pt, pb);
 
+    MC2VR_LOG("ovr: sampling pose ...");
     log_pose_sample();
 
     g_ready = true;
     MC2VR_LOG("ovr: OpenVR bootstrap COMPLETE — SteamVR live, S4-2 can submit");
 
-    // vrclient_init_registry PERSISTS HKLM\Software\Wine\VR (live-proven
-    // 2026-10-04: it wrote openvr_vulkan_instance_extensions="" into
-    // system.reg). That value makes DXVK's d3d9 enable its boot-time OpenVR
-    // interop on the NEXT game start — which hung the game at a white screen
-    // pre-boot (live-observed; DXVK's Scene init blocks in device creation
-    // while SteamVR is mid-transition). Until S4-2 proves the DXVK interop
-    // path is wanted AND safe at boot, scrub the key so game boots stay
-    // clean. Both writer and this cleanup are 32-bit, same registry view.
-    if (RegDeleteTreeA(HKEY_LOCAL_MACHINE, "Software\\Wine\\VR") ==
-        ERROR_SUCCESS) {
-        MC2VR_LOG("ovr: scrubbed persisted Software\\Wine\\VR (DXVK boot "
-                  "interop stays off)");
-    }
+    // NOTE (2026-10-04): the old post-bootstrap registry scrub is REMOVED — it
+    // targeted HKLM (wrong hive; the real key is HKCU\Software\Wine\VR) and
+    // those values are now REQUIRED by vrclient at load (launch.sh asserts
+    // them; deleting them re-breaks err 105). The DXVK boot-interop landmine
+    // is handled at the design level instead (docs/s4_handover.md run 6).
 }
 
 static DWORD WINAPI bootstrap_thread(void *)

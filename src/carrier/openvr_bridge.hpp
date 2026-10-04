@@ -18,6 +18,15 @@ namespace mc2vr::ovr {
 // mc2vr.conf openvr=off|on (default off).
 bool set_enabled(const char *value);
 
+// mc2vr.conf openvr_init_registry=off|on (default off). In-game
+// vrclient_init_registry is a LIVE-PROVEN HAZARD: it spawns a Background
+// vrclient session whose delayed VR_Shutdown tears down our own init
+// mid-use — both the bootstrap thread and the render thread froze, full
+// game hang (2026-10-04 run 5, docs/s4_handover.md). Off = skip the call
+// (VR_InitInternal2 may then fail with err 105; the probe experiments
+// decide where this setup belongs).
+bool set_init_registry(const char *value);
+
 // Bootstrap, called once from init() after conf load. If enabled: load the
 // bridge DLL, VR_InitInternal2(Scene), fetch the IVRSystem FnTable, and log
 // everything S4 needs (HMD identity, recommended target size, D3D9 adapter,
