@@ -231,8 +231,11 @@ the consumer never reads view camera data.)
    (counter-proven; UpdateSurface/UpdateTexture never fire — watch item
    closed). Monitor pin = backbuffer SNAPSHOT before pass 2 / RESTORE after
    (suppressing backbuffer writes is wrong under SwapEffect=DISCARD —
-   stale driver page, live-observed). Details: docs/s2c_handover.md
-   "S2c-2 ACCEPTANCE MET".
+   stale driver page, live-observed); run-4-verified stable and free
+   (perf identical, ~30 fps inherent to frame_replay: 2 x 16.6 ms passes
+   > 60 Hz vsync budget — S4 pacing owns the fix). Details:
+   docs/s2c_handover.md "S2c-2 ACCEPTANCE MET" / "MONITOR PIN VERIFIED".
+   **S2c COMPLETE.**
 
 ### S4 — Presentation / HMD runtime
 

@@ -273,11 +273,20 @@ installed as the stream tap — extend it, don't re-site it.
   window report now has pinSaves/pinRestores/bbRtSets. Deployed conf for
   the pin-verification run: eye_dump_frames=0 (pairs already captured),
   everything else unchanged.
-- **S2c-3 status**: satisfied (deterministic per-frame eye pair,
-  pass1=LEFT pass2=RIGHT via eye_pass=on; parallax-verified). Next
-  milestone is S4: Present-hook OpenVR compositor consuming the eye RT
-  (and the main-RT LEFT); the pin's snapshot/restore is debug-era tooling
-  that S4's compositor replaces.
+- **S2c-2 MONITOR PIN VERIFIED (run 4, 2026-10-04 14:21-14:22)**: camera
+  stable on the monitor (user-confirmed, no alternation, no stale frames);
+  pinSaves ≈ pinRestores ≈ bbRtSets ≈ extraPasses ≈ 1 per pass-2 frame in
+  every gameplay window (273-302/10s), zero failures. Perf is IDENTICAL to
+  all prior replay runs: Present ≈ 585-600/10s (2/frame at ~30 fps), S2c
+  replay avgMs 16.50-16.67 (unchanged) — the two snapshot blits are free.
+  The user PERCEIVED lower framerate this run: with the image finally
+  stable, the underlying 30 Hz cadence became visible (the L/R flicker used
+  to dominate perception). 30 fps is inherent to frame_replay since S2c-1:
+  each pass costs ~16.6 ms and two passes exceed the 60 Hz vsync budget
+  (avgMs=16.6 x2 = 33.3 ms/frame); S4's pacing design owns the fix
+  (async/timewarp presentation, per-eye cost reduction). **S2c MILESTONE
+  COMPLETE** — S2c-0/1/2/3 all live-verified; next is S4 (Present-hook
+  OpenVR compositor consuming the eye RT + main-RT LEFT).
 - **S2c-2 (staging bullet, historical)**: replay into a second eye RT with the OTHER eye's rewrite active;
   A/B via the existing hold timer driving eye selection, dump both RTs to PNG
   (extend `tools/analyze_dumps.py` if needed) and check parallax geometry.
