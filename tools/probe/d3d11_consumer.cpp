@@ -82,15 +82,17 @@ static bool fail(const char* why) {
 
 int main(int argc, char** argv) {
     uint64_t handle = 0;
-    uint32_t w = 256, h = 128;
+    uint32_t w = 256, h = 128, seconds = 20;
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--handle")) handle = strtoull(argv[i + 1], 0, 0);
         else if (!strcmp(argv[i], "--w")) w = strtoul(argv[i + 1], 0, 0);
         else if (!strcmp(argv[i], "--h")) h = strtoul(argv[i + 1], 0, 0);
+        else if (!strcmp(argv[i], "--seconds")) seconds = strtoul(argv[i + 1], 0, 0);
     }
 
     g_log = fopen("mc2vr_probe_consumer.log", "w");
-    logf_("consumer: handle=0x%llx %ux%u\n", (unsigned long long)handle, w, h);
+    logf_("consumer: handle=0x%llx %ux%u seconds=%u\n",
+          (unsigned long long)handle, w, h, seconds);
 
     ID3D11Device* dev = NULL;
     ID3D11DeviceContext* ctx = NULL;
@@ -128,12 +130,30 @@ int main(int argc, char** argv) {
     logf_("consumer: read1 k=%d mismatches=%llu\n", k1, (unsigned long long)mm);
     if (k1 < 0 || mm > 0) { fail("first frame verify"); return 1; }
 
-    Sleep(1300);
-    const int k2 = read_frame(ctx, tex, stg, w, h, &mm);
-    logf_("consumer: read2 k=%d mismatches=%llu\n", k2, (unsigned long long)mm);
-    if (k2 < 0 || mm > 0) { fail("second frame verify"); return 1; }
-    if (k2 == k1) { fail("counter did not advance (no live redraw observed)"); return 1; }
-    logf_("consumer: counter advanced %d -> %d — cross-process sync ok\n", k1, k2);
+    // Sustained concurrent-read loop (emulates the live S4-2 host: continuous
+    // staging reads while the producer redraws; the original probe read twice
+    // and stopped, which left the sustained path untested).
+    uint32_t reads = 0, torn = 0;
+    int lastK = k1;
+    const ULONGLONG tEnd = GetTickCount64() + (ULONGLONG)seconds * 1000;
+    while (GetTickCount64() < tEnd) {
+        uint64_t m2 = 0;
+        const int k = read_frame(ctx, tex, stg, w, h, &m2);
+        ++reads;
+        if (k < 0 || m2 > 0) ++torn;  // torn/mid-write frame: counted, not fatal
+        if (k > lastK) lastK = k;
+        if (reads % 500 == 0)
+            logf_("consumer: sustained reads=%u torn=%u k=%d\n", reads, torn, lastK);
+        Sleep(16);
+    }
+    logf_("consumer: sustained loop done: reads=%u torn=%u lastK=%d\n", reads,
+          torn, lastK);
+    if (torn > reads / 16) {  // allow some tearing races; not a wall of them
+        fail("excessive tearing in sustained reads");
+        return 1;
+    }
+    if (lastK == k1) { fail("counter did not advance (no live redraw observed)"); return 1; }
+    logf_("consumer: counter advanced %d -> %d — cross-process sync ok\n", k1, lastK);
 
     logf_("consumer: PASS\n");
     FILE* f = fopen("mc2vr_probe_done.txt", "w");

@@ -56,7 +56,7 @@ static uint32_t pixel(uint32_t x, uint32_t y, uint32_t k) {
 }
 
 int main(int argc, char** argv) {
-    uint32_t fmt = 21, w = 256, h = 128, seconds = 60;
+    uint32_t fmt = 21, w = 256, h = 128, seconds = 60, interval = 500;
     int wantEx = 1;
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--fmt")) fmt = strtoul(argv[i + 1], 0, 0);
@@ -64,10 +64,12 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--w")) w = strtoul(argv[i + 1], 0, 0);
         else if (!strcmp(argv[i], "--h")) h = strtoul(argv[i + 1], 0, 0);
         else if (!strcmp(argv[i], "--seconds")) seconds = strtoul(argv[i + 1], 0, 0);
+        else if (!strcmp(argv[i], "--interval")) interval = strtoul(argv[i + 1], 0, 0);
     }
 
     g_log = fopen("mc2vr_probe_producer.log", "w");
-    logf_("producer: fmt=%u ex=%d %ux%u seconds=%u\n", fmt, wantEx, w, h, seconds);
+    logf_("producer: fmt=%u ex=%d %ux%u seconds=%u interval=%ums\n",
+          fmt, wantEx, w, h, seconds, interval);
 
     HWND hwnd = CreateWindowExA(0, "STATIC", "mc2vr_probe", 0, 0, 0, 64, 64,
                                 NULL, NULL, GetModuleHandleA(NULL), NULL);
@@ -161,7 +163,7 @@ int main(int argc, char** argv) {
 
         if (done_file_exists()) { logf_("producer: done file seen, exiting (k=%u)\n", k); break; }
         if (GetTickCount64() > tEnd) { logf_("producer: timeout, exiting (k=%u)\n", k); break; }
-        Sleep(500);
+        Sleep(interval);
     }
 
     if (q) q->Release();

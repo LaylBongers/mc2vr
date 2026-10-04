@@ -266,10 +266,15 @@ selftested first without the game.
     failing (probe only proved usage-0 — LIVE-PROVEN OK 2026-10-04), staging
     `Map` failures on the 2560×1440 X8R8G8B8 surfaces, and syncTimeouts>0 (would
     mean the flush spin is budget-starved). Slot-count gotcha fixed en route
-    (first live run died at `GetSurfaceLevel`): the texture vtable must be
-    counted from the FULL re-declared block in mingw's d3d9.h — BaseTexture9
-    includes SetLOD/GetLOD, so GetSurfaceLevel=18, not 12 (slot 12 = GetLOD,
-    which returned S_OK and ignored the out-pointer).
+    (two live-run bugs from raw-vtable slot counts — the discipline: count from
+    mingw's d3d9.h FULL re-declared interface blocks; DXVK follows it): (1)
+    texture GetSurfaceLevel=18, not 12 (BaseTexture9 carries SetLOD/GetLOD;
+    slot 12 = GetLOD returned S_OK and ignored the out pointer — white mirror);
+    (2) query Issue=6/GetData=7, NOT reversed — reversed slots turned
+    Issue(1) into GetData(pData=1), and a completed event query wrote through
+    pointer 0x1 (game crash at the second boundary; the first survived because
+    the query was never really issued and frame-pointer epilogues healed the
+    arg-count stack drift).
 - **S4-3 OpenXR submission**: host copies/uses the shared images as the
   swapchain content, `xrEndFrame` projection layer with the pose+FOV the
   carrier reports having rendered with (lets the runtime reproject). Host

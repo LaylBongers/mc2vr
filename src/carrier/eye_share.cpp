@@ -26,10 +26,14 @@ constexpr size_t DSLOT_CreateQuery = 118;
 // LockRect, 20 UnlockRect, 21 AddDirtyRect.
 constexpr size_t TSLOT_GetSurfaceLevel = 18;
 constexpr size_t COM_Release = 2;
-// IDirect3DQuery9 vtable: IUnknown 0-2, GetDevice=3, GetType=4, GetDataSize=5,
-// GetData=6, Issue=7.
-constexpr size_t QSLOT_GetData = 6;
-constexpr size_t QSLOT_Issue = 7;
+// IDirect3DQuery9 vtable (d3d9.h): IUnknown 0-2, GetDevice=3, GetType=4,
+// GetDataSize=5, Issue=6, GetData=7. (Slot-order bug lived here once: the two
+// reversed meant "Issue(1)" actually called GetData with pData=1 — a completed
+// event query then wrote through pointer 0x1 and crashed the game on the SECOND
+// boundary; the first survived only because the query was never really issued
+// and frame-pointer epilogues healed the arg-count stack drift.)
+constexpr size_t QSLOT_Issue = 6;
+constexpr size_t QSLOT_GetData = 7;
 
 using CreateTexture_t = HRESULT(__stdcall *)(void *, UINT, UINT, UINT, DWORD,
                                             D3DFORMAT, D3DPOOL, void **, HANDLE *);
