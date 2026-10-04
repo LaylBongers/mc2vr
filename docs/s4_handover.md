@@ -139,6 +139,47 @@ edit it there manually.
    questions (plated in stereo_design.md §S4): which DLL the carrier should
    load, and `IVRCompositor::Submit` with `IDirect3DTexture9` under
    Proton+DXVK. SteamVR must be running (user-side setup).
+   **RESOLVED 2026-10-04 (S4-1)**: carrier module `src/carrier/openvr_bridge.cpp`
+   (conf `openvr=on`, deployed) — loads `openvr_api_dxvk.dll` (the only
+   flat-OpenVR-API module in the prefix; both vrclient copies export only the
+   raw VRClientCoreFactory). FnTable C bindings pinned to `IVRSystem_022` /
+   `vendor/openvr/openvr_1.16.8.h` — the served IVRSystem_026 layout does NOT
+   match the public SDK 2.15 header (slot-28 string query crashed the probe);
+   the pinned-version method is verified (IVRCompositor_022 query worked 1:1).
+   **THE KEY FIX for err 105**: call `vrclient_init_registry` (vrclient.dll
+   export) BEFORE `VR_InitInternal2` — it populates the VR Vulkan
+   instance-extension cache IN-PROCESS that the 20261001-era vrclient
+   hard-requires (without it: err 105, "Could not create key, status 0x2",
+   no IPC; Steam's VR launch path normally invokes it, direct `proton run`
+   never did). Probe proven 2×: err 0, FnTable acquired. **Init order matters**:
+   VR_InitInternal2 first, version probes after (pre-init probes read 0
+   regardless). **Bootstrap runs on a dedicated thread** — early OpenVR calls
+   block ~a minute during vrserver standby transitions (live-observed).
+   **LANDMINE (live-proven, white-screen boot hang)**: vrclient_init_registry
+   PERSISTS `HKLM\Software\Wine\VR\openvr_vulkan_instance_extensions` (=""),
+   and that value makes DXVK's d3d9 enable boot-time OpenVR interop on the
+   NEXT game start — the game hung at a white screen pre-boot-gate (DXVK's
+   Scene init blocks in device creation). The carrier now SCRUBS that key
+   after bootstrap (RegDeleteTreeA), and the prefix registry was manually
+   cleaned 2026-10-04. Do NOT re-add the value until S4-2 decides the DXVK
+   interop question (below).
+   Diagnostics: `tools/openvr_probe/openvr_probe.cpp` (standalone, `proton
+   run` in any prefix, no game; calls init_registry itself; 022-based smoke
+   queries incl. a pose sample). NOTE /tmp is wiped between terminal calls.
+   **PENDING: in-game verification of Stage 1** (openvr=on in deployed conf;
+   expect `ovr: OpenVR bootstrap COMPLETE` in mc2vr_carrier.log; SteamVR must
+   be running and the HMD settled — standby transitions stall the bootstrap
+   thread, which is fine since the game is never blocked).
+   **S4-2 open question — DXVK boot-time interop**: `IVRCompositor::Submit`
+   with `IDirect3DTexture9` under Proton+DXVK needs DXVK's VR interop active,
+   which is initialized at DEVICE CREATION (game boot, before the carrier
+   attaches) and currently deliberately OFF (scrubbed registry). Design
+   options when S4-2 starts: (a) find the value content that makes DXVK's
+   boot init non-blocking and correct, (b) submit via a path that doesn't
+   need boot-time DXVK interop, (c) accept the interop but solve the boot
+   hang (the hang was Scene-init blocking; a Background-type DXVK init might
+   not block — unknown). The compositor reported its required instance
+   extensions as EMPTY via IVRCompositor_022::GetVulkanInstanceExtensionsRequired.
 2. **Per-eye LDR capture**: carrier D3D9 textures (DEFAULT pool, shared
    handles if the interop needs them), filled at the pass boundaries from
    the backbuffer (see the design observation above), or submit the fp16 RTs

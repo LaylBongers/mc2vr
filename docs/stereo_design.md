@@ -13,7 +13,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel in-game verified; S2c second draw pass built on it — deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
-| S4 HMD presentation, S5 motion controls | not started — **OpenXR ruled out** (Valve's OpenXR driver has no 32-bit+DX9 support); S4 targets OpenVR/SteamVR |
+| S4 HMD presentation, S5 motion controls | S4 **in progress** (S4-1 implemented + probe-proven 2026-10-04, in-game verification PENDING): `src/carrier/openvr_bridge.cpp` (conf `openvr=on`, deployed) — dedicated bootstrap thread, `vrclient_init_registry` call before `VR_InitInternal2` (the err-105 root cause fix), FnTable pinned to `IVRSystem_022`/1.16.8 header, post-bootstrap scrub of the persisted `Software\Wine\VR` key (that value gave the 2026-10-04 white-screen boot hang — DXVK enables boot-time OpenVR interop when it exists; keep it OFF until S4-2 decides). Probe tool `tools/openvr_probe/`; headers vendored `vendor/openvr/`. Full state + S4-2 open questions: `docs/s4_handover.md` §S4 list item 1. **OpenXR ruled out** (no 32-bit+DX9 driver) |
 
 ## Handover — state and next steps (2026-10-03)
 

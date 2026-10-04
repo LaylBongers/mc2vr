@@ -8,6 +8,7 @@
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
+#include "openvr_bridge.hpp"
 #include "probes.hpp"
 #include "render_dump.hpp"
 #include "stream_capture.hpp"
@@ -88,6 +89,11 @@ static void load_conf()
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
                           "(use off|on|pulse|stereo) — defaulting to off", value);
                 view::set_view_row_rewrite("off");
+            }
+        } else if (strcmp(key, "openvr") == 0) {
+            // S4-1: OpenVR/SteamVR bridge bootstrap (openvr_bridge.cpp).
+            if (!ovr::set_enabled(value)) {
+                MC2VR_LOG("conf: openvr=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "stub_trace") == 0) {
             if (!trace::set_enabled(value)) {
@@ -317,6 +323,11 @@ void init()
 
     // Read-only live dump of the VM chain behind RenderTask_RenderFrame.
     vmdump::install();
+
+    // S4-1: OpenVR/SteamVR bootstrap (conf openvr=on). After everything else —
+    // a SteamVR failure must not interfere with any installed hook, and the
+    // bridge needs no game state for its connectivity smoke test.
+    ovr::init();
 
     MC2VR_LOG("init complete");
 }
