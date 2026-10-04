@@ -55,6 +55,12 @@ void set_view_stereo_hold(float seconds);
 // against the HMD runtime in S4).
 void set_view_asym(float x, float y);
 
+// S2c-2 per-pass eye override (eye_replay.cpp): when nonzero (pass 1 = -1,
+// pass 2 = +1) it replaces the view_stereo_hold A/B sign for the current
+// draw pass — deterministic per-frame eye selection with the S2c replay.
+// Zero restores the hold-timer behavior.
+void set_pass_eye(int sign);
+
 // 10s window report (called from render_dump.cpp's poller); resets counters.
 void report_window();
 

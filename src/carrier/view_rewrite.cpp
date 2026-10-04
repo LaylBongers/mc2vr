@@ -74,6 +74,7 @@ float g_right[3] = {0.0f, 0.0f, 0.0f};
 bool g_right_valid = false;
 int g_stereo_eye = +1;  // +1 right / -1 left; A/B alternating until S2c
 uint64_t g_stereo_flip_ms = 0;
+int g_pass_eye = 0;    // S2c-2 per-pass override (eye_replay.cpp); 0 = hold timer
 
 bool pass_is_main()
 {
@@ -167,27 +168,32 @@ void rewrite_delta(float d[3], float asym[2])
         d[0] = g_amp;
         return;
     }
-    // Stereo.
-    const uint64_t now = GetTickCount64();
-    if (g_stereo_flip_ms == 0) {
-        g_stereo_flip_ms = now;
-    } else if ((float)(now - g_stereo_flip_ms) >= g_hold_s * 1000.0f) {
-        g_stereo_flip_ms = now;
-        g_stereo_eye = -g_stereo_eye;
-        MC2VR_LOG("view: stereo eye -> %s (right=[%.4f %.4f %.4f], off=%.4f)",
-                  g_stereo_eye > 0 ? "RIGHT" : "LEFT", (double)g_right[0],
-                  (double)g_right[1], (double)g_right[2],
-                  (double)(g_ipd * 0.5f));
+    // Stereo. While a per-pass override is active (S2c-2), it wins over the
+    // hold timer and no flip is logged or applied.
+    const bool use_pass_eye = g_pass_eye != 0;
+    if (!use_pass_eye) {
+        const uint64_t now = GetTickCount64();
+        if (g_stereo_flip_ms == 0) {
+            g_stereo_flip_ms = now;
+        } else if ((float)(now - g_stereo_flip_ms) >= g_hold_s * 1000.0f) {
+            g_stereo_flip_ms = now;
+            g_stereo_eye = -g_stereo_eye;
+            MC2VR_LOG("view: stereo eye -> %s (right=[%.4f %.4f %.4f], off=%.4f)",
+                      g_stereo_eye > 0 ? "RIGHT" : "LEFT", (double)g_right[0],
+                      (double)g_right[1], (double)g_right[2],
+                      (double)(g_ipd * 0.5f));
+        }
     }
     if (!g_right_valid) {
         return;  // only until the first VP row0 upload lands (start of frame 1)
     }
-    const float half = g_ipd * 0.5f * (float)g_stereo_eye;
+    const int eye = use_pass_eye ? g_pass_eye : g_stereo_eye;
+    const float half = g_ipd * 0.5f * (float)eye;
     d[0] = g_right[0] * half;
     d[1] = g_right[1] * half;
     d[2] = g_right[2] * half;
-    asym[0] = g_asym_x * (float)g_stereo_eye;
-    asym[1] = g_asym_y * (float)g_stereo_eye;
+    asym[0] = g_asym_x * (float)eye;
+    asym[1] = g_asym_y * (float)eye;
 }
 
 bool have_vp_or_vcd_regs()
@@ -444,6 +450,11 @@ void install()
     }
     g_vcd_mid = std::move(*mid);
     MC2VR_LOG("view: installed upload-gate MidHook @ %p", (void *)MC2_VCD_UPLOAD_CMP);
+}
+
+void set_pass_eye(int sign)
+{
+    g_pass_eye = sign;
 }
 
 } // namespace mc2vr::view

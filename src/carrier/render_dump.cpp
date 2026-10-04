@@ -7,9 +7,11 @@
 #include <cstdint>
 
 #include "game_addresses.h"
+#include "eye_replay.hpp"
 #include "hooks.hpp"
 #include "log.hpp"
 #include "stub_trace.hpp"
+#include "stream_capture.hpp"
 #include "view_rewrite.hpp"
 
 namespace mc2vr::render {
@@ -118,7 +120,8 @@ void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry, bool tra
 
 // ---- MidHook handlers -----------------------------------------------------
 
-// RenderCmd_ExecuteStream opcode dispatch: EAX = opcode.
+// RenderCmd_ExecuteStream opcode dispatch: EAX = opcode. Also feeds the
+// S2c-0 stream tap (stream_capture.cpp): EBP/ESP identify the stream.
 void opcode_midhook(safetyhook::Context &ctx)
 {
     const uint32_t op = (uint32_t)ctx.eax;
@@ -126,6 +129,8 @@ void opcode_midhook(safetyhook::Context &ctx)
         g_cmd_hist[op]++;
     }
     g_cmd_total++;
+
+    s2c::on_opcode((uint32_t)ctx.esp, (uint32_t)ctx.ebp, (uint32_t)ctx.eax);
 }
 
 // RenderQueue_SubmitWorldPackets per-view loop head: ESI = view index,
@@ -290,7 +295,11 @@ void report_window()
 
     view::report_window();
     trace::report_window();
+    s2c::report_window();
+    eye::report_window();
 }
+
+
 
 DWORD WINAPI poller_thread(LPVOID)
 {
@@ -401,6 +410,9 @@ void install()
 
     // Optional SecuROM-stub callback tracer (mc2vr.conf stub_trace=on).
     trace::install();
+
+    // S2c-1: SubmitToGPU frame-replay InlineHook (mc2vr.conf frame_replay=on).
+    s2c::install();
 }
 
 } // namespace mc2vr::render

@@ -28,6 +28,30 @@ installed as the stream tap — extend it, don't re-site it.
 
 ## Current state (2026-10-04, all verified unless noted)
 
+- **S2c-0 DONE (code)** — built + selftested, awaiting first live census run.
+  `src/carrier/stream_capture.cpp` extends the `0x008569f5` opcode MidHook (via
+  `render_dump.cpp`; same site, not re-sited). At the cmp, EBP = current command
+  and `[esp+0x14]` = stream base (entry pushes ecx/ebp/esi/edi; stream is stack
+  arg 1) — EBP==base identifies a stream's first command; the whole stream is then
+  walked + copied with the RE'd size table (op 0 terminator INCLUDED — replay
+  copies must stay terminated). Read-only, default off. Conf keys:
+  `stream_capture=on`, `stream_dump_frames=N` (raw dumps to
+  `mc2vr_stream_frame<N>.txt`, `stream_dump_delay` s after capture start), parsed
+  by `tools/analyze_dumps.py`. Census = per-opcode "S2c census" payload samples
+  (logged once each) + a 10s "S2c window" line whose walk-vs-hook delta MUST be
+  0 (nonzero = size-table bug or mid-frame stream mutation). Full opcode table +
+  semantics on the `RenderCmd_ExecuteStream` plate in Ghidra.
+- Key interpreter facts (Ghidra plate): (a) **dedupe** — a stream pointer equal to
+  `g_LastExecuteStream` `0x011697b8` is skipped whole, so replay MUST execute a
+  COPY (different pointer); (b) op 0x02 VS-constant upload carries
+  `{op, startReg, dataPtr, vec4count}`, count passed in EDX (custom convention);
+  op 0x03 PS likewise; (c) op 0x08 = screen-constant refresh (viewport-derived,
+  uses ExecuteStream args 2/3 = VS/PS technique objects) — view-dependent, needs
+  eye-aware handling at replay; (d) op 0x13 is a 2-dword NO-OP (jump-table entry
+  lands on case 0x0d's advance tail — Ghidra's decompiler drops the case);
+  (e) ops 0x10/0x11 are the in-stream RT/viewport switchers (gated `c[4] ∈ {1,2}`)
+  — the S2c-2 eye-RT redirect targets these.
+
 - M0–M3 complete; S0/S1 complete; S2 camera channel **done and verified**:
   - `view_row_rewrite=stereo` pans `D = ±right·IPD/2` along the camera right
     axis, derived per frame from raw VP row0 uploads (`right =
@@ -51,13 +75,18 @@ installed as the stream tap — extend it, don't re-site it.
 
 ## S2c engineering list (from stereo_design.md, expanded)
 
-1. **Stream capture**: tap the frame's command stream at the `0x008569f5`
-   MidHook (EAX=opcode there; the stream pointer/parse state must be recovered
-   from the surrounding function — see Ghidra `RenderCmd_ExecuteStream`).
-   First deliverable: a payload census per opcode (what state each carries),
-   logged or dumped to `<GAME_DIR>/mc2vr/`. Note `FUN_00858980` and
-   `FUN_00852740` (opcode 0x08 draw) are still unnamed — expect RE work here.
-2. **Buffering**: copy the stream (and any referenced draw data) for the frame.
+1. **Stream capture**: DONE (S2c-0, `src/carrier/stream_capture.cpp`) — census
+   runs at the `0x008569f5` MidHook; `FUN_00858980` (→ `RenderCmd_ResetPassState`)
+   and `FUN_00852740` (→ `RenderCmd_SetScreenConstants`, opcode 0x08) are now
+   named in Ghidra with the full opcode plate on `RenderCmd_ExecuteStream`.
+2. **Buffering**: DONE in-mechanism (S2c-1) — but NOTE: streams contain NO
+   geometry draws (op 0x0f is a device Clear, all others are state; draws are
+   SubmitToGPU steps 7-8 per record). The second draw pass therefore re-invokes
+   PgPrimitive_SubmitToGPU wholesale (InlineHook @ entry 0x00855690, conf
+   `frame_replay=on`, `src/carrier/stream_capture.cpp`) — the game's own mutated
+   walk re-runs all state + streams + binds + draws from a cleared scene, so
+   nothing is reimplemented. Raw stream capture (S2c-0) remains the census/
+   validation instrument.
    Per-draw RT/viewport switching already happens in-stream (SetViewport fires
    2–3.6k×/frame) — assume the replay must re-apply draw state, not just re-execute.
 3. **Replay**: re-run the buffered stream through the interpreter per eye with
@@ -75,10 +104,75 @@ installed as the stream tap — extend it, don't re-site it.
 
 ## Suggested staging (each step verifiable on the monitor, no HMD)
 
-- **S2c-0**: capture + census only (read-only), no behavior change.
-- **S2c-1**: replay the buffered stream UNCHANGED (same eye, into the same RT)
-  — proves buffering/replay is state-safe: any visual regression = state bug.
-- **S2c-2**: replay into a second eye RT with the OTHER eye's rewrite active;
+- **S2c-0: DONE AND LIVE-VERIFIED** (run 2026-10-04 ~13:20): delta=0 in all 7
+  windows (~1.5M commands) — the walk table matches execution exactly (the M3
+  hook histogram agrees per-window, per-opcode). No runaway/truncation. Dumped
+  frames 895-899. Live census facts (gameplay): ~75-207 streams/frame,
+  ~500-900 cmds/frame, 21-22 opcodes active; streams are SHORT (2-7 cmds,
+  mostly `06 08 00` / `06 03 00` shapes: RT0+DS set, then screen-const or PS
+  upload, then halt) and live in a reused pool at 0x2029xxxx-0x2033xxxx
+  (constant data at 0x2038xxxx, clip-plane source static at 0x00d69f40) —
+  S2c-1 replay copies must be taken per frame at first command (the capture
+  already does this). Per-stream arg2/arg3 = VS/PS technique objects (arg2
+  0x0196eef8 = the main technique from the view: logs). op 0x08 payloads carry
+  the CURRENT pass viewport size (observed 1x1 .. 2560x1440) — per-eye replay
+  with differently-sized eye RTs must rewrite op 0x08, else use backbuffer-sized
+  eye RTs (preferred; also keeps the RT pass gate simple).
+- **S2c-1 (DONE + VERIFIED, 2026-10-04)**: second draw pass via double-invoke
+  of PgPrimitive_SubmitToGPU (`frame_replay=on`). Live run: visuals clean,
+  replay 1:1 with frames, ~2x streams/frame, delta=0, no runaways; cost
+  avgMs=16.6 -> the game holds a stable 30 Hz (each frame 33.3ms = both
+  passes). The 2s eye-flip cadence during the run showed no mid-frame split
+  artifacts.
+- **S2c-2 (IMPL, 2026-10-04, awaiting live run)**: `eye_pass=on` +
+  `eye_rt=on` + `eye_dump_frames=5` (all require frame_replay=on):
+  pass 1 = LEFT, pass 2 = RIGHT, deterministic per frame
+  (view_rewrite per-pass override replaces the hold timer while active).
+  Pass-2 device SetRenderTarget(0, mainRT) and StretchRect sources pointing
+  at the main RT are redirected to a carrier-created backbuffer-sized eye RT
+  (src/carrier/eye_replay.cpp; main RT recorded from the first slot-0 set,
+  re-recorded after Reset; eye RT dropped on Reset). EndSubmit's own
+  RT0->backbuffer StretchRect is ALSO redirected in pass 2 (its source is the
+  game-cached g_CurRenderTarget pointer == mainRT), so the monitor shows the
+  RIGHT (pass-2) eye each frame; the LEFT image is dumped from mainRT at the
+  1->2 pass boundary. Depth is shared (BeginSubmit clears RT+depth each pass).
+  VERIFICATION: `mc2vr_eye_left/right_frame<N>.bmp` pairs after
+  stream_dump_delay; `tools/analyze_dumps.py <log>` reports the measured
+  horizontal parallax shift per pair (synthetic-fixture tested; nonzero shift
+  with SAD < shift-0 SAD = stereoscopy proven). **First live attempt CRASHED
+  at the dump window (2026-10-04, 2x): the surface-vtable slot guess for
+  LockRect/UnlockRect was wrong (10/11 — slot 10 is GetType, whose small
+  positive D3DRESOURCETYPE return passed SUCCEEDED() and left pBits garbage
+  -> read through it segfaulted). RESOLVED from the d3d9.h interface
+  (surface vtable: GetContainer=11, GetDesc=12, LockRect=13, UnlockRect=14;
+  device slots re-verified: CreateRenderTarget=28, GetRenderTargetData=32,
+  StretchRect=34, CreateOffscreenPlainSurface=36) plus a format guard
+  (32-bit RGB only) and a pBits/pitch sanity check. Everything BEFORE the
+  dump was already proven in that run: rtRedirects=482 blitRedirects=298 per
+  10s window at the main menu, replay 1:1, delta=0, Present=2x frames.
+  Remaining watch item: pass-2 post-effects reading the main RT via paths
+  other than StretchRect (UpdateSurface/UpdateTexture NOT redirected yet).
+- **S2c-2 LIVE-VERIFIED (run 2026-10-04 ~13:45)**: stable run after the slot
+  fix (30 Hz, replay 1:1, delta=0, gameplay rtRedirects ~1500 / blitRedirects
+  ~900 per 10s). VISUAL "camera moves rapidly left and right" = the SUCCESS
+  signal: EndSubmit#1 copies pass-1 LEFT -> backbuffer, EndSubmit#2's
+  redirected copy writes pass-2 RIGHT -> the same backbuffer, and the two
+  per-frame Presents alternate L/R on the monitor at the Present rate. Both
+  per-eye passes render fully every frame with distinct view constants.
+  BMP dumps SKIPPED by the format guard: the main scene RT is
+  D3DFMT_A16B16G16R16F (113) — fp16 HDR 2560x1440 (new RE fact, plated on
+  LtiRenderer_EndSubmit; the EndSubmit RT0->backbuffer StretchRect is an
+  fp16->backbuffer blit).
+- **S2c-2 NEXT STEPS** (order): (1) dump_surface: decode fp16
+  (A16B16G16R16F, 8 bytes/px) + simple tonemap -> BMP, quantify parallax
+  with tools/analyze_dumps.py; (2) optional monitor pin: in device.cpp's
+  stretchrect_hook, if pass==2 and the source was redirected, SKIP the
+  original call (return S_OK) so the backbuffer keeps the LEFT image (kills
+  the temporal flicker for monitor debugging; the S4 compositor consumes the
+  eye RT instead); (3) S2c-3 is effectively satisfied (deterministic
+  per-frame eye pair) — S4 Present-hook compositor is the consumer; audit
+  UpdateSurface/UpdateTexture redirects only if a visual artifact appears.
+- **S2c-2 (staging bullet, historical)**: replay into a second eye RT with the OTHER eye's rewrite active;
   A/B via the existing hold timer driving eye selection, dump both RTs to PNG
   (extend `tools/analyze_dumps.py` if needed) and check parallax geometry.
 - **S2c-3**: drive eye selection per-frame deterministically (producer of the

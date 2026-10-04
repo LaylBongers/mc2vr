@@ -204,6 +204,28 @@ the consumer never reads view camera data.)
    facts are the timing inputs. Per-object re-uploads during replay are safe
    (objectData = local→world, BoneMatrixArray = skinning; no view content).
    With two passes the RT gate must also distinguish the two eye RTs.
+   **S2c-0 (capture + census) is implemented** (2026-10-04,
+   `src/carrier/stream_capture.cpp`, conf `stream_capture=on`): full opcode
+   table + interpreter facts on the `RenderCmd_ExecuteStream` Ghidra plate
+   (dedupe global `0x011697b8` → replay must use copied pointers; op 0x13 is a
+   2-dword no-op; op 0x02/0x03 constant uploads carry count in EDX; op 0x08
+   screen-constant refresh is viewport/view-dependent). **S2c-1 second pass
+   is implemented** (2026-10-04): streams carry no draws (op 0x0f = Clear), so
+   the per-eye pass re-invokes `PgPrimitive_SubmitToGPU` wholesale
+   (`frame_replay=on`, InlineHook @ entry — the mutated record walk re-runs
+   state + draws; VCD uploads re-issue through the slot-94 rewrite, which is
+   what S2c-2 keys on; live-verified clean 2026-10-04, stable 30 Hz).
+   **S2c-2 implemented** (2026-10-04): `eye_pass` (deterministic per-pass eye,
+   pass1=LEFT pass2=RIGHT) + `eye_rt` (pass-2 device-level SetRenderTarget(0)/
+   StretchRect redirect to a carrier-created backbuffer-sized eye RT,
+   src/carrier/eye_replay.cpp) + `eye_dump_frames` BMP pairs with parallax
+   analysis in tools/analyze_dumps.py. **S2c-2 live-verified 2026-10-04**:
+   both per-eye passes render fully each frame; with the redirect, the two
+   per-frame EndSubmit copies put LEFT then RIGHT into the backbuffer and the
+   two Presents alternate them on the monitor (visually: rapid horizontal
+   camera oscillation = working temporal stereo). Main scene RT is fp16 HDR
+   (D3DFMT_A16B16G16R16F) — BMP dumps need an fp16 decode (next step), see
+   docs/s2c_handover.md for remaining work.
 
 ### S4 — Presentation / HMD runtime
 

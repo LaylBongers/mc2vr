@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include "game_addresses.h"
+#include "eye_replay.hpp"
 #include "hooks.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
@@ -40,6 +41,7 @@ constexpr size_t SLOT_SetVertexShaderConstantF = 94;
 // shadow-map / reflection / other RT passes upload their own viewContextData
 // and must not receive the eye shift.
 constexpr size_t SLOT_SetRenderTarget = 37;
+constexpr size_t SLOT_StretchRect = 34;
 constexpr size_t SLOT_Surface_GetDesc = 12;
 // IDirect3DSwapChain9::GetPresentParameters
 constexpr size_t SLOT_SC_GetPresentParameters = 9;
@@ -54,6 +56,8 @@ using Reset_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
 using GetSwapChain_t = HRESULT(__stdcall *)(void *, UINT, void **);
 using GetPresentParams_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
 using SetRenderTarget_t = HRESULT(__stdcall *)(void *, DWORD, void *);
+using StretchRect_t = HRESULT(__stdcall *)(void *, void *, const RECT *,
+                                           void *, const RECT *, DWORD);
 using SetVertexShaderConstantF_t = HRESULT(__stdcall *)(void *, UINT, const float *, UINT);
 
 // Leaked by design (see device.hpp).
@@ -64,6 +68,7 @@ safetyhook::VmHook *g_endscene_hook = nullptr;
 safetyhook::VmHook *g_reset_hook = nullptr;
 safetyhook::VmHook *g_setvsconstf_hook = nullptr;
 safetyhook::VmHook *g_setrt_hook = nullptr;
+safetyhook::VmHook *g_stretchrect_hook = nullptr;
 
 void *g_device = nullptr;
 bool g_params_logged = false;
@@ -218,6 +223,7 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
                   (unsigned long long)g_reset.total, (unsigned long long)hooks::frame_count());
     }
 
+    eye::on_reset(); // surfaces are lost; drop the eye RT + main-RT recording
     return g_reset_hook->stdcall<HRESULT>(self, pp);
 }
 
@@ -225,9 +231,25 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
 
 uint64_t g_setvsconst_calls = 0;
 
+uint64_t g_stretch_calls = 0;
+
+// StretchRect: pass-2 sources pointing at the main RT read the eye RT instead
+// (post-effect blits must see pass 2's accumulation, not pass 1's frozen one).
+HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
+                                    void *dst, const RECT *dst_rect, DWORD filter)
+{
+    g_stretch_calls++;
+    src = eye::on_stretch_src(src);
+    return g_stretchrect_hook->stdcall<HRESULT>(self, src, src_rect, dst, dst_rect,
+                                                filter);
+}
+
 HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
 {
-    const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, surface);
+    // S2c-2: pass-2 slot-0 sets of the main RT go to the eye RT (device-level
+    // substitution only — the game's caller-side RT cache is untouched).
+    void *target = eye::on_set_render_target(self, index, surface);
+    const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, target);
     if (index == 0) {
         UINT w = 0, h = 0;
         if (surface) {
@@ -306,6 +328,8 @@ bool capture_and_hook()
          "SetVertexShaderConstantF"},
         {SLOT_SetRenderTarget, (void *)&setrendertarget_hook, &g_setrt_hook,
          "SetRenderTarget"},
+        {SLOT_StretchRect, (void *)&stretchrect_hook, &g_stretchrect_hook,
+         "StretchRect"},
     };
 
     for (const SlotSpec &spec : slots) {

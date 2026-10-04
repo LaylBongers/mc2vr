@@ -4,11 +4,13 @@
 
 #include "build_lock.h"
 #include "device.hpp"
+#include "eye_replay.hpp"
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "log.hpp"
 #include "probes.hpp"
 #include "render_dump.hpp"
+#include "stream_capture.hpp"
 #include "stub_trace.hpp"
 #include "view_rewrite.hpp"
 #include "vm_dump.hpp"
@@ -94,6 +96,53 @@ static void load_conf()
         } else if (strcmp(key, "vm_dump") == 0) {
             if (!vmdump::set_enabled(value)) {
                 MC2VR_LOG("conf: vm_dump=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "stream_capture") == 0) {
+            // S2c-0: render-command-stream capture + opcode census (read-only;
+            // docs/s2c_handover.md). Requires the opcode MidHook (M3).
+            if (!s2c::set_enabled(value)) {
+                MC2VR_LOG("conf: stream_capture=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "eye_pass") == 0) {
+            // S2c-2: deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
+            if (!eye::set_pass_enabled(value)) {
+                MC2VR_LOG("conf: eye_pass=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "eye_rt") == 0) {
+            // S2c-2: pass-2 SetRenderTarget(0)/StretchRect redirect to an eye RT.
+            if (!eye::set_rt_enabled(value)) {
+                MC2VR_LOG("conf: eye_rt=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "eye_dump_frames") == 0) {
+            char *end = nullptr;
+            const long n = strtol(value, &end, 10);
+            if (end != value && end[0] == 0 && n >= 0) {
+                eye::set_dump_frames((uint32_t)n);
+            } else {
+                MC2VR_LOG("conf: eye_dump_frames=%s not a count, ignored", value);
+            }
+        } else if (strcmp(key, "frame_replay") == 0) {
+            // S2c-1: second draw pass — re-invoke PgPrimitive_SubmitToGPU after
+            // the original (same eye/RTs; state-safety test, docs/s2c_handover.md).
+            if (!s2c::set_replay_enabled(value)) {
+                MC2VR_LOG("conf: frame_replay=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "stream_dump_frames") == 0) {
+            char *end = nullptr;
+            const long n = strtol(value, &end, 10);
+            if (end != value && end[0] == 0 && n >= 0) {
+                s2c::set_dump_frames((uint32_t)n);
+            } else {
+                MC2VR_LOG("conf: stream_dump_frames=%s not a count, ignored", value);
+            }
+        } else if (strcmp(key, "stream_dump_delay") == 0) {
+            char *end = nullptr;
+            const double d = strtod(value, &end);
+            if (end != value && end[0] == 0 && d >= 0.0) {
+                s2c::set_dump_delay((float)d);
+                eye::set_dump_delay((float)d);
+            } else {
+                MC2VR_LOG("conf: stream_dump_delay=%s not a number, ignored", value);
             }
         } else if (strcmp(key, "view_row_amp") == 0) {
             // Pan amplitude in world units (default 4.0). ~0.05 for

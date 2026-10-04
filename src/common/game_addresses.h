@@ -72,6 +72,14 @@
 // 12 call sites. Hooking VM stubs is forbidden; CALLING them is fine (probe).
 #define MC2_GETD3DDEVICE_THUNK ((uintptr_t)0x0047f2f0u)
 
+// PgPrimitive_SubmitToGPU (0x00855690, plate on the function) — per-frame D3D
+// submission: BeginSubmit (Present prev + BeginScene + GPU-sync + RT set +
+// Clear) then the SecuROM-mutated per-record walk (state + ExecuteStream +
+// bind + draw per record) then EndSubmit. void(void), single caller
+// (RenderShell_RenderFrameTimed 0x0085abd0). S2c-1 second draw pass = call
+// this twice (re-entrant between frames: EndSubmit clears the in-scene flag).
+#define MC2_PGPRIMITIVE_SUBMITTOGPU ((uintptr_t)0x00855690u)
+
 // viewContextData upload gate in PgPrimitive_SubmitToGPU (2026-10-03):
 // 0x00855a78 = `cmp dword ptr [edi+0xd8], 0` immediately before the gated
 // call (JLE skips) — `mov edx,[esp+0x18]; push edx; lea eax,[edi+0xd4]; call
