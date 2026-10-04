@@ -13,7 +13,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
-| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1..S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
+| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1 IPC + lifecycle DONE (selftest-verified 2026-10-04: launcher spawns the host + waits ready, carrier connects non-fatally, seqlock pose/state + SPSC event/command rings cross-bitness win64↔win32, mock round trip incl. Shutdown). S4-2..S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
 | S5 motion controls | not started |
 
 ## Open RE items
@@ -251,6 +251,20 @@ under Wine; versioned header, host = server/creator, carrier = client):
   busy slots rather than blocking).
 - Failure policy: no host / host dies ⇒ carrier keeps running the monitor
   stereo path unchanged and logs once; host never blocks the game.
+
+**Implemented (S4-1, 2026-10-04)**: protocol v1 in `src/common/mc2vr_ipc.h`
+(bit-identical across i386/x86_64; one section, host creates + refuses a
+collision, carrier CAS-registers its pid; `Mc2IpcState` seqlock carries the
+pose/FOV/IPD/session state; `Mc2IpcMsg` rings carry events/commands incl.
+the S4-2 `FRAME_READY` shape already). Section name defaults to
+`mc2vr_ipc_v1`, overridable via env `MC2VR_IPC_NAME` (selftest uses unique
+names). Host lifecycle: launcher spawns the host before the game and waits
+for the `mc2vr_host: ready` log line (non-fatal: early exit / 30s timeout /
+missing exe all proceed standalone, `MC2VR_NO_HOST` skips); host exits on
+carrier `Shutdown`, carrier-process death, or runtime EXITING; carrier
+monitor thread logs state transitions and host death, never touches the
+render thread (S4-4's pose consumer reads the seqlock directly). Selftest
+phase B = win64 host `--mock` ↔ win32 probe stand-in carrier round trip.
 
 **Lifecycle**: launcher starts the host before the game and waits for its ready
 log line, then proceeds with the suspended-game injection flow (see

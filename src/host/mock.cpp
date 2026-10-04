@@ -4,6 +4,7 @@
 
 #include "d3d.hpp"
 #include "eyes.hpp"
+#include "ipc.hpp"
 #include "log.hpp"
 #include "pose.hpp"
 
@@ -31,6 +32,21 @@ HmdFrame synth(unsigned n) {
     return f;
 }
 
+// True when the host should stop: Shutdown command from the carrier, or the
+// registered carrier (game) process died.
+bool stop_requested() {
+    Mc2IpcMsg m;
+    while (ipc::pop_command(&m)) {
+        if (m.type == MC2VR_CMD_SHUTDOWN) {
+            hostlog::write("mock: Shutdown command from carrier (pid %u)",
+                           ipc::carrier_pid());
+            return true;
+        }
+        hostlog::write("mock: unexpected command %u ignored", m.type);
+    }
+    return ipc::carrier_died(1000);
+}
+
 }  // namespace
 
 int run(int frames) {
@@ -55,12 +71,28 @@ int run(int frames) {
         }
     }
 
-    hostlog::write("mock: ready (no OpenXR runtime; synthetic pose, %ux%u eye textures)", kW, kH);
+    // Canonical ready marker (launcher/selftest wait for this line) + a
+    // synthetic session ramp so the event ring has realistic content.
+    hostlog::write("mc2vr_host: ready (mock mode; no OpenXR runtime — synthetic "
+                   "pose, %ux%u eye textures)", kW, kH);
+    ipc::push_event(MC2VR_MSG_SESSION_STATE, MC2VR_XR_SESSION_VISIBLE, 0);
+
+    uint32_t sessionState = MC2VR_XR_SESSION_VISIBLE;
+    unsigned visibleAfter = 45;  // ~0.5s of frames then FOCUSED
 
     for (unsigned n = 0; frames == 0 || n < (unsigned)frames; ++n) {
+        if (stop_requested()) break;
+
+        if (visibleAfter && n >= visibleAfter) {
+            sessionState = MC2VR_XR_SESSION_FOCUSED;
+            ipc::push_event(MC2VR_MSG_SESSION_STATE, MC2VR_XR_SESSION_FOCUSED, 0);
+            visibleAfter = 0;
+        }
+
         const HmdFrame f = synth(n);
         for (int e = 0; e < 2; ++e) eyes::draw_pattern(d.ctx, rtv[e], e, n);
         d.ctx->Flush();
+        ipc::publish(f, kIpd, sessionState, 0, n);
         if (n % 90 == 0)
             hostlog::write("mock: frame %u head=(%.3f %.3f %.3f) qy=%.3f", n,
                            (f.eye[0].pos.x + f.eye[1].pos.x) / 2, f.eye[0].pos.y, f.eye[0].pos.z,

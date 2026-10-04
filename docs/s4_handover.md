@@ -41,11 +41,14 @@ D3D11 + IPC server. Design, IPC contract and risks: `docs/stereo_design.md` §S4
 
 ## Next session — start here
 
-1. S4-0 is DONE and verified on the headset. Start S4-1.
-2. S4-1 (IPC + lifecycle), per the list below. The host currently has no IPC, no launcher
-   spawn, no selftest hook and is not deployed by `launch.sh`. `pose.hpp` (`HmdFrame`/`EyePose`)
-   is the intended payload shape for the shared block.
-3. S4-0 code (`5adba35`) and its docs are committed; the working tree is clean.
+1. S4-0 and S4-1 are DONE (S4-1 selftest-verified 2026-10-04; live `./launch.sh`
+   verification of the carrier↔host attach still pending — see the S4-1 entry
+   in the engineering list below). Start S4-2.
+2. S4-2 (shared-handle image path), per the list below. It builds on the IPC
+   `FRAME_READY` command (shape already defined in `src/common/mc2vr_ipc.h`);
+   start with the 20-line two-process DXVK D3D9→D3D11 `pSharedHandle` probe
+   before building anything else on it.
+3. S4-1 code and its docs are committed; the working tree is clean.
 
 Host source map (`src/host/`): `main.cpp` (args `--mock --frames N --xr-debug`, log setup),
 `xr_session.cpp` (instance/session/swapchains/event pump/frame loop, Wine VR registry fixups),
@@ -135,7 +138,8 @@ Documented in `conf/mc2vr.conf` (read at DLL attach). Stereo pipeline keys: `vie
 `view_ipd`, `view_asym_x/y`, `frame_replay`, `eye_pass`, `eye_rt`, `eye_monitor_pin`; diagnostics are
 all `debug_*` and default off. The DEPLOYED conf at `<GAME_DIR>/mc2vr/` is never overwritten by
 `launch.sh` — edit it there manually. Analysis tools: `tools/analyze_dumps.py` (parses view/S2c/eye
-evidence), `tools/eye_pair_fixture.py`.
+evidence), `tools/eye_pair_fixture.py`. S4-1 env vars (not conf keys): `MC2VR_NO_HOST` (launcher skips
+the host), `MC2VR_IPC_NAME` (rename the IPC section; default `mc2vr_ipc_v1`).
 
 ## S4 engineering list
 
@@ -171,6 +175,26 @@ selftested first without the game.
   for its ready line; carrier connects in stage 1 (non-fatal: no host ⇒ the
   game runs unmodified-mono-plus-stereo-on-monitor as today). Selftest
   extended: host `--mock` ↔ stand-in carrier round trip.
+  **Status (2026-10-04)**: COMPLETE, selftest-verified (both phases pass under
+  plain Wine; live-run pending the next `./launch.sh`). Protocol v1:
+  `src/common/mc2vr_ipc.h` (fixed-width, arch-neutral; seqlocked
+  `Mc2IpcState` = pose/FOV/IPD/session/recenter; SPSC `Mc2IpcMsg` rings —
+  events host→carrier, commands carrier→host incl. the S4-2 `FRAME_READY`
+  shape; `hostExiting` flag + carrier-pid death watch both ways). Host:
+  `src/host/ipc.cpp` creates the section (refuses if one exists — stale-host
+  collision guard) before session setup; mock + real paths publish per frame
+  and push session-state/recenter events; `Shutdown` or carrier death exits
+  cleanly (`mark_exiting` before return). Carrier: `src/carrier/ipc.cpp`
+  connects after the build-lock gate (an idle carrier never registers),
+  runs a leaked 250ms monitor thread (session transitions, first tracked pose,
+  host death) — the render thread stays untouched until S4-4.
+  Launcher: spawns `mc2vr_host.exe` (deploy dir) before the game, waits for
+  the `mc2vr_host: ready` log line (30s, non-fatal: early exit logged with
+  rc, missing exe logged, `MC2VR_NO_HOST` skips) — `launch.sh` deploys the
+  host (auto-builds win64 if missing). Env `MC2VR_IPC_NAME` renames the
+  section (selftest isolation). Gotcha fixed en route: the seqlock read
+  helper originally memcpy'd the payload into the wrong struct offset —
+  every field read shifted; the probe caught it.
 - **S4-2 Shared-handle image path**: carrier creates DEFAULT-pool shared
   textures (ring of N per eye, LDR X8R8G8B8/A8R8G8B8 only — the fp16 RTs are
   pre-tonemap and not shareable-friendly), fills them at the pass boundaries

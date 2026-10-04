@@ -8,6 +8,7 @@ add_library(mc2vr_carrier SHARED
     device.cpp
     view_rewrite.cpp
     eye_replay.cpp
+    ipc.cpp
     log.cpp
     # Diagnostic/instrumentation modules (mostly conf-gated, default off).
     debug/probes.cpp

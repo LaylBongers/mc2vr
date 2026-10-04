@@ -7,6 +7,7 @@
 #include "eye_replay.hpp"
 #include "game_addresses.h"
 #include "hooks.hpp"
+#include "ipc.hpp"
 #include "log.hpp"
 #include "debug/probes.hpp"
 #include "debug/render_dump.hpp"
@@ -324,6 +325,13 @@ void init()
     // ---- Stage 1: early. Runs possibly before the game's first instruction
     // (launcher starts it suspended and resumes on the marker below). Plaintext
     // .text hooks only — nothing that needs engine-constructed state.
+
+    // S4-1: attach to the OpenXR host's shared section, if one exists (the
+    // launcher spawns the host before the game). Non-fatal: no host means
+    // the game runs the monitor-stereo path exactly as today. Only a
+    // lock-passing carrier registers — an idle one stays fully idle.
+    ipc::connect();
+
     hooks::install();
     render::install_early();
     MC2VR_LOG("early init done"); // launcher's resume marker

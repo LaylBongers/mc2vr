@@ -12,7 +12,9 @@
 #include <openxr/openxr_platform.h>
 
 #include "eyes.hpp"
+#include "ipc.hpp"
 #include "log.hpp"
+#include "pose.hpp"
 
 namespace xrs {
 
@@ -40,6 +42,8 @@ struct State {
     XrSession session = XR_NULL_HANDLE;
     XrSpace space = XR_NULL_HANDLE;
     XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
+    uint32_t recenterCount = 0;
+    uint32_t pubFrame = 0;
     bool running = false;
     bool exiting = false;
     d3d::Device d3d;
@@ -222,6 +226,7 @@ void handle_events(State& s) {
                 auto* e = (XrEventDataSessionStateChanged*)&ev;
                 s.sessionState = e->state;
                 hostlog::write("openxr: session state -> %s", state_name(e->state));
+                ipc::push_event(MC2VR_MSG_SESSION_STATE, e->state, s.recenterCount);
                 if (e->state == XR_SESSION_STATE_READY) {
                     XrSessionBeginInfo bi = {XR_TYPE_SESSION_BEGIN_INFO};
                     bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -241,6 +246,8 @@ void handle_events(State& s) {
                 break;
             case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
                 hostlog::write("openxr: reference space change pending");
+                ++s.recenterCount;
+                ipc::push_event(MC2VR_MSG_RECENTER, s.recenterCount, 0);
                 break;
             case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
                 hostlog::write("openxr: interaction profile changed");
@@ -254,6 +261,9 @@ void handle_events(State& s) {
 }
 
 // One frame: wait/begin/locate/render/end. Returns false on a hard error.
+void publish_frame(State& s, const XrFrameState& fs, const XrView views[2],
+                   bool poseOk);
+
 bool frame(State& s, unsigned n) {
     XrFrameState fs = {XR_TYPE_FRAME_STATE};
     XR_TRY(xrWaitFrame(s.session, nullptr, &fs));
@@ -264,6 +274,8 @@ bool frame(State& s, unsigned n) {
     XrCompositionLayerProjection layer = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     const XrCompositionLayerBaseHeader* layers[1] = {(XrCompositionLayerBaseHeader*)&layer};
     uint32_t layerCount = 0;
+    XrView views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+    bool poseOk = false;
 
     if (fs.shouldRender) {
         XrViewLocateInfo li = {XR_TYPE_VIEW_LOCATE_INFO};
@@ -271,7 +283,6 @@ bool frame(State& s, unsigned n) {
         li.displayTime = fs.predictedDisplayTime;
         li.space = s.space;
         XrViewState vs = {XR_TYPE_VIEW_STATE};
-        XrView views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
         uint32_t nv = 0;
         XR_TRY(xrLocateViews(s.session, &li, &vs, 2, &nv, views));
 
@@ -318,7 +329,30 @@ bool frame(State& s, unsigned n) {
     ei.layerCount = layerCount;
     ei.layers = layerCount ? layers : nullptr;
     XR_TRY(xrEndFrame(s.session, &ei));
+    publish_frame(s, fs, views, poseOk);
     return true;
+}
+
+// Publish the located views (or a tracked=false state-only frame) to the
+// carrier. Eye fov mirrors XrFovF exactly (tangent half-angles).
+void publish_frame(State& s, const XrFrameState& fs, const XrView views[2],
+                   bool poseOk) {
+    HmdFrame f;
+    f.tracked = poseOk;
+    f.displayTime = fs.predictedDisplayTime;
+    for (int e = 0; e < 2; ++e) {
+        f.eye[e].pos = {views[e].pose.position.x, views[e].pose.position.y,
+                        views[e].pose.position.z};
+        f.eye[e].rot = {views[e].pose.orientation.x, views[e].pose.orientation.y,
+                        views[e].pose.orientation.z, views[e].pose.orientation.w};
+        f.eye[e].fov = {views[e].fov.angleLeft, views[e].fov.angleRight,
+                        views[e].fov.angleUp, views[e].fov.angleDown};
+    }
+    const float dx = views[1].pose.position.x - views[0].pose.position.x;
+    const float dy = views[1].pose.position.y - views[0].pose.position.y;
+    const float dz = views[1].pose.position.z - views[0].pose.position.z;
+    const float ipd = std::sqrt(dx * dx + dy * dy + dz * dz);
+    ipc::publish(f, ipd, (uint32_t)s.sessionState, s.recenterCount, s.pubFrame++);
 }
 
 }  // namespace
@@ -329,12 +363,31 @@ int run(const Options& opt) {
         hostlog::write("openxr: setup failed");
         return 1;
     }
-    hostlog::write("openxr: ready");
+    hostlog::write("mc2vr_host: ready (openxr session up)");
 
     unsigned n = 0;
     bool ok = true;
     while (!s.exiting && ok) {
         handle_events(s);
+
+        // Carrier lifecycle: Shutdown command, or the carrier (game) process
+        // went away. Never block — both checks are lock-free polls.
+        Mc2IpcMsg cmd;
+        while (ipc::pop_command(&cmd)) {
+            if (cmd.type == MC2VR_CMD_SHUTDOWN) {
+                hostlog::write("openxr: Shutdown command from carrier (pid %u)",
+                               ipc::carrier_pid());
+                if (s.running) xrRequestExitSession(s.session);
+                s.exiting = true;
+            } else {
+                hostlog::write("openxr: unexpected command %u ignored", cmd.type);
+            }
+        }
+        if (ipc::carrier_died(1000)) {
+            if (s.running) xrRequestExitSession(s.session);
+            s.exiting = true;
+        }
+
         if (s.running) {
             ok = frame(s, n++);
             if (opt.maxFrames && (int)n >= opt.maxFrames) {
@@ -350,6 +403,12 @@ int run(const Options& opt) {
             }
         } else {
             Sleep(10);
+            // Keep the carrier informed of the session state even while
+            // idle (no display time exists yet; state-only publish).
+            HmdFrame idle;
+            idle.displayTime = 0;
+            ipc::publish(idle, 0.0f, (uint32_t)s.sessionState, s.recenterCount,
+                         s.pubFrame++);
         }
     }
     hostlog::write("openxr: shutdown (%u frames)", n);
