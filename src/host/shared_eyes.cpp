@@ -74,6 +74,10 @@ namespace {
 // probe-proven), so the rows pass through untouched. GDI assumes tight rows;
 // re-pack only when the staging pitch is padded.
 void draw_pane_impl(HDC dc, const RECT& pane, const Entry& e) {
+    // Shared texture -> staging (the copy I managed to forget in the first
+    // live run: Map on a never-copied staging texture reads its zero-init
+    // contents — the black-mirror bug) ...
+    g_ctx->CopyResource(e.stg, e.tex);
     D3D11_MAPPED_SUBRESOURCE m;
     if (FAILED(g_ctx->Map(e.stg, 0, D3D11_MAP_READ, 0, &m))) return;
 
@@ -128,6 +132,10 @@ bool init(d3d::Device* d) {
         return false;
     }
     ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+    // Fixed capacity up front: Entry pointers stored in g_latest[].e must stay
+    // stable across push_backs (a realloc would dangle them; later Resets mint
+    // new handles and keep pushing).
+    g_cache.reserve(OPEN_CACHE_MAX);
     g_inited = true;
     hostlog::write("seyes: mirror window up (%ux%u); waiting for FRAME_READY",
                    MIRROR_W, MIRROR_H);

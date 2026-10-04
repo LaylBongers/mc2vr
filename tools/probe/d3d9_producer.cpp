@@ -103,7 +103,10 @@ int main(int argc, char** argv) {
 
     IDirect3DTexture9* tex = NULL;
     HANDLE shared = NULL;
-    hr = dev->CreateTexture(w, h, 1, 0, (D3DFORMAT)fmt, D3DPOOL_DEFAULT, &tex, &shared);
+    // RENDERTARGET usage = the live carrier path (StretchRect targets require
+    // RT surfaces; the usage-0 variant was the original probe's).
+    hr = dev->CreateTexture(w, h, 1, D3DUSAGE_RENDERTARGET, (D3DFORMAT)fmt,
+                            D3DPOOL_DEFAULT, &tex, &shared);
     if (FAILED(hr) || !shared) {
         logf_("producer: CreateTexture(shared) FAILED hr=0x%08lx shared=%p\n",
               (unsigned long)hr, shared);
@@ -121,6 +124,42 @@ int main(int argc, char** argv) {
     hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, &q);
     if (FAILED(hr)) { logf_("producer: event query failed hr=0x%08lx (continuing without sync)\n", (unsigned long)hr); }
 
+    // --- LIVE-PATH EMULATION (S4-2 black-mirror repro, 2026-10-04) ---------
+    // The original probe proved usage-0 shared textures filled via
+    // UpdateTexture. The live carrier fills RENDERTARGET-usage shared
+    // textures via StretchRect FROM THE SWAPCHAIN BACKBUFFER. Emulate that
+    // exactly: a real swapchain, a "composite" blit into its backbuffer,
+    // then the boundary capture blit bb -> shared RT, then the event-query
+    // sync, then publish.
+    IDirect3DSwapChain9* sc = NULL;
+    {
+        D3DPRESENT_PARAMETERS pp2 = pp;
+        pp2.BackBufferWidth = w;
+        pp2.BackBufferHeight = h;
+        pp2.BackBufferFormat = (D3DFORMAT)fmt;
+        pp2.BackBufferCount = 1;
+        pp2.SwapEffect = D3DSWAPEFFECT_DISCARD;
+        pp2.Windowed = TRUE;
+        pp2.hDeviceWindow = hwnd;
+        hr = dev->CreateAdditionalSwapChain(&pp2, &sc);
+        if (FAILED(hr) || !sc) {
+            logf_("producer: CreateAdditionalSwapChain FAILED hr=0x%08lx\n", (unsigned long)hr);
+            return 2;
+        }
+    }
+    IDirect3DSurface9* bb = NULL;
+    hr = sc->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &bb);
+    if (FAILED(hr) || !bb) { logf_("producer: GetBackBuffer FAILED hr=0x%08lx\n", (unsigned long)hr); return 2; }
+    IDirect3DTexture9* mid = NULL;  // RT texture standing in for the game's composite target
+    hr = dev->CreateTexture(w, h, 1, D3DUSAGE_RENDERTARGET, (D3DFORMAT)fmt,
+                            D3DPOOL_DEFAULT, &mid, NULL);
+    if (FAILED(hr) || !mid) { logf_("producer: mid RT texture FAILED hr=0x%08lx\n", (unsigned long)hr); return 2; }
+    IDirect3DSurface9* midS = NULL;
+    mid->GetSurfaceLevel(0, &midS);
+    // sys is the pattern source (fills via UpdateTexture, as before)
+    IDirect3DSurface9* texS = NULL;
+    tex->GetSurfaceLevel(0, &texS);
+
     uint32_t k = 0;
     const ULONGLONG tEnd = GetTickCount64() + (ULONGLONG)seconds * 1000;
     for (;; ++k) {
@@ -132,8 +171,16 @@ int main(int argc, char** argv) {
         }
         sys->UnlockRect(0);
 
-        hr = dev->UpdateTexture(sys, tex);
+        hr = dev->UpdateTexture(sys, mid);
         if (FAILED(hr)) { logf_("producer: UpdateTexture failed hr=0x%08lx\n", (unsigned long)hr); return 2; }
+
+        // "Composite": mid -> backbuffer (the game's final pass draw).
+        hr = dev->StretchRect(midS, nullptr, bb, nullptr, D3DTEXF_LINEAR);
+        if (FAILED(hr)) { logf_("producer: composite StretchRect failed hr=0x%08lx\n", (unsigned long)hr); return 2; }
+
+        // Boundary capture: backbuffer -> shared RT (the live carrier path).
+        hr = dev->StretchRect(bb, nullptr, texS, nullptr, D3DTEXF_LINEAR);
+        if (FAILED(hr)) { logf_("producer: capture StretchRect failed hr=0x%08lx\n", (unsigned long)hr); return 2; }
 
         // GPU sync: same primitive the game's LtiRenderer_BeginSubmit spins on.
         // D3DGETDATA_FLUSH is required: DXVK only submits the pending command
@@ -147,7 +194,7 @@ int main(int argc, char** argv) {
                 hr = q->GetData(&data, sizeof data, D3DGETDATA_FLUSH);
                 if (hr != S_FALSE) break;
                 if (GetTickCount64() > tSyncEnd) { logf_("producer: sync spin TIMEOUT\n"); break; }
-                Sleep(1);
+                Sleep(0);
             }
             if (k == 0) logf_("producer: event-query sync ok (hr=0x%08lx)\n", (unsigned long)hr);
         }
@@ -157,15 +204,24 @@ int main(int argc, char** argv) {
             if (!f) { logf_("producer: cannot write handle.txt\n"); return 2; }
             fprintf(f, "%u 0x%08x %u %u\n", fmt, (unsigned)(uintptr_t)shared, w, h);
             fclose(f);
-            logf_("producer: handle published, redrawing every 500 ms\n");
+            logf_("producer: handle published (live-path emulation: swapchain + "
+                  "StretchRect into shared RT), redrawing every %u ms\n", interval);
         }
         if (k == 8) logf_("producer: still alive (k=%u)\n", k);
+
+        sc->Present((const RECT*)nullptr, (const RECT*)nullptr, (HWND)nullptr,
+                    (const RGNDATA*)nullptr, 0);  // the game presents too
 
         if (done_file_exists()) { logf_("producer: done file seen, exiting (k=%u)\n", k); break; }
         if (GetTickCount64() > tEnd) { logf_("producer: timeout, exiting (k=%u)\n", k); break; }
         Sleep(interval);
     }
 
+    if (texS) texS->Release();
+    if (midS) midS->Release();
+    if (mid) mid->Release();
+    if (bb) bb->Release();
+    if (sc) sc->Release();
     if (q) q->Release();
     sys->Release();
     tex->Release();

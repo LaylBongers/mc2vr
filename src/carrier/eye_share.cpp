@@ -99,8 +99,10 @@ bool ensure_resources(void *device, void *bb)
 
     char fmt_name[32];
     snprintf(fmt_name, sizeof fmt_name, "D3DFMT_%u", g_fmt);
-    MC2VR_LOG("share: creating %u slots/eye %ux%u fmt %s shared RT ring",
-              RING_SLOTS, g_w, g_h, fmt_name);
+    MC2VR_LOG("share: creating %u slots/eye %ux%u fmt %s shared RT ring "
+              "(backbuffer MS=%u/%u)",
+              RING_SLOTS, g_w, g_h, fmt_name,
+              (unsigned)desc.MultiSampleType, desc.MultiSampleQuality);
 
     for (uint32_t eye = 0; eye < 2; ++eye) {
         for (uint32_t s = 0; s < RING_SLOTS; ++s) {
