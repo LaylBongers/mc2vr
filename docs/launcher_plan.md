@@ -1,6 +1,6 @@
 # Launcher + Carrier Reference
 
-The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence for the camera channel); this doc remains the launcher/mechanism/hook reference. Per-address facts live in Ghidra; not repeated beyond the hook list below.
+The M4 design now lives in `stereo_design.md` (incl. the distilled evidence for the camera channel); this doc remains the launcher/mechanism/hook reference. Per-address facts live in Ghidra; not repeated beyond the hook list below.
 
 ## Architecture
 
@@ -38,7 +38,7 @@ The M4 design now lives in `docs/stereo_design.md` (incl. the distilled evidence
 
 - SecuROM is inert under everything we do: live `.text` inline patches, in-process `.data` writes, direct VM-stub thunk calls, DLL injection, cross-process reads. Verified over multi-minute runs. Still: never attach a debugger/ptrace; carrier is the only sanctioned probe.
 - Mod code may CALL VM-stub thunks (`GetD3DDevice` etc.); never HOOK them or anything at `0x01a48000+`.
-- Diagnostic carrier modules live in `src/carrier/debug/` (all conf keys prefixed `debug_`, default off; see `conf/mc2vr.conf`): `debug_stub_trace=on` (callback tracer around the render stub, `render_path.md`); `debug_vm_dump=on` (`src/carrier/debug/vm_dump.cpp`, read-only): at attach and again +15s it dumps the live VM chain behind thunk `0x0046ab80` diffed against the on-disk image, then censuses every `jmp [slot]` thunk (slot in `0x01a48000..0x03771f0f`) and writes `<GAME_DIR>/mc2vr/vm_thunks.csv` (file target vs runtime target per thunk; a copy of the 2026-10-03 run is `docs/data/vm_thunks_runtime.csv`). Findings: `pandemic_engine.md` § SecuROM/VM boundary item 4. The deployed conf is never overwritten by `launch.sh` — add the key to the deployed copy.
+- Diagnostic carrier modules live in `src/carrier/debug/` (all conf keys prefixed `debug_`, default off; see `conf/mc2vr.conf`): `debug_stub_trace=on` (callback tracer around the render stub, `reverse_engineering/render_path.md`); `debug_vm_dump=on` (`src/carrier/debug/vm_dump.cpp`, read-only): at attach and again +15s it dumps the live VM chain behind thunk `0x0046ab80` diffed against the on-disk image, then censuses every `jmp [slot]` thunk (slot in `0x01a48000..0x03771f0f`) and writes `<GAME_DIR>/mc2vr/vm_thunks.csv` (file target vs runtime target per thunk; a copy of the 2026-10-03 run is `docs/reverse_engineering/data/vm_thunks_runtime.csv`). Findings: `reverse_engineering/securom_vm.md` item 4. The deployed conf is never overwritten by `launch.sh` — add the key to the deployed copy.
 - Hook install needs NO thread suspension: SafetyHook v0.7.0 install is trap-based (page guard + VEH IP fixup) — atomic w.r.t. execution. External suspension is FORBIDDEN (v0.7.0 heap-allocates during `create_inline`; suspended thread holding the CRT heap lock would deadlock).
 - VmtHook (cloned-vtable vptr swap) works on DXVK's MinGW-built objects (`VMT_HEADER=2` matches DXVK's Itanium vtables); safe from a foreign thread (aligned pointer store; in-flight calls keep the old valid vtable). Survives device-lost + `Reset` cycles.
 - MidHook = register-context probe at arbitrary instructions — the tool for thiscall/unknown-convention sites (read ECX/ESP from context, no dispatch semantics).
@@ -65,14 +65,10 @@ Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device
 
 - M0 (toolchain, launcher, injection, carrier attach) — DONE.
 - M1 (FrameTick stability; probes: `.data` write+restore, VM-stub call) — DONE. SecuROM live-patching caveat DISCHARGED.
-- M2 (device capture, VmtHook, Present/EndScene/Reset pinning, present params) + M2.5 (BeginSubmit probe: frame driver + live vtable) — DONE. Per-frame submit chain is fully plaintext; see `render_path.md` "Frame driver chain".
+- M2 (device capture, VmtHook, Present/EndScene/Reset pinning, present params) + M2.5 (BeginSubmit probe: frame driver + live vtable) — DONE. Per-frame submit chain is fully plaintext; see `reverse_engineering/render_path.md` "Frame driver chain".
 - M3 (**COMPLETE**): view-table dump + command histogram + slot claim + queue poll — verified in-mission (runs incl. cutscene, boat/crouch cameras, PDA, satellite designation, alt-tabs, mission load).
   - Slot 4/5 claim (VmtHook clone on `g_RenderShell`): **PROVEN** — 1:1 with frames through everything; no vtable reinstalls.
-  - View entry field map: `ViewEntry` struct created in Ghidra (`/RenderPath`, applied at `g_ViewTable` `0x012865e0`; plate comment has the evidence). Load-time entries are template/zero; camera data — **three `ViewMatrixSlot`s (stride 0xc0) at +0x020** (per slot: mtx[0] viewToWorld w/ camera pos, mtx[1] worldToView w/ negated pos, then pos/dir/kind/params; early dumps counted them as nine matrices), **FOV half-angle sin/cos at +0x2ec/+0x2f4**, pose-store handle key at +0x010, camera position copies at +0x7ac (previous) / +0x7c4 (current), quaternion at +0x7d4, near-plane-ish params near +0x188 (5 normal / 20 satellite-style / 9.81 water view), `ViewRef` pointer +0x7e4 (struct `ViewRef`, vtable `0x00bac1c8` = `ViewRef_vtbl`), +0x7e8 = viewRef+0x20, +0x7ec upstream camera object, handle-id mirror at +0x800.
-  - View loop: active views only, per-frame submissions 1..608 (satellite designation), indices to 239 (~256-entry table). ~~`DAT_00d29e60` is a dynamic registered-view count~~ — **corrected in S0**: it is the active-list HEAD index.
-  - Type-4 views: never observed in any scenario — deprioritized.
-  - Command histogram: gameplay ~21 opcodes (menu 9), 1.5k–3.4k cmds/frame; bins 00/01/02/03 dominate; 27 opcodes defined.
-  - Queue+0x10 is a ring POSITION (wraps 0..cap-1; capacity 4096, elem 96); +0x14 stayed 0. — **reinterpreted in S0**: +0x10 = countersA (consumer-advanced), +0x14 = countersB (producer-advanced); see `render_path.md`.
+  - View entry field map and view-loop facts moved to `reverse_engineering/view_and_camera.md`.
   - Carrier keeps the M3 instrumentation as ambient telemetry for future runs.
 - M4: stereo rendering (design and status: `stereo_design.md`). **S0/S1/S2 (incl. S2c second draw pass) COMPLETE and live-verified** (the draw camera never surfaces in patchable plaintext data — the GPU-boundary `SetVertexShaderConstantF` rewrite is the per-eye channel). Remaining: S4 HMD presentation + pose via the separate 64-bit OpenXR host (`s4_handover.md`; design `stereo_design.md` §S4). OpenVR is not used; OpenXR is not possible inside the 32-bit DX9 game process, hence the host. The carrier now loads before the game creates its device (early attach), so creation params can be changed at `Direct3DCreate9`/`CreateDevice` instead of via device-lost + `Reset`; the shared-texture copy needs no swapchain changes.
 
@@ -83,6 +79,6 @@ Same rules, plus:
 - VM-virtualized functions are denser in logic code: hook plaintext thunks/callers, never VM stubs; calling stubs is fine (proven).
 - Keep the carrier thin (inject + install + mod host); gameplay mod logic goes in a separate hot-swappable module the carrier hosts.
 - Controller/HMD input source: the host's OpenXR actions, delivered over the S4 IPC and applied at the slot-5 hook.
-- Input injection point: `XInputGetState`/`XInputSetState` import stubs `0x00a64d56`/`0x00a64d5c` (plaintext thunks); no dedicated input-update call exists (state-stack flow — `main_game_loop.md`). Marshal motion poses to the main thread at a defined frame point.
+- Input injection point: `XInputGetState`/`XInputSetState` import stubs `0x00a64d56`/`0x00a64d5c` (plaintext thunks); no dedicated input-update call exists (state-stack flow — `reverse_engineering/main_game_loop.md`). Marshal motion poses to the main thread at a defined frame point.
 - Resolve the idle-reset buffer pair (`0x017d30e8` count/array, `0x00f7fb90` 0x1000 buffer) before designing input injection.
-- Gameplay object models (player/camera/weapon, G-engine classes) need mapping via the `vtables.md` recipe — workload, not risk.
+- Gameplay object models (player/camera/weapon, G-engine classes) need mapping via the `reverse_engineering/vtables.md` recipe — workload, not risk.

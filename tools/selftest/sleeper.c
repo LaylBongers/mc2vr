@@ -10,7 +10,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define FRAME_COUNTER_2 ((uintptr_t)0x011755bcu) // the real exe's frame counter VA (docs/main_game_loop.md)
+#define FRAME_COUNTER_2 ((uintptr_t)0x011755bcu) // the real exe's frame counter VA (docs/reverse_engineering/main_game_loop.md)
 
 static DWORD WINAPI ticker(LPVOID param)
 {

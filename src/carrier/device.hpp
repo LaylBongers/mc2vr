@@ -1,5 +1,5 @@
 // M2: D3D9 device capture + VmtHook pinning of Present/BeginScene/EndScene/
-// Reset (docs/launcher_plan.md hook list; render_path.md open items:
+// Reset (docs/launcher_plan.md hook list; docs/reverse_engineering/render_path.md open items:
 // Present/EndScene call-site pinning, thunk_FUN_0256b6f0 confirmation).
 //
 // Discipline notes:
@@ -13,7 +13,7 @@
 //     valid old vtable, so no thread suspension is needed.
 //   - Present params are queried from the MAIN thread (first Present hook
 //     call), not the init thread — D3D9 device use is main-thread-only
-//     (render_path.md threading model).
+//     (docs/reverse_engineering/render_path.md threading model).
 //   - Hook objects are deliberately leaked (heap, never destroyed): their
 //     destructors would restore the object's vptr during process teardown,
 //     possibly after DXVK has freed the device (UAF write on exit).

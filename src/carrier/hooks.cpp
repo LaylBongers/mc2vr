@@ -36,7 +36,7 @@ double g_window_dt_max = 0.0;
 // portably preserve ECX, but a MidHook at the entry instruction hands us the
 // full register context: ECX = this (its vtable slot reveals base-vs-derived),
 // [ESP] = return address (reveals the frame driver — the encrypted
-// thunk_FUN_0256b6f0 is the suspect per render_path.md open items).
+// thunk_FUN_0256b6f0 is the suspect per docs/reverse_engineering/render_path.md open items).
 // One-shot burst; zero behavior change afterwards.
 SafetyHookMid g_beginsubmit_mid;
 uint64_t g_beginsubmit_hits = 0;
@@ -108,7 +108,7 @@ void frame_tick_hook()
     g_frame_tick_hook.call<void>();
 
     // M1 bonus / M2 pre-work: observe the D3D device once it exists. The
-    // call runs on the main thread (render threading rules, render_path.md)
+    // call runs on the main thread (render threading rules, docs/reverse_engineering/render_path.md)
     // and stops as soon as the pointer is non-NULL — normal game code calls
     // this thunk constantly, so per-frame calls are routine for it.
     static void *observed_device = nullptr;

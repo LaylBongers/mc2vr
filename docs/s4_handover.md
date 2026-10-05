@@ -8,8 +8,8 @@ Ghidra plates; milestone history in git.
 ## Read first
 
 1. `AGENTS.md` — rules, iteration loop. 2. `docs/stereo_design.md` — architecture, view channel, S4 host/IPC
-design + gotchas. 3. `docs/launcher_plan.md` — mechanism rules, hook inventory, build/test. 4. `docs/render_path.md`
-— frame chain/threading (GPU-sync event-query spin in `LtiRenderer_BeginSubmit`). 5. `docs/ghidra-reva.md`.
+design + gotchas. 3. `docs/launcher_plan.md` — mechanism rules, hook inventory, build/test. 4. `docs/reverse_engineering/render_path.md`
+— frame chain/threading (GPU-sync event-query spin in `LtiRenderer_BeginSubmit`). 5. `docs/reverse_engineering/ghidra-reva.md`.
 
 ## State (2026-10-05)
 
@@ -33,7 +33,7 @@ defaults stay host-less (`eye_share=off`, `view_row_rewrite=stereo`).
   slot-5 `PostUpdateHook`, currently a counting no-op; pose sampling happens at pass-1 start, not there).
 - **Pacing**: game ~30 Hz (two ~16.6 ms passes) vs host ~120 Hz re-submitting the newest pair with the
   rendered pose (runtime reprojects). Decide throttle-to-HMD vs run-free; timewarp inputs via slot-4
-  `EndOfFrameHook` (see `docs/main_game_loop.md`).
+  `EndOfFrameHook` (see `docs/reverse_engineering/main_game_loop.md`).
 - **HUD/2D**: `g_RenderQueue2` consumption timing vs Present is UNKNOWN — add counters. If the HUD is drawn
   per-pass into the composite, the per-eye LDR captures already include it; if it lands between passes it may
   appear in one eye only — measure first. Fallback: separate quad layer in the host.

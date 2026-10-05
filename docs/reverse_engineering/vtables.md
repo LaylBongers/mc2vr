@@ -24,4 +24,4 @@ Renaming functions: `set-function-prototype` also rejects `__thiscall` and chang
 - Plate on the vtable: install chain (which ctor), slot count, no-RTTI note.
 - EOL per interesting slot: semantics, callers, default target.
 
-ReVa tool-call gotchas: `docs/ghidra-reva.md`.
+ReVa tool-call gotchas: `ghidra-reva.md`.

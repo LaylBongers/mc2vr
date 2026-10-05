@@ -1,46 +1,7 @@
-# Pandemic Engine — Cross-Cutting Notes
+# SecuROM v7 / VM Boundary
 
-Terse engine-wide knowledge for working with the decompilation. Per-address facts (layouts,
-addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md`, stereo/S2 in
-`stereo_design.md`, vtable recipe in `vtables.md`.
-
-## Naming layers
-
-- `Pg*` = engine/render core (PgPrimitive, PgMaterial, Pg*.sho shaders). `Lti*` = platform layer
-  (LtiRenderer, Lti_DebugPrintf, Dx9_* helpers). Source roots in debug strings:
-  `D:\projects\Mercs2_PC\LTI\Src\...`, `D:\projects\Mercs2_PC\Odin\Win32\...` ("Odin" = this game's project).
-
-## Fastest identification oracles (use in this order)
-
-- **String search first.** `"Class::Method"` strings + source `.cpp` paths identify classes outright
-  (e.g. the `PgPrimitive::*` method strings + `PgPrimitiveWin32.cpp` named the whole primitive
-  system). A method string is usually referenced by the very function it names, often only lazily
-  hashed at entry.
-- Debug/assert strings name things (`RenderSystem_Init` via its thread assert, BeginSubmit/EndSubmit
-  via their error prints).
-- No MSVC RTTI — derive classes from ctor vtable writes + strings; annotate vtables pre-emptively.
-
-## Name hashing (two distinct mechanisms — don't confuse them)
-
-- `Lti_LazyNameHash` (0x008244a0, ~139 callers): per-site FNV-1a hash of `"Class::Method"` cached in
-  `.bss`, read only by VM'd code — inert telemetry, not feature/device checks.
-- Inline FNV-1a for **object names** (e.g. `PgMaterial::nameHash64`): basis `0x811c9dc5`, prime
-  `0x1000193`, case-insensitive (`c | 0x20`), NUL terminator hashed as `0x2a`.
-
-## Render data model (consume side, all plaintext; layouts on Ghidra plates)
-
-- **`PgPrimitive`** (0x58): per-draw submit record — draw params, VS, technique, stencil, and table
-  INDICES (`materialIdx/viewIdx/envIdx/viewContextIdx/screenIdx`). Singly-linked submit list
-  (base/head/next-table in the `g_PrimitiveBase` plate; next entries are {6-byte sort key,
-  ushort next}, `0xffff` terminates). Lifecycle: Reset → VM'd build/AssignKeys →
-  `PgPrimitive_SortList` → SubmitToGPU (`0x00855690`, formerly mislabeled RenderShell_RenderFrame).
-- **`PgMaterial`** (0x190): NAMED material ("OcclusionMaterial", "PgPrimitiveSubmitToGPU") —
-  texture-projection transform `rows[6][4]` × view scale/offset goes to **pixel**-shader constants
-  (texgen). Rule of thumb: PS-constant transform + textures + blend flags = material, not camera.
-- Shaders: `.sho` files via `PgShader_Register(name, file, variant)`; `_pl/_sl/_pl_sl` screen-effect
-  variants + `_li` fallbacks, gated by `g_ScreenEffectsEnabled`.
-- Per-draw state is dirty-check cached with `0xffff/0xff` sentinel invalidation; caches are
-  caller-side (Dx9_* layer), not inside the device wrapper.
+What the SecuROM layer does in the game binary and how to classify code near it. On-disk layout and PE
+facts: `target_binary.md`. Mod-side rules for hooking around it: `../launcher_plan.md` § Mechanism.
 
 ## SecuROM/VM boundary — two mechanisms, do not conflate
 
@@ -58,7 +19,7 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
    at runtime). NOT `GetD3DDevice` — that was wrong, see item 4.
 
 3. **VM -> plaintext callbacks and SecuROM-mutated plaintext** (found 2026-10-03 with the stub
-   tracer, `docs/render_path.md` § VM stub callbacks). The VM is not a closed box: native glue in
+   tracer, `render_path.md` § VM stub callbacks). The VM is not a closed box: native glue in
    `Stext` (e.g. `0x024f22b6`) calls plaintext functions directly during the render stub's call
    window, and ordinary-looking `.text` addresses can be SecuROM-MUTATED code — functions split
    into blocks that share one stack frame (`0x0050c0f0` prologue -> `0x00504a95` thunk -> body
@@ -74,7 +35,7 @@ addresses, slot maps) live in Ghidra plates; render specifics in `render_path.md
    `.securom` VM stub, but the SecuROM loader rewrites the slot at startup. Static analysis of the file
    therefore shows the DEFAULT target; the live target can differ. Census (~15s after attach, 2448
    thunks = every `FF 25 <slot in 0x01a48000..0x03771f0f>` in `.text`; per-thunk data in
-   `docs/data/vm_thunks_runtime.csv`): 1887 unpatched (still VM stubs), 155 patched to another
+   `data/vm_thunks_runtime.csv`): 1887 unpatched (still VM stubs), 155 patched to another
    address still in the SecuROM range (target role unknown), **406 patched into `.text`** (distinct,
    native, SecuROM-mutated plaintext: junk-counter prologue `lea ebp/eax,[X]; dec [..]; je`, `push ret;
    jmp` call sites). Proven cases: `GetD3DDevice` `0x0047f2f0` -> `GetD3DDevice_Impl` `0x00403160`
@@ -115,13 +76,3 @@ Rules of thumb:
 - A VM-filled structure that "looks like" scene data must be verified via its ctor/string trail
   before naming (`g_CameraTable` was really the material table).
 
-## Code patterns to expect when reading the decompilation
-
-- Custom register-arg conventions: `this` in ESI/ECX (ctors leak as `unaff_*`), packed EAX pairs
-  (`in_EAX = {startReg, count}` in the Dx9 constant helpers), `unaff_EDI` record pointers.
-- 10-byte thunk chains (jmp wrapper → SecuROM call gate → real body — see § SecuROM/VM boundary);
-  pool allocators `FUN_0084ae70(size, n)` / `FUN_0084d9d0`.
-- Global-ctor-built `.bss` statics: instance memory is zero in the file image (no static vtables) —
-  find ctors by xref to the `.bss` address.
-- Watch int* pointer arithmetic in reads: `*(ushort *)(p + 0x10)` on `int *p` is +0x40 bytes, not
-  +0x10.

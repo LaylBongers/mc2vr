@@ -51,7 +51,7 @@
 // 5 (PostUpdateHook), called by GameShell_FrameTick every frame.
 #define MC2_G_RENDERSHELL ((uintptr_t)0x017ceaf0u)
 
-// g_RenderQueue ring buffer fields (render_path.md): base is the struct;
+// g_RenderQueue ring buffer fields (docs/reverse_engineering/render_path.md): base is the struct;
 // elementSize base+4, capacity base+8, buffer base+0xc, counters base+0x10/
 // base+0x14 (S0 decode: countersA base+0x10 packs low16 = consumer-advanced,
 // high16 = producer-advanced; countersB base+0x14 packs low16 = producer

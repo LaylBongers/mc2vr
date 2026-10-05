@@ -1,5 +1,5 @@
 # Model SecuROM push/jmp and push/push/ret call idioms inside the functions at
-# runtime-resolved VM thunk targets (docs/pandemic_engine.md item 4).
+# runtime-resolved VM thunk targets (docs/reverse_engineering/securom_vm.md item 4).
 # FINDING (2026-10-03): only P2 (push ret; push callee; RET -> CALL override + fall-through) persists.
 # P1 (push ret; jmp X) loses its fall-through override right after commit, which leaves the function
 # falling into junk bytes (worse decompile). Health checks MUST run after commit, not before.

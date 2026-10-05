@@ -233,7 +233,7 @@ static bool verify_image_base()
 }
 
 // SHA-256 the host exe on disk. The on-disk image is the plaintext build
-// (verified in docs/initial_analysis.md); the in-memory image differs once
+// (verified in docs/reverse_engineering/target_binary.md); the in-memory image differs once
 // the SecuROM stub decrypts its sections, so the file is the stable identity.
 static bool verify_build_lock()
 {

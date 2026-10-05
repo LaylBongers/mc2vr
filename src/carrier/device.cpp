@@ -81,7 +81,7 @@ void *g_device = nullptr;
 bool g_params_logged = false;
 
 // Per-call statistics. Present/BeginScene/EndScene/Reset all fire on the
-// main thread only (render threading model, render_path.md) — no atomics.
+// main thread only (render threading model, docs/reverse_engineering/render_path.md) — no atomics.
 // `total` drives the one-shot diagnostic burst (first calls of the process
 // lifetime, not per report window); `window` drives the 10s pattern reports.
 constexpr uint32_t BURST_LOG_CALLS = 3;

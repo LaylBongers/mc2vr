@@ -1,4 +1,4 @@
-// SecuROM-stub callback tracer (docs/render_path.md, § VM stub callbacks).
+// SecuROM-stub callback tracer (docs/reverse_engineering/render_path.md, § VM stub callbacks).
 //
 // Question: does the opaque VM stub (call site 0x004c99f9 -> 0x0050f660)
 // call back into plaintext code? Method (sanctioned — plaintext neighbors

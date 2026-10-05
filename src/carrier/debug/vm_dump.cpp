@@ -174,7 +174,7 @@ void dump_chain(int pass)
 // Every `jmp [slot]` (FF 25 <slot32>) in .text whose slot lies in the SecuROM
 // range, with the target the FILE image names vs the target the slot holds NOW.
 // A patched slot pointing back into .text means the "VM thunk" is native at
-// runtime (found for 0x0046ab80, see docs/pandemic_engine.md).
+// runtime (found for 0x0046ab80, see docs/reverse_engineering/securom_vm.md).
 constexpr uint32_t TEXT_LO = 0x00401000u, TEXT_HI = 0x00b04fffu;
 constexpr uint32_t SROM_LO = 0x01a48000u, SROM_HI = 0x03771f0fu;
 

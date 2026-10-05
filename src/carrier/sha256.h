@@ -1,6 +1,6 @@
 // Self-contained SHA-256 (FIPS 180-4), used for the build-lock check: the
 // carrier hashes the game exe on disk (the plaintext image — verified in
-// docs/initial_analysis.md) and refuses to patch anything unless it matches
+// docs/reverse_engineering/target_binary.md) and refuses to patch anything unless it matches
 // the RE'd binary.
 #pragma once
 
