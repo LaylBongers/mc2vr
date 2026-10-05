@@ -28,7 +28,7 @@ def pimm(ins):
         if sc is not None: return sc.getUnsignedValue()
     return None
 
-rows = [r for r in csv.DictReader(open("/home/laylb/Desktop/mc2vr/docs/data/vm_thunks_runtime.csv")) if r['runtime_region'] == 'text']
+rows = [r for r in csv.DictReader(open("/home/laylb/Desktop/mc2vr/docs/reverse_engineering/data/vm_thunks_runtime.csv")) if r['runtime_region'] == 'text']
 targets = sorted(set(int(r['runtime_target'], 16) for r in rows))
 if PILOT_ONLY: targets = [PILOT_ONLY]
 

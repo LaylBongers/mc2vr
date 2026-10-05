@@ -176,5 +176,5 @@
 <rect x="780" y="1248" width="26" height="14" rx="3" fill="#fff9e6" stroke="#c9a227"/>
 <text x="814" y="1260" text-anchor="start" font-size="12" fill="#44506a">known gap (mono data)</text>
 <text x="40" y="1296" text-anchor="start" font-size="12" fill="#44506a">Facts: the draw camera never exists in patchable plaintext data — it reaches the GPU only as the viewContextData VS constants, so per-eye injection is at SetVertexShaderConstantF.</text>
-<text x="40" y="1316" text-anchor="start" font-size="12" fill="#44506a">Sources: docs/render_path.md (frame chain, stub callbacks) · docs/stereo_design.md (camera channel, hook inventory) · Ghidra plates on PgPrimitive_SubmitToGPU / g_ViewContextTable.</text>
+<text x="40" y="1316" text-anchor="start" font-size="12" fill="#44506a">Sources: docs/reverse_engineering/render_path.md (frame chain, stub callbacks) · docs/stereo_design.md (camera channel, hook inventory) · Ghidra plates on PgPrimitive_SubmitToGPU / g_ViewContextTable.</text>
 </svg>
