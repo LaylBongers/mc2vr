@@ -120,7 +120,7 @@ bool ready() { return g_ok; }
 
 void draw(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* srv,
           ID3D11RenderTargetView* rtv, uint32_t srcW, uint32_t srcH,
-          uint32_t dstW, uint32_t dstH) {
+          uint32_t dstW, uint32_t dstH, bool stretch) {
     if (!g_ok || ctx == nullptr || srv == nullptr || rtv == nullptr) return;
     if (srcW == 0 || srcH == 0 || dstW == 0 || dstH == 0) return;
 
@@ -135,6 +135,7 @@ void draw(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* srv,
     const float fitW = srcW * scale, fitH = srcH * scale;
     D3D11_VIEWPORT vp = {(dstW - fitW) * 0.5f, (dstH - fitH) * 0.5f, fitW, fitH,
                          0.f, 1.f};
+    if (stretch) vp = {0.f, 0.f, (float)dstW, (float)dstH, 0.f, 1.f};
 
     ctx->OMSetRenderTargets(1, &rtv, nullptr);
     ctx->RSSetViewports(1, &vp);

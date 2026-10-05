@@ -114,7 +114,7 @@ static void load_conf()
             // The viewContextData camera channel (view_rewrite.cpp).
             if (!view::set_view_row_rewrite(value)) {
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
-                          "(use off|on|pulse|stereo) — defaulting to off", value);
+                          "(use off|on|pulse|stereo|hmd|hmd_identity) — defaulting to off", value);
                 view::set_view_row_rewrite("off");
             }
         } else if (strcmp(key, "debug_stub_trace") == 0) {
@@ -186,6 +186,12 @@ static void load_conf()
             double v;
             if (parse_double(key, value, &v)) {
                 view::set_view_ipd((float)v);
+            }
+        } else if (strcmp(key, "view_world_scale") == 0) {
+            // Game world units per metre for the HMD camera (default 1.0).
+            double v;
+            if (parse_double(key, value, &v)) {
+                view::set_view_world_scale((float)v);
             }
         } else if (strcmp(key, "view_stereo_hold") == 0) {
             // Seconds each eye is held in stereo A/B mode (default 2.0).

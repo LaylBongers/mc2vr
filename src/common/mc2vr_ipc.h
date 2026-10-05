@@ -39,7 +39,8 @@
 
 typedef struct Mc2IpcVec3 { float x, y, z; } Mc2IpcVec3;
 typedef struct Mc2IpcQuat { float x, y, z, w; } Mc2IpcQuat;
-// OpenXR-style tangent half-angles: left/down negative, radians.
+// OpenXR XrFovF half-ANGLES in radians (angleLeft/angleDown negative) — NOT
+// tangents; consumers take tan() themselves.
 typedef struct Mc2IpcFov { float left, right, up, down; } Mc2IpcFov;
 
 typedef struct Mc2IpcEyePose {
@@ -67,7 +68,9 @@ typedef struct Mc2IpcState {
     int64_t  displayTime;         // XrTime ns (mock: QPC-derived)
     uint32_t sessionState;        // MC2VR_XR_SESSION_*
     uint32_t recenterCount;      // increments on every reference-space change
-    uint32_t hostFrame;           // host frame counter (diagnostic)
+    uint32_t hostFrame;           // host publish counter; poseId = hostFrame+1 (S4-4:
+                                  // the carrier echoes it in FRAME_READY.e so the host
+                                  // can submit the layer with the pose that was rendered)
     float    ipd;                 // meters
     Mc2IpcEyePose eye[2];         // [0]=LEFT [1]=RIGHT
 } Mc2IpcState;
@@ -84,11 +87,15 @@ typedef struct Mc2IpcState {
 #define MC2VR_CMD_CONFIG       2u  // a=width b=height c=format d=reserved (S4-2)
 #define MC2VR_CMD_FRAME_READY  3u  // x=frameId y=sharedHandle a=slot b=eye
                                    // c=width d=height (S4-2)
+                                   // e=poseId (S4-4): the Mc2IpcState.hostFrame+1
+                                   // the carrier rendered this frame with; 0 =
+                                   // no HMD pose (static-pan render)
 
 // One message fits every current and planned (S4-2 FrameReady) payload.
 typedef struct Mc2IpcMsg {
     uint32_t type;
     uint32_t a, b, c, d;   // 32-bit payload words
+    uint32_t e;            // fifth word (fills the former alignment pad; size unchanged)
     uint64_t x, y;         // 64-bit payload words (frameId, handles)
 } Mc2IpcMsg;
 

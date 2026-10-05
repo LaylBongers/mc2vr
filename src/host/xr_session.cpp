@@ -54,6 +54,14 @@ struct State {
     uint64_t subLast[2] = {0, 0};  // last submitted carrier frameId per eye
     uint64_t subFresh = 0, subReused = 0, subPattern = 0;
     ULONGLONG subNext = 0;
+    // S4-4: history of the published views, keyed by poseId (= hostFrame+1).
+    // The carrier echoes the id of the pose it rendered with in FRAME_READY;
+    // the projection layer is submitted with that pose+FOV so the compositor
+    // reprojects from what the image actually contains.
+    struct PoseRec { uint32_t id = 0; XrPosef pose[2]; XrFovf fov[2]; };
+    static constexpr uint32_t kHist = 256;
+    PoseRec hist[kHist];
+    uint64_t poseHit = 0, poseMiss = 0, poseNone = 0;
 };
 
 const char* state_name(XrSessionState s) {
@@ -322,6 +330,9 @@ bool frame(State& s, unsigned n) {
                            views[0].fov.angleDown);
         }
 
+        // Layer pose/FOV (separate from `views`, which is what gets published).
+        XrPosef lpose[2] = {views[0].pose, views[1].pose};
+        XrFovf lfov[2] = {views[0].fov, views[1].fov};
         for (int e = 0; e < 2; ++e) {
             Eye& ey = s.eye[e];
             uint32_t idx = 0;
@@ -334,8 +345,19 @@ bool frame(State& s, unsigned n) {
             // (pulsing in the headset = carrier pipeline not talking).
             seyes::LatestImage img;
             if (sub::ready() && seyes::latest(e, img)) {
+                const State::PoseRec* pr = nullptr;
+                if (img.poseId != 0) {
+                    const State::PoseRec& r = s.hist[img.poseId % State::kHist];
+                    if (r.id == img.poseId) pr = &r;
+                }
+                if (pr) s.poseHit++; else if (img.poseId) s.poseMiss++; else s.poseNone++;
                 sub::draw(s.d3d.ctx, img.srv, ey.rtvs[idx], img.w, img.h, ey.w,
-                          ey.h);
+                          ey.h, pr != nullptr);
+                if (pr) {
+                    // Layer = the rendered pose/FOV (both eyes share one pose id).
+                    lpose[e] = pr->pose[e];
+                    lfov[e] = pr->fov[e];
+                }
                 if (img.frameId != s.subLast[e]) {
                     s.subLast[e] = img.frameId;
                     s.subFresh++;
@@ -348,15 +370,14 @@ bool frame(State& s, unsigned n) {
             }
             XR_TRY(xrReleaseSwapchainImage(ey.swapchain, nullptr));
 
-            pv[e].pose = views[e].pose;
-            pv[e].fov = views[e].fov;
+            pv[e].pose = lpose[e];
+            pv[e].fov = lfov[e];
             pv[e].subImage.swapchain = ey.swapchain;
             pv[e].subImage.imageRect = {{0, 0}, {(int32_t)ey.w, (int32_t)ey.h}};
         }
-        // NOTE: pose/fov below are the RUNTIME's views, not what the carrier
-        // rendered with (it still draws the static +/-IPD/2 pan). The
-        // carrier-reported pose replaces them in S4-4; until then the
-        // compositor reprojects a nominally-head-locked image.
+        // pv[] pose/fov: the carrier-rendered pose when the frame carried a
+        // poseId found in the history (S4-4), else the runtime's current views
+        // (static-pan frames: nominally head-locked, as in S4-3).
         layer.space = s.space;
         layer.viewCount = 2;
         layer.views = pv;
@@ -376,6 +397,11 @@ bool frame(State& s, unsigned n) {
                            (unsigned long long)s.subPattern,
                            (s.subFresh + s.subReused + s.subPattern) / 10.0,
                            (s.subFresh + s.subReused + s.subPattern) / 20.0);
+            hostlog::write("submit: pose ids hit=%llu miss=%llu none=%llu (miss = "
+                           "id aged out of the %u-entry history)",
+                           (unsigned long long)s.poseHit, (unsigned long long)s.poseMiss,
+                           (unsigned long long)s.poseNone, State::kHist);
+            s.poseHit = s.poseMiss = s.poseNone = 0;
             s.subFresh = s.subReused = s.subPattern = 0;
         }
     }
@@ -409,6 +435,12 @@ void publish_frame(State& s, const XrFrameState& fs, const XrView views[2],
     const float dy = views[1].pose.position.y - views[0].pose.position.y;
     const float dz = views[1].pose.position.z - views[0].pose.position.z;
     const float ipd = std::sqrt(dx * dx + dy * dy + dz * dz);
+    State::PoseRec& r = s.hist[(s.pubFrame + 1) % State::kHist];
+    r.id = s.pubFrame + 1;  // == the poseId the carrier derives from hostFrame
+    for (int e = 0; e < 2; ++e) {
+        r.pose[e] = views[e].pose;
+        r.fov[e] = views[e].fov;
+    }
     ipc::publish(f, ipd, (uint32_t)s.sessionState, s.recenterCount, s.pubFrame++);
 }
 
@@ -447,7 +479,8 @@ int run(const Options& opt) {
                 s.exiting = true;
             } else if (cmd.type == MC2VR_CMD_FRAME_READY) {
                 // S4-2: {x=frameId y=handle a=slot b=eye c=w d=h}
-                seyes::on_frame_ready(cmd.x, cmd.y, cmd.a, cmd.b, cmd.c, cmd.d);
+                seyes::on_frame_ready(cmd.x, cmd.y, cmd.a, cmd.b, cmd.c, cmd.d,
+                                     cmd.e);
             } else if (cmd.type == MC2VR_CMD_CONFIG) {
                 seyes::on_config(cmd.a, cmd.b, cmd.c);
             } else {

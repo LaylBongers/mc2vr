@@ -93,7 +93,7 @@ int run(int frames) {
         eyes::draw_pattern(d.ctx, rtv[1], 1, 0);
         ID3D11ShaderResourceView* srv = nullptr;
         if (SUCCEEDED(d.dev->CreateShaderResourceView(tex[1], nullptr, &srv))) {
-            sub::draw(d.ctx, srv, rtv[0], kW, kH, kW, kH);
+            sub::draw(d.ctx, srv, rtv[0], kW, kH, kW, kH, false);
             srv->Release();
         }
         hostlog::write("mock: submit blit shaders ready (draw smoke ok)");

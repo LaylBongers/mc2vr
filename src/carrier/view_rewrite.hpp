@@ -32,7 +32,9 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
 void on_set_render_target(uint32_t w, uint32_t h);
 void set_main_rt_size(uint32_t w, uint32_t h);
 
-// mc2vr.conf view_row_rewrite=off|on|pulse|stereo. off = pass-through. stereo
+// mc2vr.conf view_row_rewrite=off|on|pulse|stereo|hmd|hmd_identity (hmd =
+// S4-4 full VP replacement from the HMD pose; hmd_identity = decompose/rebuild
+// self-check, output must equal input). off = pass-through. stereo
 // = per-eye offset D = ±right·view_ipd/2 (see docs/stereo_design.md §S2,
 // handover step 1). Returns false on unrecognized values.
 bool set_view_row_rewrite(const char *value);
@@ -54,6 +56,15 @@ void set_view_stereo_hold(float seconds);
 // shift in NDC units (default 0 = disabled; sign convention validated
 // against the HMD runtime in S4).
 void set_view_asym(float x, float y);
+
+// mc2vr.conf view_world_scale=<float>: game world units per metre for the HMD
+// camera (default 1.0 — UNVERIFIED, measure it; see docs/stereo_design.md §S4-4).
+void set_view_world_scale(float units_per_metre);
+
+// Pose id (host hostFrame+1) the CURRENT frame renders with, 0 when the frame
+// is not rendered from an HMD pose. Constant across both passes of a frame;
+// eye_share forwards it in FRAME_READY.
+uint32_t current_pose_id();
 
 // S2c-2 per-pass eye override (eye_replay.cpp): when nonzero (pass 1 = -1,
 // pass 2 = +1) it replaces the view_stereo_hold A/B sign for the current

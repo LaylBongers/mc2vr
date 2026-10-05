@@ -26,10 +26,13 @@ bool init(ID3D11Device* dev);
 bool ready();
 
 // Blit `srcW x srcH` (shared texture, via its UNOM-cast SRV) into the
-// swapchain image `rtv` (`dstW x dstH`), aspect-fit, black borders. No-op
-// unless init() succeeded.
+// swapchain image `rtv` (`dstW x dstH`). stretch=false: aspect-fit with black
+// borders (static-pan frames). stretch=true: fill the whole image — used for
+// HMD-pose frames, whose projection the carrier rebuilt from the eye FOV, so
+// the non-uniform stretch is the exact inverse of the squeeze at render time.
+// No-op unless init() succeeded.
 void draw(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* srv,
           ID3D11RenderTargetView* rtv, uint32_t srcW, uint32_t srcH,
-          uint32_t dstW, uint32_t dstH);
+          uint32_t dstW, uint32_t dstH, bool stretch);
 
 }  // namespace sub

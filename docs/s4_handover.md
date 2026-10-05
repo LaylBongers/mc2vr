@@ -41,6 +41,9 @@ D3D11 + IPC server. Design, IPC contract and risks: `docs/stereo_design.md` §S4
 
 ## Next session — start here
 
+0. **S4-4 is IMPLEMENTED but unrun live (2026-10-05)** — jump to the S4-4 entry's
+   bring-up ladder (hmd_identity first). The "Next: S4-4" text in item 1 below is
+   the old plan; the entry in the engineering list supersedes it.
 1. S4-0 through S4-3 are DONE — S4-3 is LIVE-VERIFIED (2026-10-04, gameplay
    run: the stereo pair visible in the headset, user-confirmed; audit in the
    S4-3 status entry — steady `submit: window fresh=600 reused=1802
@@ -334,15 +337,46 @@ selftested first without the game.
     `eye_share=on` in the DEPLOYED conf, gameplay. In `mc2vr_host.log`
     expect: `submit: blit shaders ready`, `openxr: using swapchain format 91`,
     `submit: window` lines, and the mirror still working alongside.
-- **S4-4 Pose feedback**: slot-5 `PostUpdateHook` (RenderShell vtable claim
-  PROVEN 1:1 with frames; re-claim on device-lost if counts stop) reads the
-  latest pose from the shared block (lock-free, never blocks the render
-  thread), feeds `view_rewrite`: replace ±right·IPD/2 with the pose-derived
-  per-eye offset; head rotation needs a game-camera path (bigger — the
-  current channel is a translation-only pan; start with position + yaw,
-  validate against existing log counters). The asym-projection channel
-  (`view_asym_x/y`) takes the host-reported per-eye FOV; sign convention
-  must be validated against the runtime.
+- **S4-4 Pose feedback** (REVISED 2026-10-05 — the earlier plan, a translation-only
+  pan plus a separate `view_asym` projection patch, cannot express head rotation
+  and was dropped). Design: **replace the whole VP block** from the HMD pose.
+  The 4 VP rows decompose exactly into the game camera (C, R, U, F), projection
+  terms (a, b, c, d) and depth terms (A, B) — see `docs/stereo_design.md` §S4-4
+  for the algebra. `view_row_rewrite=hmd` rebuilds the rows with: camera =
+  game camera (body) + HMD eye pose (mapped XR LOCAL→game basis: x→R, y→U,
+  −z→F, scaled by `view_world_scale`), projection = OpenXR eye FOV (replaces
+  `view_asym_*` AND the FOV/aspect carve-out: the 2560×1440 target holds the
+  squeezed XR frustum and the host STRETCHES it to the eye image, no letterbox),
+  depth A,B kept from the game.
+  **Pose handoff**: the carrier samples the host state ONCE at pass-1 start
+  (`view::set_pass_eye(-1)`; both eyes of a frame use it), tags the frame with
+  `poseId = hostFrame+1` in `FRAME_READY.e`; the host keeps a 256-entry history
+  of published views and submits the projection layer with the pose+FOV of that
+  id (miss ⇒ runtime views + letterbox, counted in `submit: pose ids`).
+  **Status (2026-10-05): IMPLEMENTED, builds, selftest PASS, NOT yet run live.**
+  Code: `src/carrier/view_rewrite.cpp` (`hmd_rewrite`, `decompose`, `rebuild`,
+  `apply_hmd_eye`), `src/host/xr_session.cpp` (history ring, layer pose),
+  `src/host/submit.cpp` (`stretch`), IPC `Mc2IpcMsg.e`. Pose is sampled at pass-1
+  start, not in the slot-5 hook (it is the only place that is exactly per-frame
+  AND ahead of both passes; slot 5 stays a counting no-op).
+  **Live bring-up ladder (do in order, one deployed-conf edit each):**
+  1. `view_row_rewrite=hmd_identity` — picture must be UNCHANGED vs mono;
+     `view/hmd:` window line: `decompFail=0`, `identityResidMax` ~1e-6, and
+     `split=0` (a nonzero split means VP blocks arrive across several uploads
+     and need gathering — the rewrite passes those through). `decompFail>0`
+     logs the offending rows (first 8) — means the VP is not the assumed
+     D3D form for that technique (unit |row3.xyz|, row2 ∥ row3).
+  2. `view_row_rewrite=hmd`, `eye_share=on`, host up — head rotation/position
+     should track; host log `submit: pose ids hit≈all miss=0`.
+  3. Measure the world scale (`view_world_scale`, game units per metre — the
+     0.065 IPD default has NEVER been verified): if the world looks giant/tiny
+     or parallax is wrong, this is the knob. Also validate FOV sign/orientation
+     (image mirrored/upside-down ⇒ the map or tangent signs).
+  Known limits (open): engine frustum culling still uses the GAME camera
+  (edge pop-in at wide FOV / large head turns — check whether the game FOV is
+  reachable); shaders without `viewContextData`, PS-side camera data and
+  texgen stay mono/lag (far more visible with rotation than with the 3 cm pan);
+  camPos-only uploads reuse the per-pass rebuilt position (`camOnly` counter).
 - **S4-5 Events + pacing + HUD**: session-state events (focus lost ⇒ game
   stays running but host stops submitting; exit request ⇒ clean shutdown),
   recenter, pacing/timewarp inputs (slot-4 `EndOfFrameHook`, see
@@ -384,7 +418,10 @@ selftested first without the game.
 
 ## Open questions the new agent inherits
 
-- **Projection FOV/aspect fill** (carve-out, do AFTER S4-4; discussed +
+- **Projection FOV/aspect fill** (SUPERSEDED 2026-10-05: folded into S4-4 —
+  `view_row_rewrite=hmd` rebuilds the projection from the eye FOV and the host
+  stretches; remaining question is just the pixel density of 2560×1440 over a
+  ~100°+ eye frustum. Original note kept below; discussed +
   settled 2026-10-04): the HMD currently shows letterboxed 16:9 flat images —
   beyond the missing head pose (S4-4), the game's baked 16:9 projection fills
   only part of the ~2016x2240 (~0.9 aspect, ~100°+) per-eye images. Fixing it
@@ -408,4 +445,4 @@ selftested first without the game.
   handling; add counters when S4 starts.
 - Shaders without `viewContextData`, shadow-map basis, PS-side mono camera data: see
   `stereo_design.md` § S2 remaining work and § Open questions.
-- `view_asym_x/y` sign convention vs the OpenXR FOV convention.
+- `view_asym_x/y` sign convention: obsolete in `hmd` mode (the projection is rebuilt from the OpenXR tangents); only relevant to the legacy `stereo` mode.

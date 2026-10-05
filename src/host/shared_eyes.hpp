@@ -28,7 +28,7 @@ void on_config(uint32_t width, uint32_t height, uint32_t format);
 // MC2VR_CMD_FRAME_READY: {frameId, handle, slot, eye, w, h} — opens the handle
 // (cached) and remembers it as the newest image for that eye.
 void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
-                    uint32_t eye, uint32_t w, uint32_t h);
+                    uint32_t eye, uint32_t w, uint32_t h, uint32_t poseId = 0);
 
 // Per host-frame: pump window messages and redraw panes when new frames
 // arrived. Cheap when idle.
@@ -42,6 +42,7 @@ void pump();
 struct LatestImage {
     ID3D11ShaderResourceView* srv = nullptr;
     uint64_t frameId = 0;
+    uint32_t poseId = 0;  // S4-4: carrier pose id (0 = static-pan render)
     uint32_t w = 0, h = 0;
 };
 bool latest(uint32_t eye, LatestImage& out);

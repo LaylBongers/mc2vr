@@ -13,6 +13,7 @@
 
 #include "game_addresses.h"
 #include "hooks.hpp"
+#include "ipc.hpp"
 #include "log.hpp"
 
 namespace mc2vr::view {
@@ -24,7 +25,10 @@ constexpr float DEFAULT_AMP = 4.0f;
 constexpr float DEFAULT_IPD = 0.065f;   // world units (metres), average adult IPD
 constexpr float DEFAULT_HOLD = 2.0f;    // stereo eye A/B hold, seconds
 
-enum class RewriteMode { Off, On, Pulse, Stereo };
+// Hmd = S4-4 full VP replacement from the HMD pose (see hmd_rewrite below);
+// HmdIdentity = the same decompose/rebuild with the game's OWN camera and
+// projection — output must equal input (self-check of the decomposition).
+enum class RewriteMode { Off, On, Pulse, Stereo, Hmd, HmdIdentity };
 RewriteMode g_mode = RewriteMode::Off;
 float g_amp = DEFAULT_AMP;
 float g_ipd = DEFAULT_IPD;
@@ -144,6 +148,12 @@ RewriteMode parse_rewrite_mode(const char *value, bool *ok)
     if (strcmp(value, "stereo") == 0) {
         return RewriteMode::Stereo;
     }
+    if (strcmp(value, "hmd") == 0) {
+        return RewriteMode::Hmd;
+    }
+    if (strcmp(value, "hmd_identity") == 0) {
+        return RewriteMode::HmdIdentity;
+    }
     *ok = false;
     return RewriteMode::Off;
 }
@@ -232,6 +242,218 @@ void cache_right_axis(uint32_t start_register, const float *data, uint32_t vec4_
         }
         return;  // at most one row0 per upload
     }
+}
+
+
+// ---- S4-4: HMD camera replacement -------------------------------------------------
+// The VP block is fully decomposable (D3D clip = [a x_v + c z_v, b y_v + d z_v,
+// A z_v + B, z_v] with x_v/y_v/z_v = dot(R/U/F, p - C), R/U/F orthonormal):
+//   row0 = a R + c F        row1 = b U + d F
+//   row2 = A F              row3 = F          (xyz; w = -dot(xyz, C), row2.w += B)
+// so the game camera (C, R, U, F), its projection terms (a, b, c, d) and its
+// depth terms (A, B) all fall out of the four rows. The HMD replaces the
+// camera ORIENTATION and POSITION (game camera = body; HMD pose = offset on
+// it) and the projection terms (OpenXR FOV); A,B are kept so depth / fog /
+// soft-particle behaviour is unchanged.
+struct Vec3f { float x, y, z; };
+Vec3f operator+(Vec3f a, Vec3f b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+Vec3f operator-(Vec3f a, Vec3f b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+Vec3f operator*(Vec3f a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+float dot3(Vec3f a, Vec3f b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+Vec3f cross3(Vec3f a, Vec3f b)
+{
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+float len3(Vec3f a) { return sqrtf(dot3(a, a)); }
+
+// q * v (unit quaternion).
+Vec3f quat_rot(const Mc2IpcQuat &q, Vec3f v)
+{
+    const Vec3f u = {q.x, q.y, q.z};
+    const Vec3f t = cross3(u, v) * 2.0f;
+    return v + t * q.w + cross3(u, t);
+}
+
+struct HmdSnapshot {
+    bool valid = false;
+    uint32_t id = 0;  // pose id (hostFrame+1) the carrier tags frames with
+    Mc2IpcEyePose eye[2];
+};
+HmdSnapshot g_hmd;
+float g_world_scale = 1.0f;  // game world units per metre (UNVERIFIED default)
+
+// Per-pass cache of the rebuilt camera position, for uploads that carry only
+// the camPos row (VP rows arrived in an earlier call).
+Vec3f g_pw = {0, 0, 0};
+bool g_pw_valid = false;
+
+uint64_t g_hmd_blocks = 0, g_hmd_split = 0, g_hmd_decomp_fail = 0, g_hmd_cam_only = 0;
+float g_hmd_resid_max = 0.0f;  // max |rebuilt - raw| over the window (identity self-check)
+uint32_t g_hmd_split_logged = 0, g_hmd_fail_logged = 0;
+
+struct Camera {
+    Vec3f R, U, F, C;
+    float a, b, c, d, A, B;
+};
+
+// Decompose the 4 raw VP rows (row i at r[i*4..]). False if the block is not
+// of the assumed form (counted + logged, the upload then passes through).
+bool decompose(const float *r, Camera *cam)
+{
+    const Vec3f r0 = {r[0], r[1], r[2]}, r1 = {r[4], r[5], r[6]};
+    const Vec3f r2 = {r[8], r[9], r[10]}, r3 = {r[12], r[13], r[14]};
+    const float fl = len3(r3);
+    if (fl < 0.98f || fl > 1.02f) {
+        return false;  // clip.w is not a unit-length forward dot (scaled/unknown form)
+    }
+    cam->F = r3 * (1.0f / fl);
+    const Vec3f t0 = r0 - cam->F * dot3(r0, cam->F);
+    const Vec3f t1 = r1 - cam->F * dot3(r1, cam->F);
+    cam->a = len3(t0);
+    cam->b = len3(t1);
+    if (cam->a < 1e-6f || cam->b < 1e-6f) {
+        return false;
+    }
+    cam->c = dot3(r0, cam->F);
+    cam->d = dot3(r1, cam->F);
+    cam->R = t0 * (1.0f / cam->a);
+    cam->U = t1 * (1.0f / cam->b);
+    cam->A = dot3(r2, cam->F);
+    const Vec3f z_res = r2 - cam->F * cam->A;
+    if (len3(z_res) > 1e-3f * (fabsf(cam->A) + 1.0f)) {
+        return false;  // depth row mixes in x/y — not the assumed form
+    }
+    // Camera position: the point where clip.x = clip.y = clip.w = 0.
+    const Vec3f c12 = cross3(r1, r3), c20 = cross3(r3, r0), c01 = cross3(r0, r1);
+    const float det = dot3(r0, c12);
+    if (fabsf(det) < 1e-9f) {
+        return false;
+    }
+    cam->C = (c12 * (-r[3]) + c20 * (-r[7]) + c01 * (-r[15])) * (1.0f / det);
+    cam->B = r[11] + dot3(r2, cam->C);
+    return true;
+}
+
+// Write the 4 VP rows for `cam` into out[16].
+void rebuild(const Camera &cam, float *out)
+{
+    const Vec3f rows[4] = {cam.R * cam.a + cam.F * cam.c, cam.U * cam.b + cam.F * cam.d,
+                           cam.F * cam.A, cam.F};
+    for (int i = 0; i < 4; i++) {
+        out[i * 4 + 0] = rows[i].x;
+        out[i * 4 + 1] = rows[i].y;
+        out[i * 4 + 2] = rows[i].z;
+        out[i * 4 + 3] = -dot3(rows[i], cam.C);
+    }
+    out[11] += cam.B;
+}
+
+// Apply the HMD eye `eye` (0 = L, 1 = R) to the game camera.
+void apply_hmd_eye(const Camera &game, int eye, Camera *out)
+{
+    const Mc2IpcEyePose &ep = g_hmd.eye[eye];
+    // XR LOCAL (x right, y up, -z forward) -> game camera basis.
+    auto map = [&](Vec3f v) { return game.R * v.x + game.U * v.y + game.F * (-v.z); };
+    const Vec3f p = {ep.pos.x, ep.pos.y, ep.pos.z};
+    out->C = game.C + map(p) * g_world_scale;
+    out->R = map(quat_rot(ep.rot, {1, 0, 0}));
+    out->U = map(quat_rot(ep.rot, {0, 1, 0}));
+    out->F = map(quat_rot(ep.rot, {0, 0, -1}));
+    const float tl = tanf(ep.fov.left), tr = tanf(ep.fov.right);
+    const float tu = tanf(ep.fov.up), td = tanf(ep.fov.down);
+    out->a = 2.0f / (tr - tl);
+    out->c = -(tr + tl) / (tr - tl);
+    out->b = 2.0f / (tu - td);
+    out->d = -(tu + td) / (tu - td);
+    out->A = game.A;
+    out->B = game.B;
+}
+
+const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t vec4_count)
+{
+    const bool identity = g_mode == RewriteMode::HmdIdentity;
+    const int eye = g_pass_eye > 0 ? 1 : 0;
+    if (!identity && (!g_hmd.valid || g_pass_eye == 0)) {
+        return data;
+    }
+    const uint32_t vcd_reg = g_vcd_reg, vcd_count = g_vcd_count;
+    uint32_t base = REG_INVALID;
+    bool has_cam = false;
+    if (vcd_reg != REG_INVALID && vcd_count >= 4) {
+        base = vcd_reg;
+        has_cam = vcd_count >= 5;
+    } else if (g_vp_reg != REG_INVALID && g_vp_count >= 4) {
+        base = g_vp_reg;
+    }
+    if (base == REG_INVALID || vec4_count > VS_ROWS) {
+        return data;
+    }
+    const uint32_t end = start_register + vec4_count;
+    const bool any_vp = start_register < base + 4 && end > base;
+    const bool all_vp = start_register <= base && end >= base + 4;
+    const bool cam_in = has_cam && start_register <= base + 4 && end >= base + 5;
+    if (!any_vp && !cam_in) {
+        return data;
+    }
+    static float scratch[VS_ROWS * 4];
+    memcpy(scratch, data, vec4_count * 16);
+    float *camrow = cam_in ? scratch + (base + 4 - start_register) * 4 : nullptr;
+    if (!all_vp) {
+        if (any_vp) {
+            // VP block split across uploads: needs gathering — counted so the
+            // live run says whether this ever happens.
+            g_hmd_split++;
+            if (g_hmd_split_logged++ < 8) {
+                MC2VR_LOG("view/hmd: SPLIT VP upload start=c%u count=%u (block c%u/%u) — "
+                          "passed through", start_register, vec4_count, base, vcd_count);
+            }
+            return data;
+        }
+        // camPos row alone: reuse this pass's rebuilt position.
+        if (g_pw_valid) {
+            camrow[0] = g_pw.x;
+            camrow[1] = g_pw.y;
+            camrow[2] = g_pw.z;
+            g_hmd_cam_only++;
+            return scratch;
+        }
+        return data;
+    }
+    const float *raw = data + (base - start_register) * 4;
+    Camera game, cam;
+    if (!decompose(raw, &game)) {
+        g_hmd_decomp_fail++;
+        if (g_hmd_fail_logged++ < 8) {
+            MC2VR_LOG("view/hmd: decompose FAILED c%u: |r3.xyz|=%.4f r0.w=%.3f "
+                      "r2=[%.3f %.3f %.3f %.3f] — passed through", base,
+                      (double)len3({raw[12], raw[13], raw[14]}), (double)raw[3],
+                      (double)raw[8], (double)raw[9], (double)raw[10], (double)raw[11]);
+        }
+        return data;
+    }
+    if (identity) {
+        cam = game;
+        // Self-check: rebuild(decompose(x)) == x.
+        float re[16];
+        rebuild(game, re);
+        for (int i = 0; i < 16; i++) {
+            const float e = fabsf(re[i] - raw[i]) / (1.0f + fabsf(raw[i]));
+            if (e > g_hmd_resid_max) g_hmd_resid_max = e;
+        }
+    } else {
+        apply_hmd_eye(game, eye, &cam);
+    }
+    rebuild(cam, scratch + (base - start_register) * 4);
+    if (camrow) {
+        camrow[0] = cam.C.x;
+        camrow[1] = cam.C.y;
+        camrow[2] = cam.C.z;
+    }
+    g_pw = cam.C;
+    g_pw_valid = true;
+    g_hmd_blocks++;
+    g_rows_rewritten += 4;
+    return scratch;
 }
 
 } // namespace
@@ -338,6 +560,10 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     }
     g_vs_vec4s += vec4_count;
 
+    if (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdIdentity) {
+        return pass_is_main() ? hmd_rewrite(start_register, data, vec4_count) : data;
+    }
+
     float d[3] = {0.0f, 0.0f, 0.0f};
     float asym[2] = {0.0f, 0.0f};
     if (pass_is_main()) {
@@ -425,6 +651,8 @@ void report_window()
     const char *mode = g_mode == RewriteMode::Pulse ? "pulse"
                        : g_mode == RewriteMode::On    ? "on"
                        : g_mode == RewriteMode::Stereo ? "stereo"
+                       : g_mode == RewriteMode::Hmd ? "hmd"
+                       : g_mode == RewriteMode::HmdIdentity ? "hmd_identity"
                                                        : "off";
     MC2VR_LOG("view: uploads calls=%llu vec4s=%llu | rewritten rows=%llu (mode=%s%s)",
               (unsigned long long)g_vs_calls, (unsigned long long)g_vs_vec4s,
@@ -432,6 +660,15 @@ void report_window()
               g_mode == RewriteMode::Stereo
                   ? (g_stereo_eye > 0 ? ", eye=R" : ", eye=L")
                   : "");
+    if (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdIdentity) {
+        MC2VR_LOG("view/hmd: blocks=%llu camOnly=%llu split=%llu decompFail=%llu "
+                  "identityResidMax=%.3g poseId=%u valid=%d",
+                  (unsigned long long)g_hmd_blocks, (unsigned long long)g_hmd_cam_only,
+                  (unsigned long long)g_hmd_split, (unsigned long long)g_hmd_decomp_fail,
+                  (double)g_hmd_resid_max, g_hmd.id, (int)g_hmd.valid);
+        g_hmd_blocks = g_hmd_cam_only = g_hmd_split = g_hmd_decomp_fail = 0;
+        g_hmd_resid_max = 0.0f;
+    }
     g_vs_calls = 0;
     g_vs_vec4s = 0;
     g_rows_rewritten = 0;
@@ -452,8 +689,47 @@ void install()
     MC2VR_LOG("view: installed upload-gate MidHook @ %p", (void *)MC2_VCD_UPLOAD_CMP);
 }
 
+void set_view_world_scale(float units_per_metre)
+{
+    if (units_per_metre > 0.0f && units_per_metre <= 1000.0f) {
+        g_world_scale = units_per_metre;
+        MC2VR_LOG("view: world scale = %g game units per metre", (double)units_per_metre);
+    } else {
+        MC2VR_LOG("view: view_world_scale=%g out of range (0,1000], keeping %g",
+                  (double)units_per_metre, (double)g_world_scale);
+    }
+}
+
+uint32_t current_pose_id()
+{
+    return g_hmd.valid && g_mode == RewriteMode::Hmd ? g_hmd.id : 0;
+}
+
 void set_pass_eye(int sign)
 {
+    // Pass 1 start (-1 = LEFT): sample the HMD pose ONCE for the whole frame —
+    // both eyes render with it and the id travels in FRAME_READY.
+    if (sign < 0 && g_mode == RewriteMode::Hmd) {
+        Mc2IpcState st;
+        bool sane = ipc::read_state(&st) && (st.flags & MC2VR_IPC_STF_TRACKED);
+        for (int e = 0; sane && e < 2; e++) {
+            const Mc2IpcQuat &q = st.eye[e].rot;
+            const float n = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+            const Mc2IpcFov &f = st.eye[e].fov;
+            if (n < 0.98f || n > 1.02f || f.right <= f.left || f.up <= f.down) {
+                sane = false;
+            }
+        }
+        g_hmd.valid = sane;
+        if (sane) {
+            g_hmd.id = st.hostFrame + 1;
+            g_hmd.eye[0] = st.eye[0];
+            g_hmd.eye[1] = st.eye[1];
+        }
+    }
+    if (sign != g_pass_eye) {
+        g_pw_valid = false;  // per-pass camPos cache
+    }
     g_pass_eye = sign;
 }
 

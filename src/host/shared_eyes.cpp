@@ -34,6 +34,7 @@ std::vector<Entry> g_cache;
 struct Latest {
     Entry* e = nullptr;
     uint64_t frameId = 0;
+    uint32_t poseId = 0;
     bool fresh = false;
 };
 Latest g_latest[2];
@@ -150,7 +151,7 @@ void on_config(uint32_t width, uint32_t height, uint32_t format) {
 }
 
 void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
-                    uint32_t eye, uint32_t w, uint32_t h) {
+                    uint32_t eye, uint32_t w, uint32_t h, uint32_t poseId) {
     (void)slot;
     if (handle == 0) {
         if (g_zero_handles++ == 0) hostlog::write("seyes: FRAME_READY with handle 0 ignored");
@@ -235,6 +236,7 @@ void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
 
     g_latest[eye].e = e;
     g_latest[eye].frameId = frameId;
+    g_latest[eye].poseId = poseId;
     g_latest[eye].fresh = true;
 }
 
@@ -297,6 +299,7 @@ bool latest(uint32_t eye, LatestImage& out) {
     if (lt.e == nullptr || lt.e->srv == nullptr) return false;
     out.srv = lt.e->srv;
     out.frameId = lt.frameId;
+    out.poseId = lt.poseId;
     out.w = lt.e->w;
     out.h = lt.e->h;
     return true;

@@ -205,7 +205,8 @@ bool send_config(uint32_t width, uint32_t height, uint32_t format)
 }
 
 bool send_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
-                      uint32_t eye, uint32_t width, uint32_t height)
+                      uint32_t eye, uint32_t width, uint32_t height,
+                      uint32_t poseId)
 {
     if (!connected()) return false;
     Mc2IpcMsg m;
@@ -217,6 +218,7 @@ bool send_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
     m.b = eye;
     m.c = width;
     m.d = height;
+    m.e = poseId;
     return push_command(&m);
 }
 

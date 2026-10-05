@@ -13,7 +13,7 @@ Mechanism rules and hook list: `docs/launcher_plan.md`. Runtime frame chain:
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`); active brief: `docs/s4_handover.md` |
-| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1 IPC + lifecycle DONE (selftest + live-verified 2026-10-04); S4-2 shared-handle image path DONE + LIVE-VERIFIED 2026-10-04 (DXVK D3D9→D3D11 shared-handle interop PROVEN cross-process by `tools/probe/run_shared_handle.sh` incl. the full live path; carrier capture `src/carrier/eye_share.cpp` conf `eye_share`, host mirror `src/host/shared_eyes.cpp`; the mirror showed the live stereo pair in gameplay at ~30 Hz with zero failures); **S4-3 OpenXR submission COMPLETE + LIVE-VERIFIED 2026-10-04** (host blits the shared pair into the sRGB swapchains via UNORM-cast views — `src/host/submit.cpp` + `seyes::latest()`; stereo pair confirmed in the headset, steady `submit: window fresh=600 reused=1802 pattern=0`, zero failures; details in `s4_handover.md`). S4-4/S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
+| S4 HMD presentation | **in progress**: S4-0 host skeleton DONE (real OpenXR/D3D11 session live under Proton+SteamVR, test pattern verified in the headset 2026-10-04); S4-1 IPC + lifecycle DONE (selftest + live-verified 2026-10-04); S4-2 shared-handle image path DONE + LIVE-VERIFIED 2026-10-04 (DXVK D3D9→D3D11 shared-handle interop PROVEN cross-process by `tools/probe/run_shared_handle.sh` incl. the full live path; carrier capture `src/carrier/eye_share.cpp` conf `eye_share`, host mirror `src/host/shared_eyes.cpp`; the mirror showed the live stereo pair in gameplay at ~30 Hz with zero failures); **S4-3 OpenXR submission COMPLETE + LIVE-VERIFIED 2026-10-04** (host blits the shared pair into the sRGB swapchains via UNORM-cast views — `src/host/submit.cpp` + `seyes::latest()`; stereo pair confirmed in the headset, steady `submit: window fresh=600 reused=1802 pattern=0`, zero failures; details in `s4_handover.md`). S4-4 (HMD pose → full VP replacement, pose-id handoff) IMPLEMENTED 2026-10-05, not yet live-run (§S4-4); S4-5 not started. S4 = separate 64-bit OpenXR/D3D11 host process + shared-handle images + IPC (§S4); milestones S4-0..S4-5 in `docs/s4_handover.md` |
 | S5 motion controls | not started |
 
 ## Open RE items
@@ -313,6 +313,37 @@ process ends.
   composite, send as a separate layer (quad layer in the host).
 - Fallback if per-eye RTs can't differ at the D3D level per view: single-backbuffer
   interop blit into per-eye targets.
+
+### S4-4 — HMD camera replacement (implemented 2026-10-05, live bring-up pending)
+
+Supersedes the translation-only pan + `view_asym` plan for HMD rendering (those
+stay for the `stereo` verification mode). D3D clip for a standard view/projection:
+`clip = [a·x_v + c·z_v, b·y_v + d·z_v, A·z_v + B, z_v]`, `x_v/y_v/z_v = dot(R/U/F, p−C)`.
+So the four VP rows are `row0 = aR + cF`, `row1 = bU + dF`, `row2 = A·F`, `row3 = F`
+(xyz), with `w = −dot(xyz, C)` (row2.w additionally `+B`). Decomposition (`decompose`):
+`F = row3.xyz` (must be unit — else the technique is passed through and counted),
+`R,a` from row0 minus its F component, `U,b` likewise, `c,d` the F components,
+`A = row2·F` (row2 must be ∥ F), `C` from solving `clip.x=clip.y=clip.w=0` (3×3
+Cramer — independent of the optional camPos row), `B = row2.w + row2·C`.
+`view_row_rewrite=hmd_identity` rebuilds the game's own camera and logs the max
+residual (python check of the algebra: 7e-15).
+
+HMD eye → game camera (`apply_hmd_eye`): XR LOCAL vectors map x→R, y→U, −z→F of the
+GAME camera (the game camera is the body; the HMD is an offset on it, so mouse/stick
+turning still works); position `C' = C + map(eyePos)·view_world_scale`; axes
+`R',U',F' = map(q·x̂, q·ŷ, q·(−ẑ))`; projection from `tan()` of the OpenXR angles:
+`a=2/(tR−tL), c=−(tR+tL)/(tR−tL)` (y likewise); `A,B` kept so depth/fog/soft-particle
+inputs are unchanged. The render target keeps its 16:9 size; the squeezed XR frustum
+is un-squeezed by the host's full-image stretch (exact inverse), no letterbox.
+
+Pose consistency: the carrier snapshots the host state once at pass-1 start (both eyes
+use it) and tags frames with `poseId = hostFrame+1` (`FRAME_READY.e`); the host keeps
+a 256-entry published-view history and submits the projection layer with the pose+FOV
+of that id, so the compositor reprojects from what the image actually contains.
+
+Open: unit scale (`view_world_scale`, unverified), engine culling against the game
+frustum, non-`viewContextData` shaders / PS camera data (rotation exposes these),
+split VP uploads (counted: `view/hmd: split=`), handedness/sign validation live.
 
 ### S5 — Motion controls (separate track)
 
