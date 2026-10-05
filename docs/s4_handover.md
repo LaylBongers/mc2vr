@@ -52,7 +52,7 @@ carrier `share window:` ~300 L/R per 10 s with `ringFull=0`, `view/hmd: split=0 
 the HMD = carrier pipeline not talking (`eye_share=off` or host not receiving). Build: win32 carrier
 `cmake -B build/win32 -DCMAKE_TOOLCHAIN_FILE=cmake/i686-w64-mingw32.cmake`; win64 host same with
 `cmake/x86_64-w64-mingw32.cmake` → `build/win64/bin/mc2vr_host.exe`; chain selftest `tools/selftest/run.sh`
-(unsandboxed terminal; `mkdir -p /tmp/opencode` first) after every carrier/host change. `launch.sh` deploys
+(unsandboxed terminal; `mkdir -p /tmp/opencode` first) after every carrier/host change. Pure camera math: `tools/test/test_vp_camera.cpp` (native g++, one-line build in its header). `launch.sh` deploys
 with `cp -u` (binaries) / `cp -n` (conf). Env: `MC2VR_NO_HOST` (skip host), `MC2VR_IPC_NAME`.
 
 ## Hard rules (see launcher_plan.md for why)

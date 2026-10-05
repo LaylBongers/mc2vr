@@ -278,7 +278,7 @@ So the four VP rows are `row0 = aR + cF`, `row1 = bU + dF`, `row2 = A·F`, `row3
 `A = row2·F` (row2 must be ∥ F), `C` from solving `clip.x=clip.y=clip.w=0` (3×3
 Cramer — independent of the optional camPos row), `B = row2.w + row2·C`.
 `view_row_rewrite=hmd_identity` rebuilds the game's own camera and logs the max
-residual (python check of the algebra: 7e-15).
+residual. The algebra lives in `src/carrier/vp_camera.{hpp,cpp}` (pure math on `src/common/vec_math.hpp`, shared with the host); native unit test `tools/test/test_vp_camera.cpp` (build line in its header) covers decompose/rebuild round trip, identity eye, eye-shift and head-turn directions, scale.
 
 HMD eye → game camera (`apply_hmd_eye`): XR LOCAL vectors map x→R, y→U, −z→F of the
 GAME camera (the game camera is the body; the HMD is an offset on it, so mouse/stick

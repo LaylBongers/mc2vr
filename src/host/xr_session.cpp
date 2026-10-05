@@ -17,6 +17,7 @@
 #include "pose.hpp"
 #include "shared_eyes.hpp"
 #include "submit.hpp"
+#include "vec_math.hpp"
 
 namespace xrs {
 
@@ -63,6 +64,14 @@ struct State {
     PoseRec hist[kHist];
     uint64_t poseHit = 0, poseMiss = 0, poseNone = 0;
 };
+
+// Distance between the two eye positions (the runtime's IPD), meters.
+float eye_separation(const XrView views[2]) {
+    auto pos = [](const XrView& v) {
+        return mc2vr::math::Vec3{v.pose.position.x, v.pose.position.y, v.pose.position.z};
+    };
+    return mc2vr::math::distance(pos(views[0]), pos(views[1]));
+}
 
 const char* state_name(XrSessionState s) {
     switch (s) {
@@ -317,15 +326,12 @@ bool frame(State& s, unsigned n) {
         poseOk = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0 &&
                  (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0;
         if (n % 90 == 0) {
-            const float dx = views[1].pose.position.x - views[0].pose.position.x;
-            const float dy = views[1].pose.position.y - views[0].pose.position.y;
-            const float dz = views[1].pose.position.z - views[0].pose.position.z;
             hostlog::write("openxr: frame %u valid=%d L=(%.3f %.3f %.3f) q=(%.3f %.3f %.3f %.3f) "
                            "ipd=%.4f fovL=(%.3f %.3f %.3f %.3f)",
                            n, poseOk, views[0].pose.position.x, views[0].pose.position.y,
                            views[0].pose.position.z, views[0].pose.orientation.x,
                            views[0].pose.orientation.y, views[0].pose.orientation.z,
-                           views[0].pose.orientation.w, std::sqrt(dx * dx + dy * dy + dz * dz),
+                           views[0].pose.orientation.w, eye_separation(views),
                            views[0].fov.angleLeft, views[0].fov.angleRight, views[0].fov.angleUp,
                            views[0].fov.angleDown);
         }
@@ -431,10 +437,7 @@ void publish_frame(State& s, const XrFrameState& fs, const XrView views[2],
         f.eye[e].fov = {views[e].fov.angleLeft, views[e].fov.angleRight,
                         views[e].fov.angleUp, views[e].fov.angleDown};
     }
-    const float dx = views[1].pose.position.x - views[0].pose.position.x;
-    const float dy = views[1].pose.position.y - views[0].pose.position.y;
-    const float dz = views[1].pose.position.z - views[0].pose.position.z;
-    const float ipd = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float ipd = eye_separation(views);
     State::PoseRec& r = s.hist[(s.pubFrame + 1) % State::kHist];
     r.id = s.pubFrame + 1;  // == the poseId the carrier derives from hostFrame
     for (int e = 0; e < 2; ++e) {

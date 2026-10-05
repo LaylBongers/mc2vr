@@ -15,10 +15,14 @@
 #include "hooks.hpp"
 #include "ipc.hpp"
 #include "log.hpp"
+#include "vec_math.hpp"
+#include "vp_camera.hpp"
 
 namespace mc2vr::view {
 
 namespace {
+
+using math::Vec3;
 
 constexpr uint32_t VS_ROWS = 256;  // vs_3_0 float constant registers (plus headroom)
 constexpr float DEFAULT_AMP = 4.0f;
@@ -74,7 +78,7 @@ uint32_t g_rt_seen_n = 0;
 // The cache is at most one frame old — a sub-degree direction error on a
 // 0.032-unit offset, and the first technique's upload of each frame refreshes
 // it for the rest of the frame.
-float g_right[3] = {0.0f, 0.0f, 0.0f};
+Vec3 g_right;
 bool g_right_valid = false;
 int g_stereo_eye = +1;  // +1 right / -1 left; A/B alternating until S2c
 uint64_t g_stereo_flip_ms = 0;
@@ -189,8 +193,8 @@ void rewrite_delta(float d[3], float asym[2])
             g_stereo_flip_ms = now;
             g_stereo_eye = -g_stereo_eye;
             MC2VR_LOG("view: stereo eye -> %s (right=[%.4f %.4f %.4f], off=%.4f)",
-                      g_stereo_eye > 0 ? "RIGHT" : "LEFT", (double)g_right[0],
-                      (double)g_right[1], (double)g_right[2],
+                      g_stereo_eye > 0 ? "RIGHT" : "LEFT", (double)g_right.x,
+                      (double)g_right.y, (double)g_right.z,
                       (double)(g_ipd * 0.5f));
         }
     }
@@ -199,9 +203,7 @@ void rewrite_delta(float d[3], float asym[2])
     }
     const int eye = use_pass_eye ? g_pass_eye : g_stereo_eye;
     const float half = g_ipd * 0.5f * (float)eye;
-    d[0] = g_right[0] * half;
-    d[1] = g_right[1] * half;
-    d[2] = g_right[2] * half;
+    math::store3(d, g_right * half);
     asym[0] = g_asym_x * (float)eye;
     asym[1] = g_asym_y * (float)eye;
 }
@@ -209,6 +211,16 @@ void rewrite_delta(float d[3], float asym[2])
 bool have_vp_or_vcd_regs()
 {
     return g_vcd_reg != REG_INVALID || g_vp_reg != REG_INVALID;
+}
+
+// row0.xyz = P00 * right (the view row0 is the camera right axis), so the
+// normalized xyz IS the world right direction. Takes the RAW (pre-rewrite)
+// row — caching a shifted row would accumulate the offset per frame.
+void refresh_right_axis(const float *row0)
+{
+    if (math::normalize(math::load3(row0), &g_right, 1e-10f)) {
+        g_right_valid = true;
+    }
 }
 
 // Scan one RAW upload for the VP row0 (first row of viewContextData/ViewProj)
@@ -229,17 +241,7 @@ void cache_right_axis(uint32_t start_register, const float *data, uint32_t vec4_
         if (!is_row0) {
             continue;
         }
-        // row0.xyz = P00 * right (view row0 = camera right axis), so the
-        // normalized xyz IS the world right direction.
-        const float *r = data + i * 4;
-        const float n2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
-        if (n2 > 1e-20f) {
-            const float inv = 1.0f / sqrtf(n2);
-            g_right[0] = r[0] * inv;
-            g_right[1] = r[1] * inv;
-            g_right[2] = r[2] * inv;
-            g_right_valid = true;
-        }
+        refresh_right_axis(data + i * 4);
         return;  // at most one row0 per upload
     }
 }
@@ -255,118 +257,36 @@ void cache_right_axis(uint32_t start_register, const float *data, uint32_t vec4_
 // camera ORIENTATION and POSITION (game camera = body; HMD pose = offset on
 // it) and the projection terms (OpenXR FOV); A,B are kept so depth / fog /
 // soft-particle behaviour is unchanged.
-struct Vec3f { float x, y, z; };
-Vec3f operator+(Vec3f a, Vec3f b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-Vec3f operator-(Vec3f a, Vec3f b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-Vec3f operator*(Vec3f a, float s) { return {a.x * s, a.y * s, a.z * s}; }
-float dot3(Vec3f a, Vec3f b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-Vec3f cross3(Vec3f a, Vec3f b)
-{
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-float len3(Vec3f a) { return sqrtf(dot3(a, a)); }
-
-// q * v (unit quaternion).
-Vec3f quat_rot(const Mc2IpcQuat &q, Vec3f v)
-{
-    const Vec3f u = {q.x, q.y, q.z};
-    const Vec3f t = cross3(u, v) * 2.0f;
-    return v + t * q.w + cross3(u, t);
-}
-
 struct HmdSnapshot {
     bool valid = false;
     uint32_t id = 0;  // pose id (hostFrame+1) the carrier tags frames with
-    Mc2IpcEyePose eye[2];
+    vpcam::EyePose eye[2];
 };
 HmdSnapshot g_hmd;
 float g_world_scale = 1.0f;  // game world units per metre (UNVERIFIED default)
 
 // Per-pass cache of the rebuilt camera position, for uploads that carry only
 // the camPos row (VP rows arrived in an earlier call).
-Vec3f g_pw = {0, 0, 0};
+Vec3 g_pw;
 bool g_pw_valid = false;
 
 uint64_t g_hmd_blocks = 0, g_hmd_split = 0, g_hmd_decomp_fail = 0, g_hmd_cam_only = 0;
 float g_hmd_resid_max = 0.0f;  // max |rebuilt - raw| over the window (identity self-check)
 uint32_t g_hmd_split_logged = 0, g_hmd_fail_logged = 0;
 
-struct Camera {
-    Vec3f R, U, F, C;
-    float a, b, c, d, A, B;
-};
-
-// Decompose the 4 raw VP rows (row i at r[i*4..]). False if the block is not
-// of the assumed form (counted + logged, the upload then passes through).
-bool decompose(const float *r, Camera *cam)
+// Host-published eye (IPC layout) -> pure-math eye.
+vpcam::EyePose to_eye_pose(const Mc2IpcEyePose &e)
 {
-    const Vec3f r0 = {r[0], r[1], r[2]}, r1 = {r[4], r[5], r[6]};
-    const Vec3f r2 = {r[8], r[9], r[10]}, r3 = {r[12], r[13], r[14]};
-    const float fl = len3(r3);
-    if (fl < 0.98f || fl > 1.02f) {
-        return false;  // clip.w is not a unit-length forward dot (scaled/unknown form)
-    }
-    cam->F = r3 * (1.0f / fl);
-    const Vec3f t0 = r0 - cam->F * dot3(r0, cam->F);
-    const Vec3f t1 = r1 - cam->F * dot3(r1, cam->F);
-    cam->a = len3(t0);
-    cam->b = len3(t1);
-    if (cam->a < 1e-6f || cam->b < 1e-6f) {
-        return false;
-    }
-    cam->c = dot3(r0, cam->F);
-    cam->d = dot3(r1, cam->F);
-    cam->R = t0 * (1.0f / cam->a);
-    cam->U = t1 * (1.0f / cam->b);
-    cam->A = dot3(r2, cam->F);
-    const Vec3f z_res = r2 - cam->F * cam->A;
-    if (len3(z_res) > 1e-3f * (fabsf(cam->A) + 1.0f)) {
-        return false;  // depth row mixes in x/y — not the assumed form
-    }
-    // Camera position: the point where clip.x = clip.y = clip.w = 0.
-    const Vec3f c12 = cross3(r1, r3), c20 = cross3(r3, r0), c01 = cross3(r0, r1);
-    const float det = dot3(r0, c12);
-    if (fabsf(det) < 1e-9f) {
-        return false;
-    }
-    cam->C = (c12 * (-r[3]) + c20 * (-r[7]) + c01 * (-r[15])) * (1.0f / det);
-    cam->B = r[11] + dot3(r2, cam->C);
-    return true;
+    return {{e.pos.x, e.pos.y, e.pos.z},
+            {e.rot.x, e.rot.y, e.rot.z, e.rot.w},
+            e.fov.left, e.fov.right, e.fov.up, e.fov.down};
 }
 
-// Write the 4 VP rows for `cam` into out[16].
-void rebuild(const Camera &cam, float *out)
+// A published eye is usable if its quaternion is unit and its FOV non-degenerate.
+bool eye_is_sane(const Mc2IpcEyePose &e)
 {
-    const Vec3f rows[4] = {cam.R * cam.a + cam.F * cam.c, cam.U * cam.b + cam.F * cam.d,
-                           cam.F * cam.A, cam.F};
-    for (int i = 0; i < 4; i++) {
-        out[i * 4 + 0] = rows[i].x;
-        out[i * 4 + 1] = rows[i].y;
-        out[i * 4 + 2] = rows[i].z;
-        out[i * 4 + 3] = -dot3(rows[i], cam.C);
-    }
-    out[11] += cam.B;
-}
-
-// Apply the HMD eye `eye` (0 = L, 1 = R) to the game camera.
-void apply_hmd_eye(const Camera &game, int eye, Camera *out)
-{
-    const Mc2IpcEyePose &ep = g_hmd.eye[eye];
-    // XR LOCAL (x right, y up, -z forward) -> game camera basis.
-    auto map = [&](Vec3f v) { return game.R * v.x + game.U * v.y + game.F * (-v.z); };
-    const Vec3f p = {ep.pos.x, ep.pos.y, ep.pos.z};
-    out->C = game.C + map(p) * g_world_scale;
-    out->R = map(quat_rot(ep.rot, {1, 0, 0}));
-    out->U = map(quat_rot(ep.rot, {0, 1, 0}));
-    out->F = map(quat_rot(ep.rot, {0, 0, -1}));
-    const float tl = tanf(ep.fov.left), tr = tanf(ep.fov.right);
-    const float tu = tanf(ep.fov.up), td = tanf(ep.fov.down);
-    out->a = 2.0f / (tr - tl);
-    out->c = -(tr + tl) / (tr - tl);
-    out->b = 2.0f / (tu - td);
-    out->d = -(tu + td) / (tu - td);
-    out->A = game.A;
-    out->B = game.B;
+    const float n = math::norm_sq({e.rot.x, e.rot.y, e.rot.z, e.rot.w});
+    return n >= 0.98f && n <= 1.02f && e.fov.right > e.fov.left && e.fov.up > e.fov.down;
 }
 
 const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t vec4_count)
@@ -411,43 +331,33 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         }
         // camPos row alone: reuse this pass's rebuilt position.
         if (g_pw_valid) {
-            camrow[0] = g_pw.x;
-            camrow[1] = g_pw.y;
-            camrow[2] = g_pw.z;
+            math::store3(camrow, g_pw);
             g_hmd_cam_only++;
             return scratch;
         }
         return data;
     }
     const float *raw = data + (base - start_register) * 4;
-    Camera game, cam;
-    if (!decompose(raw, &game)) {
+    vpcam::Camera game, cam;
+    if (!vpcam::decompose(raw, &game)) {
         g_hmd_decomp_fail++;
         if (g_hmd_fail_logged++ < 8) {
             MC2VR_LOG("view/hmd: decompose FAILED c%u: |r3.xyz|=%.4f r0.w=%.3f "
                       "r2=[%.3f %.3f %.3f %.3f] — passed through", base,
-                      (double)len3({raw[12], raw[13], raw[14]}), (double)raw[3],
+                      (double)math::length(math::load3(raw + 12)), (double)raw[3],
                       (double)raw[8], (double)raw[9], (double)raw[10], (double)raw[11]);
         }
         return data;
     }
     if (identity) {
         cam = game;
-        // Self-check: rebuild(decompose(x)) == x.
-        float re[16];
-        rebuild(game, re);
-        for (int i = 0; i < 16; i++) {
-            const float e = fabsf(re[i] - raw[i]) / (1.0f + fabsf(raw[i]));
-            if (e > g_hmd_resid_max) g_hmd_resid_max = e;
-        }
+        g_hmd_resid_max = std::fmax(g_hmd_resid_max, vpcam::rebuild_residual(raw, game));
     } else {
-        apply_hmd_eye(game, eye, &cam);
+        cam = vpcam::apply_eye(game, g_hmd.eye[eye], g_world_scale);
     }
-    rebuild(cam, scratch + (base - start_register) * 4);
+    vpcam::rebuild(cam, scratch + (base - start_register) * 4);
     if (camrow) {
-        camrow[0] = cam.C.x;
-        camrow[1] = cam.C.y;
-        camrow[2] = cam.C.z;
+        math::store3(camrow, cam.C);
     }
     g_pw = cam.C;
     g_pw_valid = true;
@@ -610,36 +520,25 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
         }
         const bool is_pos = have_vcd && vcd_count >= 5 && vcd_off == 4;
         if (vp_idx == 0) {
-            // Refresh the camera right axis from the RAW upload (pre-rewrite —
-            // caching the shifted row would accumulate the offset per frame).
             // Fires every frame; keeps up with camera rotation within a frame.
-            const float n2 = raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2];
-            if (n2 > 1e-20f) {
-                const float inv = 1.0f / sqrtf(n2);
-                g_right[0] = raw[0] * inv;
-                g_right[1] = raw[1] * inv;
-                g_right[2] = raw[2] * inv;
-                g_right_valid = true;
-            }
+            refresh_right_axis(raw);
         }
         if (vp_idx != 0xffffffffu && row[3] != 1.0f) {
-            row[3] -= row[0] * d[0] + row[1] * d[1] + row[2] * d[2];
+            row[3] -= math::dot(math::load3(row), math::load3(d));
             // Asymmetric per-eye projection centre (stereo mode, S2 step 1):
             // row_k.xyz = P_kk * basis_k, so |row_k.xyz| is the projection
             // coefficient that scales the NDC shift into row_k.w. Sign
             // convention to be validated against the HMD runtime (S4).
             if (asym[0] != 0.0f && vp_idx == 0) {
-                row[3] += sqrtf(row[0] * row[0] + row[1] * row[1] + row[2] * row[2]) *
+                row[3] += math::length(math::load3(row)) *
                           asym[0];
             } else if (asym[1] != 0.0f && vp_idx == 1) {
-                row[3] += sqrtf(row[0] * row[0] + row[1] * row[1] + row[2] * row[2]) *
+                row[3] += math::length(math::load3(row)) *
                           asym[1];
             }
             g_rows_rewritten++;
         } else if (is_pos && row[3] == 1.0f) {
-            row[0] += d[0];
-            row[1] += d[1];
-            row[2] += d[2];
+            math::store3(row, math::load3(row) + math::load3(d));
             g_rows_rewritten++;
         }
     }
@@ -711,20 +610,13 @@ void set_pass_eye(int sign)
     // both eyes render with it and the id travels in FRAME_READY.
     if (sign < 0 && g_mode == RewriteMode::Hmd) {
         Mc2IpcState st;
-        bool sane = ipc::read_state(&st) && (st.flags & MC2VR_IPC_STF_TRACKED);
-        for (int e = 0; sane && e < 2; e++) {
-            const Mc2IpcQuat &q = st.eye[e].rot;
-            const float n = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-            const Mc2IpcFov &f = st.eye[e].fov;
-            if (n < 0.98f || n > 1.02f || f.right <= f.left || f.up <= f.down) {
-                sane = false;
-            }
-        }
+        const bool sane = ipc::read_state(&st) && (st.flags & MC2VR_IPC_STF_TRACKED) &&
+                          eye_is_sane(st.eye[0]) && eye_is_sane(st.eye[1]);
         g_hmd.valid = sane;
         if (sane) {
             g_hmd.id = st.hostFrame + 1;
-            g_hmd.eye[0] = st.eye[0];
-            g_hmd.eye[1] = st.eye[1];
+            g_hmd.eye[0] = to_eye_pose(st.eye[0]);
+            g_hmd.eye[1] = to_eye_pose(st.eye[1]);
         }
     }
     if (sign != g_pass_eye) {
