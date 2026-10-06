@@ -19,6 +19,7 @@ add_library(mc2vr_carrier SHARED
     debug/stub_trace.cpp
     debug/stream_capture.cpp
     debug/vm_dump.cpp
+    debug/watch.cpp
     sha256.c
 )
 

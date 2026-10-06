@@ -14,6 +14,7 @@
 #include "debug/render_dump.hpp"
 #include "debug/stream_capture.hpp"
 #include "debug/stub_trace.hpp"
+#include "debug/watch.hpp"
 #include "view_rewrite.hpp"
 #include "debug/vm_dump.hpp"
 #include "sha256.h"
@@ -218,6 +219,29 @@ static void load_conf()
                     g_conf_asym_y = (float)v;
                 }
                 view::set_view_asym(g_conf_asym_x, g_conf_asym_y);
+            }
+        } else if (strcmp(key, "debug_watch") == 0) {
+            // S5: hardware watchpoints on ViewEntry camera fields (culling-RE
+            // evidence; docs/reverse_engineering/view_and_camera.md).
+            if (!watch::set_targets(value)) {
+                MC2VR_LOG("conf: debug_watch=%s not recognized (named ViewEntry "
+                          "fields or addr:<hex>, '+'-separated, max 4) — disabled",
+                          value);
+            }
+        } else if (strcmp(key, "debug_watch_mode") == 0) {
+            if (!watch::set_mode(value)) {
+                MC2VR_LOG("conf: debug_watch_mode=%s not recognized (use full|write)",
+                          value);
+            }
+        } else if (strcmp(key, "debug_watch_view") == 0) {
+            uint32_t n;
+            if (parse_count(key, value, &n)) {
+                watch::set_view_index(n);
+            }
+        } else if (strcmp(key, "debug_watch_hits") == 0) {
+            uint32_t n;
+            if (parse_count(key, value, &n)) {
+                watch::set_detail_hits(n);
             }
         } else {
             MC2VR_LOG("conf: unknown key '%s' ignored", key);

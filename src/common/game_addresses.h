@@ -43,8 +43,36 @@
 // Loop count = *(WORD*)(*g_RenderShellPtr + 0x2b90).
 #define MC2_SUBMITVIEW_LOOP_LEA ((uintptr_t)0x0048e9eau)
 #define MC2_VIEW_TABLE ((uintptr_t)0x012865e0u)
+#define MC2_VIEW_STRIDE ((uintptr_t)0x810u)
 #define MC2_VIEW_OBJ_PTR_OFF ((uintptr_t)0x7e4u)
 #define MC2_VIEW_TABLE3 ((uintptr_t)0x014095e0u)
+// Active-view intrusive list head = INDEX into g_ViewTable (negative terminates;
+// link = ViewEntry+0x4). S0-corrected semantics; render_dump logs it per frame.
+#define MC2_ACTIVE_VIEW_LIST_HEAD ((uintptr_t)0x00d29e60u)
+
+// ViewEntry camera-field offsets (plate on g_ViewTable; the suspected culling
+// inputs — docs/reverse_engineering/view_and_camera.md). All 4-byte aligned
+// relative to the 0x810-stride table (required for DR LEN=4 watchpoints):
+//   +0x20  slot[0].mtx[0] row0 (viewToWorld, camera pos at row 3)
+//   +0x60  slot[0].mtx[1] row0 (worldToView, negated pos)
+//   +0x8c  slot[0].dir[3]   +0xa8 slot[0].params  +0x188 near-plane-ish
+//   +0x2ec fovCos / +0x2f4 fovSin (FOV half-angle)  +0x670 dir670[3]
+//   +0x7ac pos prev / +0x7c4 pos cur / +0x7d0 pose serial / +0x7d4 quat[4]
+#define MC2_VIEW_OFF_SLOT0      ((uintptr_t)0x20u)
+#define MC2_VIEW_OFF_SLOT0V      ((uintptr_t)0x60u)
+#define MC2_VIEW_OFF_SLOTDIR     ((uintptr_t)0x8cu)
+#define MC2_VIEW_OFF_SLOTPARAMS  ((uintptr_t)0xa8u)
+#define MC2_VIEW_OFF_NEAR        ((uintptr_t)0x188u)
+#define MC2_VIEW_OFF_FOVCOS      ((uintptr_t)0x2ecu)
+#define MC2_VIEW_OFF_FOVSIN      ((uintptr_t)0x2f4u)
+#define MC2_VIEW_OFF_DIR670      ((uintptr_t)0x670u)
+#define MC2_VIEW_OFF_POS_PREV    ((uintptr_t)0x7acu)
+#define MC2_VIEW_OFF_POS_CUR     ((uintptr_t)0x7c4u)
+#define MC2_VIEW_OFF_SERIAL      ((uintptr_t)0x7d0u)
+#define MC2_VIEW_OFF_QUAT        ((uintptr_t)0x7d4u)
+#define MC2_VIEW_OFF_CAMDATA     ((uintptr_t)0x7ecu)
+#define MC2_VIEW_OFF_FLAGS808    ((uintptr_t)0x808u)
+#define MC2_VIEW_TYPE2 ((uint32_t)2u) // normal world view (ViewRef.type14)
 
 // g_RenderShell (object, holds live base LtiRenderer_vtbl at frame time) and
 // its pointer global. VmtHook claim target for slots 4 (EndOfFrameHook) /

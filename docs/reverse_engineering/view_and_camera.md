@@ -100,9 +100,16 @@ row-major, clip_i = dot(VP_row_i, worldpos)
   `0x00624f70`) are handle-table helpers. Writes to `g_ViewContextTable` +0x10..+0x48 from the function-less
   `0x8564xx..0x856dxx` blocks are state-cache flags, not VP rows. `FUN_024fe0d0` (`.securom`, readable in
   Ghidra) maintains the active-view list, not matrices. Static xrefs cannot find pointer-based matrix writes;
-  proposed next step: a hardware-write watch (debug registers + VEH, or PAGE_GUARD) on one live
-  `ViewContextRecord`'s VP rows to log the writer's EIP (SecuROM anti-debug is documented inert, but untested
-  for DRx).
+  **the hardware-write watch is now implemented** (2026-10-06): carrier `debug_watch=<targets>` arms DR0-3
+  via suspend+SetThreadContext on every process thread and logs every accessor's EIP (region-classified:
+  plaintext `.text` vs VM sections vs carrier-self) through a vectored exception handler — read mode `full`
+  catches readers as well as writers, so the same run answers BOTH "is the camera-field writer VM or
+  plaintext?" and "who reads the camera fields (is the culling consumer VM or plaintext?)". Targets: named
+  ViewEntry fields (`quat pos posprev serial fov fovsin near slot0 slot0v slotdir dir670 camdata flags808`)
+  of the first type-2 active view (`debug_watch_view=N` to pin), or raw VAs (`addr:0x…`, e.g. a
+  `g_ViewContextTable` record's VP rows for the writer hunt). Default watch view = first type-2 seen; arming
+  waits for the first view submission (activation-time writes can predate it). LIVE RUN PENDING — first
+  run: `debug_watch=quat+pos+fov+slot0`, `debug_watch_mode=full`.
 - `g_RenderQueue2` consumption timing relative to Present (HUD handling needs the 2D stream's frame timing).
   RESOLVED (S4-5, 2026-10-06): consumed once per frame between SubmitToGPU entry and pass-1's BeginSubmit
   Present (frozen through both pass walks) — HUD drawn into both eyes; see render_path.md queue counter item

@@ -14,6 +14,7 @@
 #include "stub_trace.hpp"
 #include "stream_capture.hpp"
 #include "view_rewrite.hpp"
+#include "watch.hpp"
 
 namespace mc2vr::render {
 
@@ -143,6 +144,10 @@ void view_midhook(safetyhook::Context &ctx)
     const uint8_t *entry = (const uint8_t *)(MC2_VIEW_TABLE + (uintptr_t)ctx.eax);
 
     g_view_submits++;
+
+    // S5 culling-watch: identify the view entry whose camera fields get
+    // hardware-watched (debug_watch; no-op when disabled).
+    watch::on_view(idx, type, entry);
 
     // Per-frame bookkeeping keyed on the FrameTick counter.
     const uint64_t frame = hooks::frame_count();
@@ -302,6 +307,7 @@ void report_window()
     trace::report_window();
     s2c::report_window();
     eye::report_window();
+    watch::report_window();
 }
 
 
@@ -317,6 +323,10 @@ DWORD WINAPI poller_thread(LPVOID)
 
     while (InterlockedCompareExchange(&g_poller_run, 1, 1)) {
         Sleep(POLL_MS);
+
+        // S5 culling-watch: one-time DR0-3 arm once a target view exists
+        // (per-thread DRs cannot be set from the watching thread itself).
+        watch::poll();
 
         const uint32_t a = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x10);
         const uint32_t b = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x14);

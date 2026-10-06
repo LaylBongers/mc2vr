@@ -238,7 +238,10 @@ a 256-entry published-view history and submits the projection layer with the pos
 of that id, so the compositor reprojects from what the image actually contains.
 
 Open: unit scale (`view_world_scale`, unverified), engine culling against the game
-frustum, non-`viewContextData` shaders / PS camera data (rotation exposes these),
+frustum (2026-10-06: the culling-input verification tooling is in — carrier `debug_watch`
+hardware-watchpoints the ViewEntry camera fields and logs every accessor's EIP with
+plaintext/VM classification, `docs/reverse_engineering/view_and_camera.md` § open RE items;
+live run pending), non-`viewContextData` shaders / PS camera data (rotation exposes these),
 split VP uploads (counted: `view/hmd: split=`), handedness/sign validation live.
 
 ### S4-5 — Session events, pacing, HUD (COMPLETE, live-verified 2026-10-06)
