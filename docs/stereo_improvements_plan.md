@@ -1,196 +1,169 @@
-# Stereo Injection Improvements Plan
+# Stereo Injection Improvements — findings, verdicts and the decided architecture
 
-The S4-4 HMD camera replacement works but is deliberately low-level: per-upload scratch rewrites of the
-`viewContextData` VP rows inside the device `SetVertexShaderConstantF` hook, with per-upload VP
-decomposition, technique register maps from the upload-gate MidHook, and shape-fragility workarounds
-(split uploads, decompFail counters). The 2026-10-06 culling RE changed the premises that forced that
-design. This plan captures what can now be improved, what the decisive experiments are, and what stays
-hard. Status: **drafted, not implemented** — experiments E1–E3 below should run first.
+Status: **EXPERIMENTS COMPLETE (2026-10-06).** E1, E1b, E2 and E2b (5 steps) are all answered; the
+draw-camera chain is mapped end-to-end and the injection architecture is DECIDED (below). What remains
+is implementation. This doc started as an improvements plan drafted after the culling RE changed old
+premises; the experiment log at the bottom is the evidence for everything above it.
 
-## What changed (facts from the culling RE)
+## The complete draw-camera chain (all hardware-watch-proven, plates in Ghidra)
 
-Evidence: `reverse_engineering/view_and_camera.md` § Camera-data accessors (all watch-proven), the
-Ghidra plates referenced there.
+```
+camera entity pose (quat + pos, heap record; VALUES originate in game logic / VM)
+  -> CameraTable_FillFromPose (0x0070ae50, PLAINTEXT, ~1.7/frame; from FUN_0070f430's loop,
+       stride 0x620): CameraEntity_GetPoseRecord (0x0042ee50)
+       -> D3DXQuaternionNormalize -> D3DXMatrixRotationQuaternion -> position + w
+       -> Matrix_Copy3x4 -> g_CameraTable entry (0x014A2EE0, STATIC — call site ~0x0070AEF3)
+  -> per builder call (mutated block ~0x004665xx-0x004666xx):
+       CamPose_ClearEntryPose (0x004665b0) clears the stack entry's pose from the static
+         zero template g_CameraPoseClearBlock (0x00DFBBD0)
+       -> Matrix_Copy3x4 copies the LIVE pose from g_CameraTable -> the per-call stack
+          camera entry (rotation +0x10..0x3c, position +0x40..0x4c)
+       -> CamPose_FillEntryFov (0x00466615) fills fov fields from static 0x00B9B688
+  -> VM'd packet interpreter (ORCHESTRATES only)
+  -> VMThunk_ViewContext_BuildCameraConstants (0x00506a26, no static xref = VM-called)
+  -> ViewContext_BuildCameraConstants (0x008591ac): reads the camera object (*(ctx+0x28) ->
+       self-indexed 0x70-stride entries: status +0x00, rotation rows +0x10..0x3c, position
+       +0x40, near +0x50, far +0x54, fovCos +0x58), reads near/far/fov + view matrix,
+       builds the projection in plaintext, D3DXMatrixMultiply(view, proj) = VP
+       -> Matrix_Copy3x4(VP -> scratch 0x017D04E0)      [call site 0x00859562]
+  -> record fill (once per frame, BOTH double-buffer bases, NOT per submit):
+       0x0046718c Matrix_Copy3x4 (idx-6 record), inline fstp 0x004673bf (idx-12)
+       record = 0x018c45e0 + (bufIdx*32 + viewIdx)*0x70, bufIdx = [0x00ff364c]
+  -> upload gate 0x00855a78 ([esp+0x18] = this pass's record ptr)
+  -> Dx9_SetVertexShaderConstantF -> device slot 94 -> GPU
+       ↘ the SAME g_CameraTable is read by the culling/fov consumers
+         (0x0048067E family, global frame-ctx 0x017cf980)
+```
 
-1. **The staged camera block is a VM↔plaintext ROUND-TRIP, not one-way.** The walk stages
-   entry→staged (`0x0048EC95`), and the walk's mutated tail copies staged→entry back
-   (`0x0048F72D`, `Pose_Copy` semantics, serial+1). New camera-pose VALUES originate in the VM'd
-   consumer; there is no plaintext writer of pose values.
-2. **The whole camera pipeline is serial-gated (change-detection), not per-frame.** Copies only fire
-   when source serials advance (`serial = max(src,dest)+1`).
-3. **`ViewEntry` camera state is plaintext and live during gameplay**: `pos7c4`/`quat7d4`/`serial7d0`
-   (pose block), `fovCos2ec`/`fovSin2f4`, slot matrices — all plaintext-writable, refreshed by the
-   gated cycle above.
-4. **The old negative result is re-interpreted** — "patching `ViewEntry` never moved the draw camera"
-   (M3-era) was tested WITHOUT serial bumps and WITHOUT understanding the round-trip; patches died at
-   the change-gate (and/or were overwritten by the next copy-back). The producer side is NOT proven
-   dead for the draw camera — it is untested under the correct protocol (write + bump serial every
-   frame, before the staging).
-5. What remains true: the draw camera's `viewContextData` VP rows are produced ~~by the VM'd code~~
-   **[CORRECTED by E1, see the E1 RESULT under Experiments: the record fill is PLAINTEXT
-   (Matrix_Copy3x4 call 0x0046718c / inline fstp 0x004673bf, source scratch 0x017D04E0, once per
-   frame)]** into the per-view render-context record (`g_ViewContextTable`, `0x01169774`, 0x70
-   stride, indexed by `prim+0x49`; +0x00 viewContextData, +0x40 PS view consts) and reach the GPU
-   as per-pass constant uploads. The record itself is plaintext memory.
+Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillFromPose`,
+`CamPose_ClearEntryPose`, `CamPose_FillEntryFov`, `ViewContext_BuildCameraConstants`,
+`g_CameraPoseClearBlock`, `ViewContextRecord_Fill_*`); the chain narrative also lives in
+`reverse_engineering/render_path.md` § Draw-camera constant chain.
 
-## Improvements
+## Verdicts
 
-### I1 — Record-level per-eye rewrite (replaces the per-upload scratch rewrite)
+1. **The `viewContextData` records are PLAINTEXT-filled, once per frame** (E1) — the old "VM-produced
+   VP rows / no plaintext writer" claim is disproven. The fill lives in SecuROM-MUTATED `.text`
+   (~0x004671xx, undefined function, no static callers — invisible to decompiler-text hunts; found by
+   hardware watchpoints). Nothing rewrites the records between pass 1 and pass 2, and the S2c replay
+   pass re-reads unchanged records — a record-level per-eye rewrite is interference-free.
+2. **Upstream ViewEntry pose injection does NOT steer the draw camera** (E2). The ViewEntry
+   `pos7c4`/`quat7d4` fields are OUTPUT channels of the staged round-trip: every serial bump is
+   answered by the copy-back re-asserting the VM's pose within one frame (write+bump, into all 16
+   camera-adjacent views, measured regression SLOPE 0.00). This also kills `frustrum_cull_plan.md`'s
+   original D1/D2 entry-injection design.
+3. **`g_CameraTable` (0x014A2EE0) is the single injection point** (E1b + E2b). Static VA, runtime-live,
+   plaintext-filled ~1.7/frame from the camera entity's quat+pos (via D3DX), and read by BOTH the
+   draw-camera builder path AND the culling/fov consumers. It sits UPSTREAM of the output-only
+   ViewEntry fields — I2 is realized, at a different address than originally hoped.
 
-Instead of rewriting every `viewContextData` upload at the device hook, rewrite the **render-context
-record itself** at pass boundaries:
+## Decided architecture
 
-- Once per frame, before pass 1: write eye-1 (LEFT) camera into the main view's record
-  (VP rows, camPos, and record+0x40 PS view consts).
-- Between pass 1 and pass 2 (the existing `eye_replay` pass boundary): rewrite with the eye-2 (RIGHT)
-  camera.
+- **Union injection at the table** (replaces S6's ViewEntry design and the "producer side" hunt):
+  MidHook immediately after the `Matrix_Copy3x4` call in `CameraTable_FillFromPose` (~0x0070AEF3);
+  rewrite the JUST-filled entry's rotation (+0x10..0x3c) and position (+0x40..0x4c) with
+  game pose + HMD rotation/translation (mid-point between eyes — the union is exactly what culling
+  wants; reuse `apply_hmd_eye` math + `view_world_scale`). Ordering is guaranteed by construction
+  (after every fill, before every consumer). Rewrite only the entry the hooked call filled (keyed by
+  its EAX) — the "inject only matched views" discipline maps to that. Optionally widen the fov
+  fields (+0x50/+0x54/+0x58) for the HMD FOV union (semantics of the widened values TBD — the
+  fovCos field matches the ViewEntry fovCos observation).
+- **Per-eye stays at the I1 record level** — the table is once-per-frame union. I1 (record-level
+  per-pass rewrite behind a conf flag, keep the upload-level path as fallback) proceeds as designed,
+  but shrinks to the per-eye projection/position delta because the pose now comes from the union.
+- **I3 becomes the checker, not the source**: keep the per-upload VP decompose as a one-shot
+  consistency/regression oracle (`hmd_identity` style), retire it as the camera source.
+- **Verification oracles**: `hmd_identity` residuals, shadow-glue per eye, culling pop-in on head
+  turn (before/after the union injection), the carrier's `view: rec` census tally, and a
+  post-implementation full-mode `debug_watch=addr:0x014A2EF0` run to classify the
+  texgen/matViewMat readers (E3 folded in — if the I4 "stays hard" derivations read the table,
+  the union injection fixes them too).
+- Probe tooling is retained as `src/carrier/debug/inject_probe.cpp` (renamed from `e2_probe`):
+  the entry-injection probe (negative result, kept for re-tests; its SLOPE regression verdict
+  metric is the reusable injection-verification instrument) and the builder-entry camera-object
+  dump (address discovery). Conf keys: `debug_entry_inject*`, `debug_cambuilder_dump` — see
+  `conf/mc2vr.conf`.
 
-Why this is better:
+## Remaining work
 
-- **PS-side camera data becomes per-eye for free** where the pass uploads the whole record to the PS
-  (`Dx9_SetPixelShaderConstantF(pViewContext)`): the record+0x40 view consts carry our per-eye camera.
-  Today that path stays mono — a standing S4-4 open item ("PS camera data / texgen stays mono").
-- **One write per pass instead of math per upload**: no scratch-copy dance, no per-technique register
-  targeting for the record path, no split-upload fragility. The upload-gate MidHook remains only to
-  learn WHICH record index the main pass uses (prim+0x49).
-- The record is the single source both passes read — per-pass rewriting gives per-eye cameras with no
-  per-upload interception at all (the device slot-94 VmtHook could be retired to observe-only).
+1. Implement the union injection at the table (conf-gated, e.g. `view_table_inject=on`), with a
+   hmd-union variant of `apply_hmd_eye` and the fill-site MidHook.
+2. **Map the fill loop first**: `CameraTable_FillFromPose` is called from `FUN_0070f430`'s loop
+   (stride 0x620) — how many g_CameraTable entries get filled (multiple camera entities? the
+   second same-spot view behind records idx 6 vs 12?), and which consumers read which entry. The
+   injection must rewrite only the entry the hooked call filled (key on its EAX); watching the
+   loop's iteration set (one `debug_cambuilder_dump`-style run or a static pass over
+   FUN_0070f430) settles it.
+3. Verify: draw camera follows (decompose residual), culling/LOD follow the head (S6's original
+   goal — pop-in gone on head turn), no revert fights (the fill is ~1.7/frame — the post-fill hook
+   must win every race by construction).
+4. Implement I1 record-level per-eye rewrite (shrunk) behind its own flag; A/B against the
+   upload-level path with the established oracles.
+5. E3 classification run (full-mode watch on the table entry) → decide I4's fate. Also open:
+   the fov source global `0x00B9B688` (read by CamPose_FillEntryFov) — semantics unexplored;
+   relevant if the union injection also wants fov widening.
+6. Update `stereo_design.md` (S4-4 open items) + `frustrum_cull_plan.md` with implementation
+   results; retire this doc's "remaining work" as it completes.
 
-Requirements / risks:
+### Phase oracles (reading a run's log — learned 2026-10-06)
 
-- Record base: RESOLVED statically (2026-10-06, E1 prep). `0x01169774` holds a
-  POINTER, not the array — sole plaintext xref is the initializer (`FUN_00854da8`,
-  write `0x00854e6d`): `g_ViewContextTable = 0x018c45e0 + DAT_00ff364c * 0xe00`, a
-  double-buffered array of 32 records × 0x70 stride (readers all VM-side, hence no
-  plaintext read xrefs). Constants in `game_addresses.h`
-  (`MC2_G_VIEWCONTEXTTABLE` + stride/size). The main-pass record VA needs no
-  `prim+0x49` hunt either: `[esp+0x18]` at the upload gate IS the pass's record
-  pointer, and the carrier MidHook now logs each distinct record VA + index +
-  pass-gate context (run 1 of E1).
-- **VM write timing** (experiment E1): the VM fills the record before the passes; verify it does not
-  rewrite it mid-frame/per-pass. `debug_watch=addr:<record VP row VA>` (read+write) answers this in one
-  run — the tooling exists.
-- Keep the main-pass gating discipline: only rewrite the record index used by the main pass
-  (offscreen passes — shadow atlas, reflections — have their own records and must stay untouched;
-  the existing RT-size gate logic maps onto record-index gating).
-- Aliasing caveat from `view_rewrite.cpp` (the upload buffer may alias the record) becomes moot: we
-  WANT the uploads to read our values.
+- `view: record` census: menu = idx 2/3 (immediate after attach), load-in = idx 9/10 (~+13 s),
+  gameplay = idx 4,5,6,7,8,12,13 (~+20 s) — the world-scale set (4/5/6) appearing at all is the
+  "truly in-world" signal.
+- The menu/loading vista camera parks at ~(-1730,-33,2064) with slow rotation — a decomposed
+  `camC` frozen there across a run means the world pass never engaged, regardless of what was on
+  screen.
+- `view/hmd: blocks=0` + `poseId=0` for whole windows = the HMD was never tracked (everything
+  downstream of the hmd rewrite's decompose — matching, `get_game_camera` — is blind without it).
 
-### I2 — Upstream pose injection (decisive experiment; big payoff if it works)
+## Experiment log (evidence — 2026-10-06, one line of method per result)
 
-Write the HMD pose into the main view's `ViewEntry` pose block (+ bump `serial7d0`) every frame, before
-the walk staging — same protocol the S6 culling plan (`frustrum_cull_plan.md` D2) uses. Then check
-whether the draw camera follows:
+- **E1 (runs 1-3)** — record census via the upload-gate MidHook (`view: record/...`, `view: rec ...`
+  tally lines): gameplay's world-scale records are idx 6 and idx 12 (60-87k main-RT uploads/10s each,
+  same VP row0 = same camera, both double-buffer bases in parity — the base flips per frame);
+  shadow atlas idx 7/8; idx 5 = exactly-once-per-submit main+offscreen pair; idx 4/13/11 minor;
+  idx 2/3/9/10 transient. Walk counts cannot discriminate views (all 24 walked uniformly) —
+  upload dominance can. Watch (write mode) on idx-6/12 row0, both bases: the fills are PLAINTEXT —
+  `Matrix_Copy3x4` call 0x0046718c (idx-6) + inline fstp 0x004673bf (idx-12), once per frame, both
+  bases, not per submit. Record base resolved statically: g_ViewContextTable (0x01169774) holds a
+  POINTER to the double-buffered 32x0x70 array at 0x018c45e0 + frameIdx*0xe00 (initializer
+  FUN_00854da8 0x00854e6d, sole plaintext xref); the per-pass record pointer is [esp+0x18] at the
+  upload gate.
+- **E1b** — watch the fill-source scratch 0x017D04E0: written by `Matrix_Copy3x4` at 0x00859562 from
+  a STACK-LOCAL matrix inside `ViewContext_BuildCameraConstants` (0x008591ac) — the plaintext VP
+  builder (camera object from ctx+0x28, projection built in plaintext, D3DX view×proj multiply),
+  called ONLY from the VM via the no-xref thunk 0x00506a26. Scratch cadence ~4.4/frame (per active
+  view) vs record fill ~1.0-1.7/frame.
+- **E2 (6 runs; the probe)** — match live type-2 views against the decomposed game camera
+  (position within 100 units; slot0 basis match is unreliable — live views' slot0 is IDENTITY or
+  zero, and an identity basis false-positives against axis-aligned cameras), inject
+  ±right·A·sin oscillation + serial bumps (D2 protocol) into ALL 16 matched views. RESULT: SLOPE
+  0.00 (phase-immune regression of the decomposed RAW draw camera vs the injected offset) across
+  static-camera windows; refreshes≈injects (copy-back reverts each frame). Camera pos carriers are
+  the idx 19-34 family (20-23 at posd 3-7 with live quats). NOTES: requires view_row_rewrite=hmd
+  AND the HMD tracked (the decompose is pose-gated); a minute of true in-world gameplay suffices.
+- **E2b step 1** — builder-entry MidHook (debug_cambuilder_dump): camera object entry layout decoded
+  (0x70 stride: status/rotation rows/position/near/far/fovCos — MC2_VCCAM_ENTRY_* in
+  game_addresses.h); gameplay instances are STACK-LOCAL (menu uses the static g_CameraTable
+  directly); the main camera entry identified by byte-match to the decomposed VP camera.
+- **E2b step 2 (partially retracted)** — the entry pose writes are a CLEAR from a static zero
+  template (g_CameraPoseClearBlock 0x00DFBBD0, never written at runtime), via
+  CamPose_ClearEntryPose (0x004665b0) — the initial "canonical live pose global" reading was wrong
+  (misled by a meaningless stack-address value snapshot). LESSONS: never trust value snapshots of
+  stack addresses outside the owning call; same-EIP aggregates hide multiple callers
+  (Matrix_Copy3x4's 131 call sites all watch as one EIP).
+- **E2b steps 4-5** — split the fill from the clear (watch entry+0x58, untouched by the clear's 0x40
+  copy): the LIVE pose comes from **g_CameraTable (0x014A2EE0)** via another Matrix_Copy3x4; fov
+  fills from static 0x00B9B688 (0x00466615); the culling/fov readers (0x0048067E) read the same
+  table. Then watching the table: filled by `CameraTable_FillFromPose` (FUN_0070ae50) from the
+  camera entity's quat+pos (CameraEntity_GetPoseRecord 0x0042ee50 → D3DX quat→rotation),
+  ~1.7/frame. Chain closed.
 
-- **If YES**: the VM's camera derivation consumes the staged pose, and a single upstream injection
-  would steer the draw camera AND culling AND LOD together. The S4-4 GPU/record machinery reduces to
-  per-eye projection-only differences (per-eye still needs a per-pass rewrite somewhere — the
-  staged/entry data is once-per-frame, not per-pass — but the per-upload decompose/rebuild disappears:
-  eye cameras = ViewEntry pose + per-eye XR projection).
-- **If NO**: the staged block is an output channel only (VM recomputes pose from game state); upstream
-  injection stays culling-only (S6 plan unchanged) and the draw camera keeps the I1 record-level path.
-  Either way the S6 culling plan is unaffected.
+## Retired premises (do not re-litigate)
 
-This is the experiment that the old "producer side cannot work" verdict prematurely closed. Direction
-evidence so far: the copy-back (staged→entry) proves the VM WRITES the staged block; whether it also
-READS it as input to the draw camera is unknown — E2 answers it.
-
-### I3 — Camera source simplification (ViewEntry-direct, no VP decomposition)
-
-Today `vp_camera` decomposes VP rows per upload to recover the game camera (basis R/U/F, pos C) —
-needed because the camera was believed unreachable in plaintext. It now is: the main view's
-`ViewEntry` carries live `pos7c4`/`quat7d4`/fov (plaintext, watch-proven). Proposed:
-
-- Read the game camera once per frame from the matched ViewEntry (matching = S6 plan D1: compare the
-  entry's slot-matrix basis against the decomposed VP basis once, for identification only).
-- Build the HMD eye cameras directly from pose + XR angles (`apply_hmd_eye` math unchanged).
-- Keep `view_row_rewrite=hmd_identity` as a regression oracle, and keep a one-shot-per-window
-  decompose as a consistency check (residual logging), not as the primary source.
-
-This removes the decompFail/split-upload fragility class entirely and shrinks the per-upload hook to a
-no-op observer.
-
-### I4 — What stays hard (unchanged expectations)
-
-- VM-derived material constants that do NOT read the record at upload time: `matViewMat` (device slot
-  109), PS `cameraPos` (c92 in material PSes), blob-shadow/water texgen matrices. If these are
-  pre-derived once per frame (before the passes), I1 does not fix them; they need either their own
-  upload-time rewrites (extend the existing scratch-rewrite technique to those constants) or acceptance
-  as mono. E3 (below) classifies them cheaply.
-
-## Experiments (run before implementation, all with existing tooling)
-
-| # | Question | Method | Cost |
-|---|---|---|---|
-| E1 | Does the VM rewrite the render-context record per frame or per pass? When is it stable? | Prep DONE (2026-10-06): the upload-gate MidHook logs each distinct record VA + index + pass; run 1 = one gameplay run reading that log (picks the main-pass record VA), run 2 = `debug_watch=addr:<main record VP row>` (full mode); read the accessor EIPs/cadence | two runs, no new code |
-
-E1 RESULT (2026-10-06, COMPLETE — run 3, debug_watch write-mode on idx-6/idx-12 row0, both bases):
-**The premise "records are filled by the VM'd producer, no plaintext writer" is DISPROVEN.**
-The record VP rows are written by PLAINTEXT code in the SecuROM-mutated .text block
-~0x004671xx–0x004674xx (undefined function; the 2026-10-03 static hunt missed it because the
-region has no defined function/decompilation — reachable only via mutated control flow):
-- `0x0046718c` = `Matrix_Copy3x4(EAX=record, ECX=0x017D04E0)` — record addr computed as
-  `0x018c45e0 + (bufIdx*32 + viewIdx)*0x70` (bufIdx from `0x00ff364c`). Fills the idx-6 record.
-- `0x004673bf` = inline `fstp [eax]` — same event, fills the idx-12 record.
-- Cadence: both double-buffer bases written back-to-back per event, ~1.0–1.7 events/frame at
-  34 fps — **once per frame, NOT per submit** (frame_replay's second submit re-reads unchanged
-  records; consistent with S2c's proven state-safety).
-- Window value snapshots: all four watched row0 dwords identical — **idx 6 and idx 12 carry the
-  SAME VP row0** (same camera; two same-camera views, e.g. world opaque + a second layer).
-
-Consequences for the plan:
-- **I1 is safe as designed**: nothing rewrites the record between pass 1 and pass 2; a
-  pass-boundary rewrite lands after the once-per-frame fill and stays for both submits.
-- **I1's rewrite targets are idx 6 AND idx 12** (both bases refresh together, so rewriting the
-  current base suffices; the RT-size gate maps onto record-index gating as planned).
-- **New, better option opened (E1b)**: the fill copies from a plaintext scratch source
-  (`0x017D04E0`). Finding ITS writer tells us where camera VALUES enter this chain — if that
-  is also plaintext (or the staged round-trip), a single upstream injection could feed the
-  records, culling AND the draw camera at once (supersedes/simplifies I2+E2).
-- The GPU/record path stays the proven channel until E1b/E2 say otherwise.
-
-E1b RESULT (2026-10-06, COMPLETE — debug_watch=addr:0x017D04E0, write mode): the fill source
-scratch is written by **`Matrix_Copy3x4` again** (`0x00859562`), from a STACK-LOCAL matrix, inside
-**`ViewContext_BuildCameraConstants` (`0x008591ac`)** — THE plaintext draw-camera VP builder:
-- Called ONLY from the VM via the no-xref thunk `VMThunk_ViewContext_BuildCameraConstants`
-  (`0x00506a26`): **the VM orchestrates, plaintext does the math.**
-- Reads the CAMERA OBJECT (`*(ctx+0x28)`, self-indexed `obj[obj[0]*0x1c + 0x14/15/16/1d]` =
-  near/far/fov) + view matrix; builds the projection in plaintext (fov tan table, aspect from
-  g_RenderShell); `D3DXMatrixMultiply(view@ctx+0xaa0, proj@ctx+0xb20)` = VP; copies it to the
-  scratch.
-- Scratch write cadence ~4.4/frame (per active view) vs record fill ~1.0–1.7/frame.
-
-**The full draw-camera chain is now mapped end-to-end, all plaintext after the VM's orchestration
-thunk:** camera object → VP build (0x008591ac) → scratch 0x017D04E0 → record fill (0x0046718c /
-0x004673bf, both bases) → GPU upload gate (0x00855a78). Camera VALUES enter at the camera object
-(ctx+0x28) — whose writer is the remaining unknown, and the I2/E2 injection candidate.
-
-E2 is now strongly motivated: if the matched ViewEntry's pose round-trip (or this camera object)
-carries the game camera, one upstream injection steers records + PS view consts + culling together.
-
-E1 progress notes (runs 1–2): record census — gameplay's world-scale records are **idx 6 and
-idx 12** (60–87k main-RT uploads/10s each, both double-buffer bases in parity — the base flips
-per frame; all other records ≥10x smaller). Offscreen (shadow atlas 1024x4096): idx 7/8 (+9/10
-transient). Idx 5 is an exactly-once-per-submit main+offscreen pair; idx 4/13/11 minor. Run 1 vs
-run 2 censuses agree — idx assignment stable across sessions. Walk counts cannot discriminate
-views (all 24 walked uniformly every frame), upload dominance can.
-| E2 | Does upstream ViewEntry pose injection steer the draw camera? | Temporary `cull_probe`-style carrier feature: write big yaw + serial bump into the matched view's pose each frame; observe the rendered view (unmistakable), then revert | one run + code |
-| E3 | Which PS camera constants are record-derived at upload time vs pre-derived? | After I1 (or with a debug flag that perturbs only record+0x40): watch water reflections/blob shadows per eye — visible check; or `debug_watch=addr:` on the candidate derived-constant staging | one run |
-
-## Rollout order
-
-1. E1 → record base + index RESOLVED (see I1); remaining: run the two-watch gameplay runs
-   for VM write timing (pure RE, no further code).
-2. I1 record-level per-eye rewrite behind `view_record_rewrite=on` (keep the upload-level path as
-   default/fallback; A/B via `hmd_identity`-style verification: shadows glued at each eye, monitor
-   image sane, PS reflections per-eye where E3 said record-derived).
-3. E2 (upstream) → decide I2; if positive, fold into the S6 culling injection (single point).
-4. I3 cleanup once I1 is proven (decompose becomes the checker, not the source).
-5. Update `stereo_design.md` §S4-4 + `frustrum_cull_plan.md` with results; retire the contradicted
-   "producer side cannot work" claim (already re-worded in `view_and_camera.md`).
-
-## Doc reconciliation done alongside this plan
-
-- `view_and_camera.md` § "Where the draw camera lives" — the "consumer never reads view camera data"
-  and "producer-side duplication cannot work" absolutes are re-worded to point at the round-trip
-  evidence and this plan's E2.
+- "The `viewContextData` VP rows are produced by the VM'd code" — disproven (E1).
+- "The producer side cannot work / ViewEntry injection steers anything" — the ViewEntry path
+  specifically is dead (E2), but the producer side WORKS at `g_CameraTable` (E2b); the M3-era
+  negative was an address error, not a category error.
+- `frustrum_cull_plan.md` D1/D2 (ViewEntry injection) — superseded by the table injection; the
+  plan doc carries the resolution note.

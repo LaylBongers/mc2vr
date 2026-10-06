@@ -10,6 +10,8 @@
 #include "hooks.hpp"
 #include "ipc.hpp"
 #include "log.hpp"
+
+#include "debug/inject_probe.hpp"
 #include "debug/probes.hpp"
 #include "debug/render_dump.hpp"
 #include "debug/stream_capture.hpp"
@@ -242,6 +244,30 @@ static void load_conf()
             uint32_t n;
             if (parse_count(key, value, &n)) {
                 watch::set_detail_hits(n);
+            }
+        } else if (strcmp(key, "debug_entry_inject") == 0) {
+            // ViewEntry entry-injection probe (E2 verdict: NEGATIVE — the entry
+            // pos/quat are output channels of the round-trip; kept for re-tests;
+            // docs/stereo_improvements_plan.md; needs view_row_rewrite=hmd|
+            // hmd_identity AND the HMD tracked).
+            if (!injectprobe::set_entry_inject_enabled(value)) {
+                MC2VR_LOG("conf: debug_entry_inject=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_entry_inject_offset") == 0) {
+            double d;
+            if (parse_double(key, value, &d)) {
+                injectprobe::set_entry_inject_offset((float)d);
+            }
+        } else if (strcmp(key, "debug_entry_inject_hz") == 0) {
+            double d;
+            if (parse_double(key, value, &d)) {
+                injectprobe::set_entry_inject_hz((float)d);
+            }
+        } else if (strcmp(key, "debug_cambuilder_dump") == 0) {
+            // Draw-camera VP builder entry dump (E2b) — camera-object address/
+            // layout discovery (docs/stereo_improvements_plan.md).
+            if (!injectprobe::set_cambuilder_enabled(value)) {
+                MC2VR_LOG("conf: debug_cambuilder_dump=%s not recognized (use on|off)", value);
             }
         } else {
             MC2VR_LOG("conf: unknown key '%s' ignored", key);

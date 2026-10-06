@@ -19,7 +19,21 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
   boundary (or the record itself, I1 there) remains the proven draw-camera channel; the ViewEntry
   upstream path is proven for CULLING inputs only (docs/frustrum_cull_plan.md).
 - **There is NO fixed-function projection** — `SetTransform` is never called. The projection is folded into
-  the `viewContextData` VP rows.
+  the `viewContextData` VP rows. **E2 verdict (2026-10-06, live-proven): the ViewEntry pose fields are NOT a
+  draw-camera input.** Injecting pos (+ serial bump, every frame, into ALL 16 camera-adjacent views — the
+  pos carriers are idx 19-34, idx 20-23 at posd 3-7 with live quats and zero slot0) never moved the
+  decomposed draw camera (regression SLOPE 0.00 across static windows) — the round-trip copy-back
+  re-asserts the VM's pose within one frame (refreshes≈injects): the entry pos7c4/quat7d4 are OUTPUT
+  channels of the staged round-trip. The draw camera's input is the camera object read by
+  `ViewContext_BuildCameraConstants` (`0x008591ac`, ctx+0x28 — E1b; render_path.md § Draw-camera
+  constant chain). Writing ViewEntry under the write+bump protocol is therefore ineffective for the
+  draw camera, and doubtful for culling (the revert applies before the derive can consume the values).
+  The camera object is the remaining injection candidate (E2b, stereo_improvements_plan.md).
+  **E2b RESOLVED (2026-10-06, complete)**: the draw camera + culling input is `g_CameraTable`
+  (`0x014A2EE0`) — static, live, plaintext-filled ~1.7/frame by `CameraTable_FillFromPose`
+  (`0x0070ae50`, camera-entity quat+pos via D3DX) and read by both the VP builder path and the
+  culling/fov consumers (`0x0048067E`). The injection hook goes right after the fill call
+  (~0x0070AEF3) — full chain in `render_path.md` § Draw-camera constant chain.
 - **Source of `viewContextData`**: the per-view render-context record (`g_ViewContextTable` `0x01169774`,
   0x70 stride, indexed by `prim+0x49`): +0x00 viewContextData, +0x40 PS view consts, +0x60 atmosphereData*,
   +0x64 globalLightData*. **Record fill is PLAINTEXT (E1/E1b watch-proven 2026-10-06; corrects the earlier
@@ -132,7 +146,12 @@ views are t3=01 ones like idx14). Findings:
 - **No per-frame ViewEntry pose refresh observed**: pos/quat stayed byte-identical for 20+ s (through two
   window snapshots) even while the view was still being staged every walk. The doc's RefreshViewPoses claim
   ("fills pos/quat per frame for every active view") is NOT what happens for this view — fields appear to be
-  written once at activation. Open: does the t3=01 main view (idx14) get refreshed per frame? (watch it).
+  written once at activation. ~~Open: does the t3=01 main view (idx14) get refreshed per frame? (watch it).~~
+  RESOLVED (E2, 2026-10-06): the camera pos carriers are the idx 19-34 family (20-23 at 3-7 units from the
+  decomposed camera, live quats); they ARE refreshed — by the round-trip copy-back on camera CHANGE
+  (change-gated, not per-frame), and every external write (injection + serial bump) is reverted within one
+  frame: the fields are OUTPUT channels. The live input the draw camera and culling actually consume is
+  g_CameraTable (0x014A2EE0) — see the E2/E2b verdicts and `render_path.md` § Draw-camera constant chain.
 - **The VM consumer reads camera data from the STAGED copies, not ViewEntry** (zero VM hits on the entry
   fields). Consequence for the culling work: the direct consumer probe is the staged 0x30 block
   (ctx+0xc2110+idx*0x30; {pos3, serial@+0xc, quat@+0x10}) — carrier targets `stagingpos/stagingquat/

@@ -240,13 +240,16 @@ of that id, so the compositor reprojects from what the image actually contains.
 
 Open: unit scale (`view_world_scale`, unverified), engine culling against the game
 frustum, non-`viewContextData` shaders / PS camera data (rotation exposes these), split VP uploads
-(counted: `view/hmd: split=`), handedness/sign validation live. **Draw-camera RE updated 2026-10-06
-(E1/E1b, complete — see `stereo_improvements_plan.md`)**: the `viewContextData` records are
-PLAINTEXT-filled once per frame (full chain in `docs/reverse_engineering/render_path.md` § Draw-camera
-constant chain); the per-upload scratch rewrite is now known to be replaceable by a record-level
-per-eye rewrite (I1) and possibly by one upstream injection (I2/E2, pending). The culling-input
-RE is complete (`docs/reverse_engineering/view_and_camera.md` § camera-data accessors); its
-injection design is `frustrum_cull_plan.md`.
+(counted: `view/hmd: split=`), handedness/sign validation live. **Draw-camera RE COMPLETE
+(2026-10-06, experiments E1/E1b/E2/E2b — verdicts and the decided architecture in
+`stereo_improvements_plan.md`)**: the `viewContextData` records are PLAINTEXT-filled once per
+frame (full chain in `docs/reverse_engineering/render_path.md` § Draw-camera constant chain);
+upstream ViewEntry injection is disproven (output-only channel), and the SINGLE upstream
+injection point is `g_CameraTable` (0x014A2EE0) — hook after `CameraTable_FillFromPose`
+(0x0070ae50)'s fill, rewrite rotation+position with the HMD-union pose: steers draw camera
+(union) + culling + LOD together, and supersedes `frustrum_cull_plan.md`'s original D1/D2
+design. Per-eye stays at the record level (I1, shrunk to the per-eye delta). Implementation is
+the remaining work.
 
 ### S4-5 — Session events, pacing, HUD (COMPLETE, live-verified 2026-10-06)
 

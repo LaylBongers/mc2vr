@@ -90,7 +90,19 @@ orchestration thunk** (plates on the named symbols in Ghidra; interpretation in
 `view_and_camera.md` § Where the draw camera lives; plan context in `../stereo_improvements_plan.md`):
 
 ```
-VM'd packet interpreter (orchestrates only)
+camera entity pose (quat + pos, heap record; values originate in game logic/VM)
+  -> CameraTable_FillFromPose (0x0070ae50, plaintext; called from FUN_0070f430's loop):
+       CameraEntity_GetPoseRecord (0x0042ee50) -> D3DXQuaternionNormalize
+       -> D3DXMatrixRotationQuaternion -> position + w=1.0
+       -> Matrix_Copy3x4 -> g_CameraTable entry (0x014A2EE0, STATIC, ~1.7 fills/frame)
+       [g_CameraTable = the SINGLE injection point: also read by the culling/fov
+        consumers (0x0048067E family, global frame-ctx 0x017cf980); hook after the fill
+        call ~0x0070AEF3 to rewrite rotation+position with the HMD pose — E2b]
+  -> per builder call: CamPose_ClearEntryPose (0x004665b0) clears the stack entry's pose
+     from g_CameraPoseClearBlock (0x00DFBBD0, static zero template), then a Matrix_Copy3x4
+     copies the live pose from g_CameraTable -> stack entry, then CamPose_FillEntryFov
+     (0x00466615) fills fov from static 0x00B9B688
+  -> VM'd packet interpreter (orchestrates only)
   -> VMThunk_ViewContext_BuildCameraConstants (0x00506a26, no static xref = VM-called)
   -> ViewContext_BuildCameraConstants (0x008591ac):
        camera object = *(ctx+0x28)          (null -> identity defaults)
@@ -145,12 +157,14 @@ VM'd packet interpreter (orchestrates only)
   impossible; see docs/stereo_design.md §S4-5).
 - `g_RenderQueue2` (`0x00ff3650`) consumer — **narrowed (S0)**: its pointers sit inside the same 0x680 frame-ctx block handed per element; the VM interpreter at `0x0050f660` (call site `0x004c99f9`) is the prime suspect for consuming BOTH queues.
 - View/portal table walk — **RESOLVED (S0)**: intrusive linked list; `DAT_00d29e60` = head INDEX (M3 "registered-view count" label wrong; also stored to frame-ctx `+0xd2a10`), link `ViewEntry+0x4`, negative terminates. Per-view element format, camera staging sites, and the 768-element staging cap are on the `SubmitWorldPackets` plate comment.
-- **Camera-object pose writer (E2)** — the draw-camera chain (see the E1/E1b section above) reads
-  camera VALUES from the camera object at `ctx+0x28` inside `ViewContext_BuildCameraConstants`
-  (`0x008591ac`); who writes that object's pose, and whether the ViewEntry round-trip reaches it,
-  is unknown — the decisive E2 probe (ViewEntry write + serial bump, observe the draw camera) is
-  designed in `../stereo_improvements_plan.md`. A positive answer gives one injection point steering
-  draw camera + records + PS view consts + culling + LOD together.
+- **Camera-object pose writer — RESOLVED (E2b complete, 2026-10-06)**: the draw-camera chain
+  (see the E1/E1b section above) is mapped end-to-end. Camera VALUES originate in the camera
+  entity's quat+pos (heap record, game logic / VM-side), flow through PLAINTEXT
+  `CameraTable_FillFromPose` (0x0070ae50, D3DX quat→rotation) into the STATIC `g_CameraTable`
+  (0x014A2EE0), which feeds the VP builder AND the culling/fov consumers. The single injection
+  point is g_CameraTable post-fill (hook after the fill call ~0x0070AEF3); the E2-disproven
+  ViewEntry entry-injection protocol is retired. Verdicts + implementation notes:
+  `../stereo_improvements_plan.md`.
 - `GameState3_Update` / `GameState2_Frontend_Update` internals — named by position, semantics unexplored.
 - `0x0117527c` adapter remap table / multi-adapter handling in `RenderSystem_Init` — not explored (single-GPU assumption).
 - `vt[4]`/`vt[5]`: ~~confirm anything actually CALLS them~~ **RESOLVED (M3)**: both slots called exactly once per frame by `GameShell_FrameTick` (claimable, mechanism proven via cloned vtable; survived alt-tabs/cutscene/mission load).

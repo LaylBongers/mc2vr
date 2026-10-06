@@ -199,6 +199,52 @@
 #define MC2_VIEWCONTEXT_RECORDS ((uintptr_t)0x20u)   // per buffer
 #define MC2_VIEWCONTEXT_BUFFERSZ ((uintptr_t)0xe00u) // 32 * 0x70
 
+// ViewContext_BuildCameraConstants (E1b watch-proven 2026-10-06, plate there):
+// the plaintext draw-camera VP builder, called ONLY from the VM via thunk
+// 0x00506a26 (VMThunk_ViewContext_BuildCameraConstants). Entered with the
+// CALLER'S EBP live (mutated convention — `mov ebx,[ebp+8]` is the first arg
+// access, no prologue first): first arg = [ebp+8] = the view render-ctx
+// struct. [arg+0x28] = the CAMERA OBJECT: a self-indexed 0x70-stride array
+// base — active entry = base + *(u32*)base * 0x70; entry+0x50/0x54/0x58 =
+// near/far/fov floats, +0x74 another param (self-indexed dword access
+// obj[obj[0]*0x1c + 0x14/15/16/1d] in the decompiler). The view matrix is
+// read from the camera object via Matrix_Copy3x4 inside; the built VP lands
+// in scratch 0x017D04E0 -> the g_ViewContextTable records. E2b probe hooks
+// this plaintext entry (neighbor, allowed) to log/dump the camera object —
+// the remaining upstream injection candidate.
+#define MC2_VCCAMERA_BUILDER ((uintptr_t)0x008591acu)
+#define MC2_VCCAM_ARG_EBP_OFF ((uintptr_t)0x8u)      // arg = [ebp+8] at entry
+#define MC2_VCCAM_CTX_CAMARRAY_OFF ((uintptr_t)0x28u) // camera object slot
+#define MC2_VCCAM_ENTRY_STRIDE ((uintptr_t)0x70u)
+// Camera object entry layout (E2b run 1, 2026-10-06, live-dumped):
+//   +0x00 status dword (1.0 = populated slot, 0 = empty)
+//   +0x10..0x3c 3x3 rotation, three 4-strided rows (right, up, fwd;
+//                gameplay main camera: F=(0,-0.137,0.991) — matches the
+//                decomposed VP camera exactly)
+//   +0x40 position (x,y,z) + w=1.0
+//   +0x50 near, +0x54 far (2400), +0x58 fovCos (0.9597)
+//   +0x60.. LOD-ish params (0.1, 100, 300, 0.3)
+// The array base is a self-index (active idx = *(u32*)base). GAMEPLAY
+// instances are STACK-LOCAL (arr ~0x072e9xxx/0x072eadd0, ctx 0x072e9d20/
+// 0x072eafb0, built fresh per builder call in the VM's frames); the menu
+// used the STATIC global g_CameraTable (0x014a2ee0, ctx 0x017cf980 — the
+// same global frame-ctx seen in the E1b watch hits).
+#define MC2_VCCAM_ENTRY_ROT_OFF ((uintptr_t)0x10u)
+#define MC2_VCCAM_ENTRY_POS_OFF ((uintptr_t)0x40u)
+#define MC2_VCCAM_ENTRY_NEAR_OFF ((uintptr_t)0x50u)
+#define MC2_VCCAM_ENTRY_FAR_OFF ((uintptr_t)0x54u)
+#define MC2_VCCAM_ENTRY_FOVCOS_OFF ((uintptr_t)0x58u)
+
+// g_CameraPoseClearBlock (E2b step-3 CORRECTED 2026-10-06, plate there): a
+// STATIC zero template (never written at runtime) — NOT a live pose source
+// (the step-2 "canonical pose global" interpretation is retracted).
+// CamPose_ClearEntryPose (0x004665b0) copies it into the per-call camera
+// entries to clear their pose fields for refill (~6.5/frame). The 29 static
+// ref sites read it as the engine default pose. The LIVE fill of the camera
+// entries is the remaining unknown (E2b step 4).
+#define MC2_G_CAMERA_POSE_CLEAR ((uintptr_t)0x00dfbbd0u)
+#define MC2_CAMPOSE_CLEAR_ENTRY ((uintptr_t)0x004665b0u)
+
 // Probe (a) target: the OTHER per-frame counter (.data, bumped in
 // GameTimeAccumulate_Update). Deliberately not 0x011755bc — that one is what
 // the launcher polls; keep the probe off it so its evidence stays clean.

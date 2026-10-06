@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "game_addresses.h"
+#include "inject_probe.hpp"
 #include "eye_replay.hpp"
 #include "hooks.hpp"
 #include "ipc.hpp"
@@ -150,6 +151,10 @@ void view_midhook(safetyhook::Context &ctx)
     // object (callee-saved from function entry — plate), needed for the
     // staged-block targets.
     watch::on_view(idx, type, entry, (uintptr_t)ctx.ebx);
+
+    // E2 probe (docs/stereo_improvements_plan.md): inject into matched views
+    // BEFORE the staging copies entry->staged (no-op when disabled).
+    injectprobe::on_view(idx, type, entry);
 
     // Per-frame bookkeeping keyed on the FrameTick counter.
     const uint64_t frame = hooks::frame_count();
@@ -310,6 +315,7 @@ void report_window()
     s2c::report_window();
     eye::report_window();
     watch::report_window();
+    injectprobe::report_window();
 }
 
 
@@ -397,6 +403,9 @@ void install_early()
     // View rewrite: upload-gate MidHook (the device-level tap is installed
     // with the device VmtHook, device.cpp).
     view::install();
+
+    // E2b: builder-entry MidHook (no-op unless debug_cambuilder_dump=on).
+    injectprobe::install();
 
     // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();

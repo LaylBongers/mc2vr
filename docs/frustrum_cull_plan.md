@@ -8,6 +8,29 @@ Status: **RE COMPLETE (2026-10-06)** — every producer/consumer of the culling 
 live (hardware-watchpoint evidence; `docs/reverse_engineering/view_and_camera.md` § Camera-data accessors,
 per-address facts in the Ghidra plates). **Design drafted below — not yet implemented.**
 
+**⚠ CAUTION (E2, 2026-10-06 — the D2 injection premise is shaken):** the E2 probe proved that writing
+ViewEntry `pos7c4` + serial bump (the exact D2 protocol, into all 16 camera-adjacent views) is REVERTED
+by the round-trip copy-back within one frame (refreshes≈injects), and never reached the draw camera
+(regression SLOPE 0.00; full result in `stereo_improvements_plan.md` E2 RESULT). The same revert applies
+before `ViewEntry_DeriveCullTask` can consume injected values — so D2's "write the culling inputs,
+bump the serials" may be ineffective end-to-end. The design must either (a) be live-verified with a
+cull-specific probe before implementation, or (b) be re-grounded on the CAMERA OBJECT (the E1b chain:
+the draw camera reads ctx+0x28 in `ViewContext_BuildCameraConstants 0x008591ac`; MatrixFromGlobalCam
+reads the same object — one injection point for culling + draw camera, E2b).
+
+**✅ RESOLVED (E2b complete, 2026-10-06 — supersedes D1/D2):** the single injection point is
+`g_CameraTable` (`0x014A2EE0`) — a STATIC, runtime-LIVE global camera table, plaintext-filled
+~1.7/frame by `CameraTable_FillFromPose` (`0x0070ae50`: camera entity quat+pos via D3DX → rotation +
+position), and read by BOTH the draw-camera builder path AND the culling/fov consumers
+(`0x0048067E` family). **Design: MidHook right after the fill's Matrix_Copy3x4 call (~0x0070AEF3),
+rewrite the entry's rotation (+0x10..0x3c) + position (+0x40..0x4c) with the HMD-UNION pose**
+(mid-point between eyes — exactly what the widened culling frustum wants; optionally also widen the
+fov fields). Per-eye is not this point's job (once-per-frame union; per-eye stays at the I1 record
+level). Full chain: `render_path.md` § Draw-camera constant chain; implementation notes in
+`stereo_improvements_plan.md` E2b conclusion. D1's view-matching and D3's derive-ordering question
+become moot for the injection itself (the fill hook is inherently ordered); D4's "inject only into
+matched views" maps to "rewrite only the entry/entries just filled by the hooked call".
+
 ## What the RE proved (evidence summary)
 
 The culling data flow, all sites watch-proven on live gameplay:

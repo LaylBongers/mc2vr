@@ -15,6 +15,8 @@
 
 #include <cstdint>
 
+#include "vp_camera.hpp"
+
 namespace mc2vr::view {
 
 // Install the upload-gate MidHook. Failure is non-fatal (rewrite stays idle).
@@ -65,6 +67,14 @@ void set_view_world_scale(float units_per_metre);
 // is not rendered from an HMD pose. Constant across both passes of a frame;
 // eye_share forwards it in FRAME_READY.
 uint32_t current_pose_id();
+
+// The RAW (pre-rewrite) game camera decomposed from the most recent
+// viewContextData/ViewProj upload (hmd/hmd_identity modes only, main pass
+// only). Matching input for the injection-probe tooling
+// (src/carrier/debug/inject_probe.cpp) and the I1 implementation's
+// consistency oracle: compares ViewEntry/camera-table state against the
+// decomposed upload camera. Valid for ~1s after the last main-pass upload.
+bool get_game_camera(vpcam::Camera *out);
 
 // S2c-2 per-pass eye override (eye_replay.cpp): when nonzero (pass 1 = -1,
 // pass 2 = +1) it replaces the view_stereo_hold A/B sign for the current

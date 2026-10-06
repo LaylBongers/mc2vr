@@ -324,6 +324,11 @@ float g_world_scale = 1.0f;  // game world units per metre (UNVERIFIED default)
 Vec3 g_pw;
 bool g_pw_valid = false;
 
+// E2 probe input: the RAW (pre-rewrite) game camera from the latest
+// main-pass upload (see get_game_camera in the header).
+vpcam::Camera g_game_cam;
+uint64_t g_game_cam_ms = 0;
+
 uint64_t g_hmd_blocks = 0, g_hmd_split = 0, g_hmd_decomp_fail = 0, g_hmd_cam_only = 0;
 float g_hmd_resid_max = 0.0f;  // max |rebuilt - raw| over the window (identity self-check)
 uint32_t g_hmd_split_logged = 0, g_hmd_fail_logged = 0;
@@ -403,6 +408,10 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         }
         return data;
     }
+    // E2 probe: publish the RAW game camera (pre-rewrite; this site is only
+    // reached on main-pass uploads).
+    g_game_cam = game;
+    g_game_cam_ms = GetTickCount64();
     if (identity) {
         cam = game;
         g_hmd_resid_max = std::fmax(g_hmd_resid_max, vpcam::rebuild_residual(raw, game));
@@ -670,6 +679,15 @@ void set_view_world_scale(float units_per_metre)
 uint32_t current_pose_id()
 {
     return g_hmd.valid && g_mode == RewriteMode::Hmd ? g_hmd.id : 0;
+}
+
+bool get_game_camera(vpcam::Camera *out)
+{
+    if (g_game_cam_ms == 0 || GetTickCount64() - g_game_cam_ms > 1000) {
+        return false;
+    }
+    *out = g_game_cam;
+    return true;
 }
 
 void set_pass_eye(int sign)
