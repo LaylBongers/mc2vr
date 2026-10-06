@@ -29,21 +29,35 @@
 //
 // Conf keys (mc2vr.conf; all default off):
 //   debug_watch=quat+pos+fov+slot0   '+'-separated, max 4. Named ViewEntry
-//       fields of the chosen view (first type-2 active view unless
-//       debug_watch_view pins an index), or raw addresses "addr:0x01ABC" to
-//       watch any VA (e.g. a g_ViewContextTable record's VP rows once
-//       identified — the open camera-matrix writer hunt).
+//       fields of the chosen view, or STAGING targets (stagingpos
+//       stagingquat stagingserial — the VM consumer's staged camera block,
+//       the direct culling-consumer probe), or raw addresses "addr:0x01ABC"
+//       to watch any VA. View selection: among type-2 views whose companion
+//       liveness byte is 01 (the live-camera marker), the most-walked one
+//       after a 10s settle — loading templates (t3=00) and rarely-walked
+//       special views lose; debug_watch_view pins an index instead.
 //   debug_watch_mode=full|write      full = read+write (default), write = writes only.
-//   debug_watch_view=N               view index to watch (default: first type-2 seen).
+//   debug_watch_view=N               view index to watch (default: first live type-2).
 //   debug_watch_hits=N                per-unique-EIP detail lines (default 30);
 //       the 10s window report aggregates every unique EIP regardless.
 //
-// Caveats (deliberate, logged): arming waits for the first type-2 view
-// submission, so activation-time writes (ViewEntry_Activate) may happen
-// before arming — steady-state per-frame accesses are what the culling
-// question needs. Threads created after the one-time arm sweep are not
-// watched. Each window verifies the DRs still hold (detects SecuROM DRx
-// clobbering — documented inert for anti-debug, but DRx use was untested).
+// Live-run lessons (2026-10-06, load-into-gameplay crash, fixed):
+//   - Arming works under Wine (DR7 applied + verified on all 27 threads), BUT
+//     Wine delivers the resulting #DB WITHOUT Dr6 in the exception context
+//     (debug regs live server-side). The handler therefore decides ownership
+//     WITHOUT Dr6: EFlags.TF set = someone else's single-step (passed on);
+//     TF clear while armed = our data breakpoint (handled). Requiring Dr6
+//     passed the exception to the default handler = the crash.
+//   - Consequence: per-field attribution is unavailable under Wine (hits log
+//     field "?"); run a single target (debug_watch=quat) for exact attribution.
+//   - The first type-2 view is a loading template with dead camera fields;
+//     selection now waits for a live quaternion.
+//
+// Remaining caveats (deliberate, logged): arming waits for a view submission
+// (activation-time writes can predate it); threads created after the one-time
+// arm sweep are not watched; each window verifies the DRs still hold (detects
+// SecuROM DRx clobbering — documented inert for anti-debug, but DRx use was
+// untested).
 #pragma once
 
 #include <cstdint>
@@ -64,8 +78,10 @@ void set_view_index(uint32_t idx);
 void set_detail_hits(uint32_t n);
 
 // Per-view callback from render_dump's SubmitWorldPackets MidHook (main
-// thread): identifies the view entry whose fields get watched.
-void on_view(uint32_t idx, uint32_t type, const uint8_t *entry);
+// thread): identifies the view entry whose fields get watched. ebx_this =
+// the frame-ctx object (kept in EBX through the walk) — needed for the
+// staging-block targets (this+0xc2110+idx*0x30).
+void on_view(uint32_t idx, uint32_t type, const uint8_t *entry, uintptr_t ebx_this);
 
 // 250ms poller tick (render_dump poller thread): performs the one-time
 // suspend-sweep arm once a target view exists.

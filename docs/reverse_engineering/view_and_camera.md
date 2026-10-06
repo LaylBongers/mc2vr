@@ -89,27 +89,110 @@ row-major, clip_i = dot(VP_row_i, worldpos)
   menus/loading use a mainRT→backbuffer StretchRect. The tonemapped LDR finals are on the backbuffer at the
   end of each pass.
 
+## Camera-data accessors: live watch evidence (2026-10-06, debug_watch full sweep)
+
+Full-sweep hardware watch (DR0-3, read+write) on view idx23's quat/pos/fov/slot0 (chosen by the quat-liveness
+heuristic — later understood to be a TRANSIENT loading view that deactivates at gameplay start; the persistent
+views are t3=01 ones like idx14). Findings:
+
+- **Every observed accessor is plaintext `.text`** — 4 unique EIPs, ~416 hits each while the view was active,
+  zero VM-section accessors, zero writers after activation:
+  - `0x0048EC46` / `0x0048EC5E` (`RenderQueue_SubmitWorldPackets`, the 0x0048ec3e staging block):
+    `movss xmm0,[eax+0x01286DA4]` (pos.x) and `movd xmm3,[eax+0x01286DB4]` (quat.x), `eax = idx*0x810` —
+    the per-view staging copy into the frame-ctx block (`this+0xc2110+idx*0x30`), i.e. the plaintext writer of
+    the VM consumer's staged camera input, read once per walk (~1/frame).
+  - `0x0048A851` / `0x0048A87E` (`ViewEntry_PropagateMatrices`): `fld [esi+0x7c4]` ×2 — the companion-table
+    pos copies.
+- **No per-frame ViewEntry pose refresh observed**: pos/quat stayed byte-identical for 20+ s (through two
+  window snapshots) even while the view was still being staged every walk. The doc's RefreshViewPoses claim
+  ("fills pos/quat per frame for every active view") is NOT what happens for this view — fields appear to be
+  written once at activation. Open: does the t3=01 main view (idx14) get refreshed per frame? (watch it).
+- **The VM consumer reads camera data from the STAGED copies, not ViewEntry** (zero VM hits on the entry
+  fields). Consequence for the culling work: the direct consumer probe is the staged 0x30 block
+  (ctx+0xc2110+idx*0x30; {pos3, serial@+0xc, quat@+0x10}) — carrier targets `stagingpos/stagingquat/
+  stagingserial`. Expected writers: the plaintext staging code above (~1/frame, confirms timing); the
+  interesting hits are its READERS (VM sections = the culling consumer; plaintext = a new consumer to name).
+- **View-liveness marker confirmed**: companion byte `g_ViewTable3 + idx*0x20 + 0x18` (t3) is 00 for the 12
+  loading templates (shared obj ptr 0x1f758960) and 01 for the persistent live views (idx14: t3=01, obj
+  0x1fe28c80, camera pos folded into its worldToView slot matrix). The watch now selects by t3=01 + walk
+  counts (most-walked after a 10s settle). View indices are NOT stable across runs (live view was idx11 in
+  one run, idx23 transient in another, idx14 persistent in a third) — pin only with the logged idx of that
+  run.
+- Wine watchpoint facts (see the open-items entry below for the arming/delivery lessons): DR0-3 arm + verify
+  works on 27 threads; Dr6 is NOT delivered with the trap (ownership via EFlags.TF; per-field attribution
+  needs single-target runs).
+
+- **`stagingquat` run (live view idx13, most-walked t3=1 selection)**: the staged camera block
+  (`ctx+0xc2110+idx*0x30+0x10`) has exactly TWO accessors, both plaintext, both firing ~once per 10s window:
+  - `0x0048EC95` (`RenderQueue_SubmitWorldPackets` staging block): `movq [ecx+0x10],xmm3` — the staged-quat
+    WRITE (inlined Pose_Copy semantics; the serial `max+1` logic sits right before it).
+  - `~0x00824A23` = **`Pose_Copy` (0x00824a10)** — the game's universal pose relay (EAX=dest, ECX=src, copies
+    {pos3, serial, quat4} with `serial = max(src,dest)+1`; 59 call sites) — reads the staged quat and copies
+    it onward. **The staged camera pose participates in the ordinary plaintext pose pipeline.**
+  - The ~1/10s cadence (not ~120/frame) confirms the chain is **serial-gated change-detection**, matching the
+    previous run's no-per-frame-refresh finding: camera pose data moves on CHANGE, not per frame.
+  - **Zero VM-section accessors anywhere in the watched pose chain (entry fields AND staged copies).** The
+    "culling consumer reads camera data inside the VM" hypothesis is DISPROVEN for pose data — the pipeline
+    is plaintext end-to-end so far. Next watch iteration logs live registers + stack ([ESP] return address,
+    EAX/ECX dest/src) per hit to identify Pose_Copy's caller at the staged slot and the copy destination.
+  - 24 t3-live views active per frame (idx13..18,20..23,0..12,24 — near-equal walk counts); selection picked
+    idx13 (first argmax tie). The watched slot's quat.x read 0 (identity x component — consistent).
+- **`fov` run (live view idx13)** — fovCos2ec was LIVE (0.957826) and the whole derive/cull pass was caught, all
+  plaintext, all change-gated (~1 hit/site/10s window, 5 sites):
+  - Writers, both in `ViewEntry_MatrixFromGlobalCam` (`0x0048A972` `movss [edi],xmm1`; `0x0048A9BC` `fstp [edi]`,
+    `edi = entry+0x2ec`) — the slot-derive pass via ViewManager_Update → PropagateMatrices.
+  - Readers: MatrixFromGlobalCam itself (`0x0048A97E`), math helpers `FUN_00401630` (called at `0x0048A9A6`)
+    and `FUN_00401750` (Vector_ScaleByScalar: `[eax] = fov * src[0]`), whose caller return `0x0087718b`
+    identified **`ViewEntry_DeriveCullTask` (`0x00876a90`, renamed 2026-10-06; plate there)** — a 5.8KB task
+    body that was UNDEFINED in Ghidra until this run (no static callers: dispatched via the task queue,
+    `TaskQueue_Dispatch 0x00876810` adjacent). Structure: sets the t3 liveness byte, iterates the view's
+    camera slots (switch on kindA4 0..4) with per-kind LOD distance-selection, D3DX transforms, fov-scaled
+    vectors and **bounding-box unions** (`FUN_0040b250/0x0040b4c0`), then a second pass over an array at
+    entry+0x62c (count = flags804>>4 & 0xF, stride 5 floats). **This is the per-view culling/LOD derive:
+    the culling volume is built HERE from the view's fov/slots/camera object — the primary HMD-alignment
+    target.** All its inputs (fovCos/fovSin, slot matrices, camera-object params) are plaintext-writable.
+- **`slot0` run (live view idx0 this run — indices are per-run allocations; t3 selection adapts)**: slot
+  matrices are also fully plaintext and change-gated, 3 sites: (1) writer = ViewEntry_MatrixFromGlobalCam at
+  `0x0048AC2B` via **`Matrix_Copy3x4` (`0x00836120`, renamed; `fld [ecx]; fstp [eax]` m32 copy)** with
+  dest=slot0, src = a computed matrix on the camera-object scratch; (2) reader = **`Matrix_MakeWorldToView`
+  (`0x004017d0`, renamed)** at `0x004017E1` — copies viewToWorld out, transposes + negates translation into
+  worldToView (23 call sites incl. box helpers `FUN_0040b6b0` and per-object D3DXMatrixMultiply paths — the
+  slot matrices feed general per-object view-transform math, not just culling); (3) a system-DLL memcpy
+  touching the entry (block copy, same cadence).
+- **Complete culling-input picture (S5 RE, 2026-10-06)**: upstream camera object (camData chain) →
+  MatrixFromGlobalCam writes slot matrices + fovCos/fovSin (plaintext, change-gated) → ViewEntry_DeriveCullTask
+  reads them and builds the culling bounds + per-slot LOD states. Pose reaches culling via the same change-gated
+  serial chain (Pose_Copy 0x00824a10; staged copies ctx+0xc2110+idx*0x30). ZERO VM involvement in any camera-
+  culling data path observed across quat/pos/fov/slot0/stagingquat watches. Injection design consequence: an
+  HMD-aligned culling frustum must be injected into this plaintext chain respecting the serial change-gating
+  (write the slot/fov/pose fields, then make the cull task re-run — e.g. by advancing the pose serials so the
+  gate opens), and the main draw view can be identified at runtime by matching the cull task's view slot
+  matrix against the decomposed draw-camera VP basis (the S4-4 vp_camera decomposer already computes it).
+  - `stagingquat` rerun (register capture, live view idx13) - the last unknown closed: Pose_Copy's caller at
+    the staged slot is the producer walk's MUTATED TAIL (call at 0x0048F72D, undefined split-block region past
+    the walk loop; an inlined fld/fstp + `add [esi+0xc],eax` serial-bump variant right above) with SRC = staged
+    slot, DEST = ViewEntry+0x7c4 - the staged camera pose is copied BACK into the entry, serial+1. The staging
+    is a ROUND-TRIP: new pose VALUES originate in the VM'd consumer (post-walk deref of the staged block) and
+    reach the plaintext ViewEntry only through this copy-back - there is no plaintext writer of camera-pose
+    values; the plaintext chain only relays (explains the long-negative writer hunt of 2026-10-03). flags808
+    bit1 is tested right after (0x0048F732). Injection implication now precise: write the entry's
+    pose/slot/fov fields directly and bump the serials - the relay pipeline (staging round-trip + Pose_Copy
+    chain + DeriveCullTask) propagates on change; no VM fight needed.
+
 ## Open RE items
 
 - What the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk, see its Ghidra plate);
   why `ViewManager_Update` never fired in the traced run.
-- **Camera-matrix writer hunt (2026-10-03): NEGATIVE so far.** None of the 405 runtime-native thunk-target
-  functions references `g_ViewContextTable` (`0x01169774`) or the `ViewEntry` table (`0x012865e0`); the
-  view/camera code (`ViewEntry_Activate`, `FUN_0048a3b0`, `FUN_00489e50`, `FUN_004d2a50`) still calls thunks
-  that stay VM at runtime; the three native `FramePipeline` callees (`0x0057de60`, `0x0059de70`,
-  `0x00624f70`) are handle-table helpers. Writes to `g_ViewContextTable` +0x10..+0x48 from the function-less
-  `0x8564xx..0x856dxx` blocks are state-cache flags, not VP rows. `FUN_024fe0d0` (`.securom`, readable in
-  Ghidra) maintains the active-view list, not matrices. Static xrefs cannot find pointer-based matrix writes;
-  **the hardware-write watch is now implemented** (2026-10-06): carrier `debug_watch=<targets>` arms DR0-3
-  via suspend+SetThreadContext on every process thread and logs every accessor's EIP (region-classified:
-  plaintext `.text` vs VM sections vs carrier-self) through a vectored exception handler — read mode `full`
-  catches readers as well as writers, so the same run answers BOTH "is the camera-field writer VM or
-  plaintext?" and "who reads the camera fields (is the culling consumer VM or plaintext?)". Targets: named
-  ViewEntry fields (`quat pos posprev serial fov fovsin near slot0 slot0v slotdir dir670 camdata flags808`)
-  of the first type-2 active view (`debug_watch_view=N` to pin), or raw VAs (`addr:0x…`, e.g. a
-  `g_ViewContextTable` record's VP rows for the writer hunt). Default watch view = first type-2 seen; arming
-  waits for the first view submission (activation-time writes can predate it). LIVE RUN PENDING — first
-  run: `debug_watch=quat+pos+fov+slot0`, `debug_watch_mode=full`.
+- **Camera-matrix writer hunt (2026-10-03): RESOLVED (2026-10-06, see the camera-data accessors section
+  above).** The static hunt was negative because there IS no plaintext writer of camera-pose VALUES: new values
+  originate in the VM'd packet consumer (post-walk deref of the staged block ctx+0xc2110+idx*0x30) and reach
+  the plaintext ViewEntry only via the walk-tail copy-back (0x0048F72D, Pose_Copy semantics, serial+1). Slot
+  matrices + fov are derived in plaintext (ViewEntry_MatrixFromGlobalCam) from the camera object; the culling
+  volume is built by the plaintext task ViewEntry_DeriveCullTask (0x00876a90). The g_ViewContextTable VP rows
+  themselves remain VM-produced (GPU-boundary rewrite stays the draw-camera channel). The
+  debug-register-watch tooling (carrier `debug_watch`) is the proven probe for further questions of this
+  kind; watchpoint lessons (Wine Dr6 absence, CONTEXT flags, arming order) are recorded in the accessors
+  section and in src/carrier/debug/watch.hpp.
 - `g_RenderQueue2` consumption timing relative to Present (HUD handling needs the 2D stream's frame timing).
   RESOLVED (S4-5, 2026-10-06): consumed once per frame between SubmitToGPU entry and pass-1's BeginSubmit
   Present (frozen through both pass walks) — HUD drawn into both eyes; see render_path.md queue counter item

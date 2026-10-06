@@ -146,8 +146,10 @@ void view_midhook(safetyhook::Context &ctx)
     g_view_submits++;
 
     // S5 culling-watch: identify the view entry whose camera fields get
-    // hardware-watched (debug_watch; no-op when disabled).
-    watch::on_view(idx, type, entry);
+    // hardware-watched (debug_watch; no-op when disabled). EBX = the frame-ctx
+    // object (callee-saved from function entry — plate), needed for the
+    // staged-block targets.
+    watch::on_view(idx, type, entry, (uintptr_t)ctx.ebx);
 
     // Per-frame bookkeeping keyed on the FrameTick counter.
     const uint64_t frame = hooks::frame_count();

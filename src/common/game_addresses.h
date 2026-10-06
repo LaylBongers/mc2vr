@@ -46,6 +46,21 @@
 #define MC2_VIEW_STRIDE ((uintptr_t)0x810u)
 #define MC2_VIEW_OBJ_PTR_OFF ((uintptr_t)0x7e4u)
 #define MC2_VIEW_TABLE3 ((uintptr_t)0x014095e0u)
+// Companion-table liveness byte (Ghidra plate: flips 0->1 when the view's
+// camera data goes live; the 12 loading-template views stay 00, live world
+// views show 01 — live-verified 2026-10-06).
+#define MC2_VIEW_T3_LIVE ((uint32_t)1u)
+#define MC2_VIEW_TABLE3_STRIDE ((uintptr_t)0x20u)
+#define MC2_VIEW_T3_OFF ((uintptr_t)0x18u)
+// Camera staging block inside the frame-ctx object (RenderQueue_SubmitWorldPackets
+// plate): per active view, a 0x30-byte record staged at this+0xc2110+idx*0x30 —
+// {pos3, serial, rot16=quat @+0x10, lodByte@+0x20} — copied there by the PLAINTEXT
+// staging code (watch-proven: 0x0048EC46/0x0048EC5E) and consumed by the VM'd
+// packet interpreter post-walk. Watching it catches the culling consumer's reads.
+#define MC2_VIEW_STAGING_OFF ((uintptr_t)0xc2110u)
+#define MC2_VIEW_STAGING_STRIDE ((uintptr_t)0x30u)
+#define MC2_VIEW_STAGING_QUAT_OFF ((uintptr_t)0x10u)
+#define MC2_VIEW_STAGING_SERIAL_OFF ((uintptr_t)0xcu)
 // Active-view intrusive list head = INDEX into g_ViewTable (negative terminates;
 // link = ViewEntry+0x4). S0-corrected semantics; render_dump logs it per frame.
 #define MC2_ACTIVE_VIEW_LIST_HEAD ((uintptr_t)0x00d29e60u)
