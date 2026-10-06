@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "game_addresses.h"
 #include "log.hpp"
 
 namespace mc2vr {
@@ -36,10 +37,13 @@ const char *session_state_name(uint32_t s)
     }
 }
 
-// Low-rate monitor: logs session-state transitions + events from the host,
-// watches the host process, and logs one first-pose evidence line. Deliberately
-// NOT on the render thread — the render-thread consumer (S4-4) reads the
-// seqlock directly.
+// Low-rate monitor: logs session-state transitions (via the seqlock state,
+// which is what covers early boot before the slot-5 claim) + first-pose
+// evidence, and watches the host process. Deliberately NOT on the render
+// thread — the render-thread consumer (S4-4) reads the seqlock directly.
+// S4-5: the event-ring drain moved to ipc::drain_events() (slot-5
+// PostUpdateHook, main thread) — the ring is SPSC, so this thread must NEVER
+// pop events, or the two consumers would tear the ring.
 DWORD WINAPI monitor_thread(void *)
 {
     uint32_t lastState = ~0u;
@@ -62,25 +66,6 @@ DWORD WINAPI monitor_thread(void *)
                           st.eye[0].pos.x, st.eye[0].pos.y, st.eye[0].pos.z,
                           st.eye[0].fov.left, st.eye[0].fov.right,
                           st.eye[0].fov.up, st.eye[0].fov.down);
-            }
-        }
-
-        // Drain the event ring (events are rare; log each type once per run).
-        Mc2IpcMsg ev;
-        while (mc2_ring_pop(&g.blk->events, &ev) == 0) {
-            switch (ev.type) {
-            case MC2VR_MSG_SESSION_STATE:
-                // The seqlock state above is the same info, fresher.
-                break;
-            case MC2VR_MSG_EXIT:
-                MC2VR_LOG("ipc: host reports runtime exit request "
-                          "(handled in S4-5)");
-                break;
-            case MC2VR_MSG_RECENTER:
-                MC2VR_LOG("ipc: recenter (count %u)", ev.a);
-                break;
-            default:
-                MC2VR_LOG("ipc: unknown event %u ignored", ev.type);
             }
         }
 
@@ -166,6 +151,70 @@ bool pop_event(Mc2IpcMsg *out)
 {
     if (!connected()) return false;
     return mc2_ring_pop(&g.blk->events, out) == 0;
+}
+
+// ---- S4-5 session events (drained at the slot-5 PostUpdateHook) -------------
+
+void drain_events()
+{
+    if (!connected()) return;
+
+    static uint32_t logged_state = 0; // last state this drain logged (0 = none)
+    static bool exit_sent = false;   // one-shot WM_CLOSE guard
+
+    Mc2IpcMsg ev;
+    while (mc2_ring_pop(&g.blk->events, &ev) == 0) {
+        switch (ev.type) {
+        case MC2VR_MSG_SESSION_STATE:
+            // Log transitions once (events repeat the same state if the host
+            // re-pushes; the seqlock monitor may also log early-boot
+            // transitions — a rare duplicate line is fine).
+            if (ev.a != logged_state) {
+                logged_state = ev.a;
+                MC2VR_LOG("session: state -> %s (recenter=%u)",
+                          session_state_name(ev.a), ev.b);
+            }
+            break;
+        case MC2VR_MSG_RECENTER:
+            // Nothing to apply: the hmd camera consumes live HMD poses, so a
+            // reference-space change propagates at the next pass-1 pose
+            // sample by construction. Logged so recenter jumps are
+            // attributable in hindsight.
+            MC2VR_LOG("session: recenter #%u — camera follows the new "
+                      "reference space at the next pose sample", ev.a);
+            break;
+        case MC2VR_MSG_EXIT:
+            // Runtime wants the app to quit (instance loss / runtime-initiated
+            // session end). Clean shutdown = let the engine quit itself:
+            // WM_CLOSE to the game's root window. The engine's pump/WndProc
+            // quit path is VM-protected (PostQuitMessage/GetMessageA are only
+            // SecuROM-region references), so we can't invoke it directly —
+            // the message is the standard, engine-expected signal. One-shot:
+            // a second event must not stack another WM_CLOSE.
+            if (!exit_sent) {
+                exit_sent = true;
+                HWND hwnd = (HWND)*(volatile uintptr_t *)MC2_G_RENDER_HWND;
+                if (hwnd != nullptr) {
+                    HWND root = GetAncestor(hwnd, GA_ROOT);
+                    if (root != nullptr) hwnd = root;
+                }
+                if (hwnd != nullptr && PostMessageW(hwnd, WM_CLOSE, 0, 0) != 0) {
+                    MC2VR_LOG("session: runtime exit request (event payload %u) "
+                              "— posted WM_CLOSE to the game window %p; "
+                              "clean shutdown follows via the engine's pump",
+                              ev.a, hwnd);
+                } else {
+                    MC2VR_LOG("session: runtime exit request (event payload %u) "
+                              "— no postable game window yet (hwnd=%p), cannot "
+                              "quit cleanly",
+                              ev.a, hwnd);
+                }
+            }
+            break;
+        default:
+            MC2VR_LOG("session: unknown event %u ignored", ev.type);
+        }
+    }
 }
 
 void send_shutdown()

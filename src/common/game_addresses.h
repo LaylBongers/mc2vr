@@ -74,6 +74,14 @@
 #define MC2_LTIRENDERER_DX9STATE_OFF ((uintptr_t)0x5bcu)
 #define MC2_GETD3DDEVICE_THUNK ((uintptr_t)0x0047f2f0u)
 
+// RenderSystem's HWND (stored by RenderSystem_Init 0x0074c7a0: DAT_01175274 =
+// the window it was given; GetWindowThreadProcessId'd right after). Read at
+// MC2VR_MSG_EXIT time to post WM_CLOSE to the game's root window — the message
+// pump/WndProc quit path is VM-protected (PostQuitMessage/GetMessageA are only
+// referenced from the SecuROM region), so WM_CLOSE is the standard, engine-
+// expected clean-quit signal.
+#define MC2_G_RENDER_HWND ((uintptr_t)0x01175274u)
+
 // Direct3DCreate9 IAT thunk (6 bytes: JMP dword ptr [0x00b05620], the D3D9.DLL
 // import slot), plaintext .text, single caller: RenderSystem_Init
 // (0x0074c7a0, call at 0x0074c7e6, SDK version 0x20, result stored to g_D3D9

@@ -25,6 +25,19 @@ bool read_state(Mc2IpcState *out);
 // Pop one host event. False when none pending.
 bool pop_event(Mc2IpcMsg *out);
 
+// S4-5 session events: drain + act on the host's event ring. THE drain point —
+// call once per frame from the main thread (slot-5 PostUpdateHook). The event
+// ring is SPSC: this is the ONLY consumer (the 250ms monitor thread no longer
+// pops events; it only reads the seqlock state + watches host death).
+//   SESSION_STATE — log transitions.
+//   RECENTER      — log (nothing to apply: the camera consumes live HMD poses,
+//                   so a reference-space change propagates at the next pass-1
+//                   pose sample by construction).
+//   EXIT          — one-shot WM_CLOSE to the game's root window (runtime wants
+//                   the app to quit); the engine's own pump then shuts down,
+//                   and the host follows via its carrier death watch.
+void drain_events();
+
 // Queue the Shutdown command (idempotent, logged once).
 void send_shutdown();
 

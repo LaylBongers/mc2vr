@@ -49,6 +49,11 @@ struct State {
     uint32_t pubFrame = 0;
     bool running = false;
     bool exiting = false;
+    // True when WE initiated the session end (carrier Shutdown / carrier
+    // death / frame limit). Runtime-initiated terminations (EXITING /
+    // LOSS_PENDING / instance loss without this flag) push MC2VR_MSG_EXIT so
+    // the carrier quits the game cleanly (S4-5).
+    bool selfExit = false;
     d3d::Device d3d;
     Eye eye[2];
     // S4-3 submission stats (10s window; the log is the acceptance evidence)
@@ -273,12 +278,26 @@ void handle_events(State& s) {
                     s.running = false;
                 } else if (e->state == XR_SESSION_STATE_EXITING ||
                            e->state == XR_SESSION_STATE_LOSS_PENDING) {
+                    // Runtime-initiated end (SteamVR quitting, session lost):
+                    // tell the carrier to quit the game cleanly (S4-5). When
+                    // WE requested the exit (selfExit), the game is already
+                    // on its way out — no event needed.
+                    if (!s.selfExit) {
+                        hostlog::write("openxr: runtime is ending the session — "
+                                      "telling carrier to quit the game");
+                        ipc::push_event(MC2VR_MSG_EXIT, (uint32_t)e->state, 0);
+                    }
                     s.exiting = true;
                 }
                 break;
             }
             case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
                 hostlog::write("openxr: instance loss pending");
+                if (!s.selfExit) {
+                    hostlog::write("openxr: runtime is going away — telling "
+                                  "carrier to quit the game");
+                    ipc::push_event(MC2VR_MSG_EXIT, 0, 0);
+                }
                 s.exiting = true;
                 break;
             case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
@@ -478,6 +497,7 @@ int run(const Options& opt) {
             if (cmd.type == MC2VR_CMD_SHUTDOWN) {
                 hostlog::write("openxr: Shutdown command from carrier (pid %u)",
                                ipc::carrier_pid());
+                s.selfExit = true;
                 if (s.running) xrRequestExitSession(s.session);
                 s.exiting = true;
             } else if (cmd.type == MC2VR_CMD_FRAME_READY) {
@@ -492,6 +512,7 @@ int run(const Options& opt) {
         }
         seyes::pump();
         if (ipc::carrier_died(1000)) {
+            s.selfExit = true; // the game is already gone — not a runtime request
             if (s.running) xrRequestExitSession(s.session);
             s.exiting = true;
         }
@@ -499,6 +520,7 @@ int run(const Options& opt) {
         if (s.running) {
             ok = frame(s, n++);
             if (opt.maxFrames && (int)n >= opt.maxFrames) {
+                s.selfExit = true; // our own frame limit — not a runtime request
                 xrRequestExitSession(s.session);
                 hostlog::write("openxr: frame limit reached, requesting exit");
                 // Keep pumping until the runtime moves us to EXITING.

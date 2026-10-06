@@ -9,6 +9,7 @@
 #include "game_addresses.h"
 #include "eye_replay.hpp"
 #include "hooks.hpp"
+#include "ipc.hpp"
 #include "log.hpp"
 #include "stub_trace.hpp"
 #include "stream_capture.hpp"
@@ -224,6 +225,10 @@ void slot5_postupdate_hook()
                   "claimable, mechanism works",
                   (unsigned long long)hooks::frame_count());
     }
+    // S4-5: the host-event drain point (main thread, once per frame — before
+    // the next pass-1 pose sample so events apply to THIS frame's camera).
+    // No-op when disconnected. Pose sampling itself happens at pass-1 start.
+    ipc::drain_events();
 }
 
 // ---- poller thread ------------------------------------------------------------

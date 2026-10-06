@@ -20,7 +20,7 @@ design + gotchas. 3. `docs/launcher_plan.md` — mechanism rules, hook inventory
 | S4-2 shared-handle image path (carrier ring → host open/mirror) | DONE, live-verified |
 | S4-3 OpenXR submission (blit shared pair into swapchains) | DONE, live-verified |
 | S4-4 pose feedback (full VP replacement from HMD pose, pose-id handoff) | DONE, live-verified: head-tracked 3D in the HMD; `view/hmd:` windows `split=0 decompFail=0`; host `pose ids hit=all miss=0`; `fresh~600 reused~1800` |
-| S4-5 events + pacing + HUD | IN PROGRESS — pacing step 1 (vsync unlock) live-verified 2026-10-06: game 30 Hz → ~135 Hz (dt avg 7.4 ms, pass 2 = 3.2 ms), `pose ids miss=0`, `split=0 decompFail=0`, `ringFull=0`, HMD standby pass-through clean. Remaining: session events, HUD/2D, throttle-vs-free decision (free-run currently working: game 135 Hz > host 120 Hz, miss=0) |
+| S4-5 events + pacing + HUD | IN PROGRESS — pacing step 1 (vsync unlock) live-verified: 30 → ~135 Hz sustained while VR-active; session events live-verified (2026-10-06: 2× SteamVR recenter → logged + view stable; SteamVR quit → EXIT chain → game quit cleanly). Remaining: HUD/2D measurement, throttle-vs-free decision (free-run healthy) |
 
 Deployed conf (`<GAME_DIR>/mc2vr/mc2vr.conf`, never overwritten by `launch.sh`) is the S4 steady state:
 `frame_replay=on eye_pass=on eye_rt=on eye_monitor_pin=on eye_share=on view_row_rewrite=hmd`. The in-tree conf
@@ -28,9 +28,24 @@ defaults stay host-less (`eye_share=off`, `view_row_rewrite=stereo`).
 
 ## S4-5 task list
 
-- **Session events**: focus lost ⇒ game keeps running but host stops submitting; `MC2VR_MSG_EXIT` ⇒ clean
-  shutdown; recenter (`MC2VR_MSG_RECENTER`) handling. Events already flow host→carrier (drain point is the
-  slot-5 `PostUpdateHook`, currently a counting no-op; pose sampling happens at pass-1 start, not there).
+- **Session events**: IMPLEMENTED (2026-10-06, pending live verification). Drain point moved to the
+  slot-5 `PostUpdateHook` (`ipc::drain_events()`, main thread, once per frame; the 250ms monitor thread no
+  longer pops — SPSC ring, one consumer only). Behavior: `SESSION_STATE` transitions logged; `RECENTER`
+  logged only (nothing to apply — the camera consumes live HMD poses, so a reference-space change
+  propagates at the next pass-1 pose sample by construction); `MC2VR_MSG_EXIT` = one-shot `WM_CLOSE` to
+  the game's root window (HWND global `0x01175274`; pump/WndProc quit path is VM-protected so the
+  message is the clean-quit signal; engine pump exits → carrier pid dies → host follows via death
+  watch). Host side: EXIT is pushed only for runtime-initiated ends (session EXITING/LOSS_PENDING or
+  instance loss WITHOUT a prior self-initiated `xrRequestExitSession` — `State::selfExit` flag set at
+  the Shutdown-cmd/carrier-death/frame-limit sites). Focus lost needs no carrier action: the host
+  already gates layer submission on `shouldRender` (zero layers while SYNCHRONIZED/idle), and the
+  game keeps running with the camera pass-through (`valid=0` path, live-verified 2026-10-06).
+  LIVE-VERIFIED 2026-10-06: SteamVR recenter ×2 → carrier `session: recenter #N` (3 events: one
+  boot-time reference change + the 2 user recenters), view stayed healthy (`split=0 decompFail=0`);
+  SteamVR quit in-game → host `runtime is ending the session` → carrier `posted WM_CLOSE to the game
+  window` → game exited cleanly (no FATAL/failed lines, host shutdown 9210 frames, both logs end
+  clean). FPS with VR active stayed ~135 Hz (dt avg 7.2–7.8 ms, max ≤18 ms while FOCUSED), host
+  ~120 Hz `miss=0`.
 - **Pacing**: game ~30 Hz (two ~16.6 ms passes) vs host ~120 Hz re-submitting the newest pair with the
   rendered pose (runtime reprojects). STEP 1 IMPLEMENTED (2026-10-06, pending live verification):
   `vsync=off` conf key forces `D3DPRESENT_INTERVAL_IMMEDIATE` at CreateDevice (stage-1 InlineHook of

@@ -195,9 +195,15 @@ DWORD `state`=1 (normally published by vrclient_x64 for an OpenVR app; state=2 f
 space, per-eye swapchains 2016×2240 ×3 images, runtime `SteamVR/OpenXR 2.17.10`, `ActiveRuntime` →
 `C:\openxr\wineopenxr64.json`.
 
-**Open risks / items**: HUD in-composite or not and `g_RenderQueue2` timing (S4-5); pacing (30 Hz game vs
-~120 Hz host, throttle vs free-run, S4-5); UI fallback = separate quad layer; if per-eye RTs ever can't differ
+**Open risks / items**: HUD in-composite or not and `g_RenderQueue2` timing (S4-5); pacing step 1
+live-verified (vsync unlock, see below); if per-eye RTs ever can't differ
 at the D3D level, fall back to single-backbuffer interop blit.
+Session events (S4-5): the slot-5 PostUpdateHook drains the host event ring
+(state/recenter logged; `MC2VR_MSG_EXIT` → one-shot `WM_CLOSE` to the game's
+root window — the engine pump's quit path is VM-protected so the message is
+the signal; the host pushes EXIT only for runtime-initiated ends via its
+`selfExit` flag). Focus lost needs no carrier action: host submission is
+gated on `shouldRender` (zero layers while not VISIBLE/FOCUSED).
 
 ### S4-4 — HMD camera replacement (COMPLETE, live-verified 2026-10-05)
 
