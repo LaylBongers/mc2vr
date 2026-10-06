@@ -62,7 +62,7 @@ Static evidence: `PoseStore_GetPoseByHandle` has one caller inside `.securom` (`
 - `g_RenderShell` holds the **base** `LtiRenderer_vtbl` at frame time; the derived `RenderShell_vtbl` (0x00be84c0) overrides (incl. slot 15 `Flush`) never run. Type as `LtiRenderer`/`LtiRenderer_vtbl` (done in Ghidra).
 - Calls per frame: Present/BeginScene/EndScene exactly 1:1 with `GameShell_FrameTick` count. `Reset` (slot 16) only on present-param change (resolution etc.), carries the new `D3DPRESENT_PARAMETERS`.
 - Present args always all-NULL. Menu present params: 2560x1440, fullscreen, DISCARD, 60 Hz, interval DEFAULT, `hDeviceWindow=0x100b6`.
-- The old "Begin/EndScene + Present live below this in SecuROM-encrypted thunks" note is FALSIFIED — they live in plaintext LtiRenderer_* functions; the producer/camera/draw-data chain (`SubmitWorldPackets` loop body, element staging, `RenderFrame` record walk) is also fully plaintext. What IS VM-protected (S0): the packet interpreter between the ring and the draw-records. GENERALIZED (2026-10-02): entering the SecuROM range is not proof of opacity — some entries are call gates with plaintext continuations (see `securom_vm.md`).
+- The old "Begin/EndScene + Present live below this in SecuROM-encrypted thunks" note is FALSIFIED — they live in plaintext LtiRenderer_* functions; the producer/camera/draw-data chain (`SubmitWorldPackets` loop body, element staging, `RenderFrame` record walk) is also fully plaintext. What IS VM-protected (S0): the packet interpreter between the ring and the draw-records — but it ORCHESTRATES rather than computes: it calls plaintext for the draw-camera VP build (E1b: VM -> thunk `0x00506a26` -> `ViewContext_BuildCameraConstants 0x008591ac`, see the E1/E1b section below). GENERALIZED (2026-10-02): entering the SecuROM range is not proof of opacity — some entries are call gates with plaintext continuations (see `securom_vm.md`).
 
 ## D3D9 device vtable offsets
 
@@ -78,10 +78,51 @@ Navigate from the named symbols (all plate-commented). Only the non-obvious rule
 
 ## View staging, frame-level slots and state caches
 
-- View staging: `RenderQueue_SubmitWorldPackets` walks the ACTIVE views — an intrusive linked list (S0: head = `DAT_00d29e60`, an INDEX; link = `ViewEntry+0x4`; negative terminates) — and stages one 96-byte element per type-2/4 view: three `{byte-size, ptr}` pairs — {`0x30` camera staging `this+0xc2110+idx*0x30` (inline pos/serial/rot copy, site `0x0048ec3e`)}, {`0x810` live `ViewEntry*`}, {`0x680` frame-ctx block `this+0xd2950`}. Deref is at CONSUME time, post-walk, inside SecuROM-VM'd code (staging site `0x0048ef71`, count `[ESP+0x19a00]`, array `[ESP+0x79a0]`, cap 768). The consumer never reads view camera data (see `view_and_camera.md`).
+- View staging: `RenderQueue_SubmitWorldPackets` walks the ACTIVE views — an intrusive linked list (S0: head = `DAT_00d29e60`, an INDEX; link = `ViewEntry+0x4`; negative terminates) — and stages one 96-byte element per type-2/4 view: three `{byte-size, ptr}` pairs — {`0x30` camera staging `this+0xc2110+idx*0x30` (inline pos/serial/rot copy, site `0x0048ec3e`)}, {`0x810` live `ViewEntry*`}, {`0x680` frame-ctx block `this+0xd2950`}. Deref is at CONSUME time, post-walk, inside SecuROM-VM'd code (staging site `0x0048ef71`, count `[ESP+0x19a00]`, array `[ESP+0x79a0]`, cap 768). ~~The consumer never reads view camera data~~ (2026-10-06: re-interpreted — the walk-tail copy-back `0x0048F72D` proves the VM WRITES the staged block; whether it also READS it as draw-camera input is exactly what E2 tests — `view_and_camera.md` § camera-data accessors, `../stereo_improvements_plan.md` E2).
 - Frame-level slots: `g_RenderShell` vtable slots 4/5 (`EndOfFrameHook`/`PostUpdateHook`, +0x10/+0x14) are `VirtHook_NoOp` on the live base vtable — claimable via cloned-vtable swap on `g_RenderShell` (proven 1:1 with frames; see `../launcher_plan.md`).
-- Camera data: per-view RenderShell sub-objects hang off `g_RenderShellPtr` at `idx*0x3a0`; they are copied once per FRAME into the frame-ctx 0x680 block (`this+0xd2950+0xEC`, S0) — not per view, not eye slots. The per-view camera handed to the consumer is `{0x810, ViewEntry*}` by POINTER (derefed post-walk) plus the inline `0x30` staging copy — patching these never moves the draw camera (`view_and_camera.md`).
+- Camera data: per-view RenderShell sub-objects hang off `g_RenderShellPtr` at `idx*0x3a0`; they are copied once per FRAME into the frame-ctx 0x680 block (`this+0xd2950+0xEC`, S0) — not per view, not eye slots. The per-view camera handed to the consumer is `{0x810, ViewEntry*}` by POINTER (derefed post-walk) plus the inline `0x30` staging copy — patching these never moved the draw camera in M3-era tests (done WITHOUT serial bumps and without the round-trip knowledge — re-interpreted 2026-10-06, and under re-test as E2 with the correct write+bump protocol; `view_and_camera.md`, `../stereo_improvements_plan.md` I2/E2).
 - All draw state is cached by the Dx9 wrapper layer — caller-side caches in the `Dx9_*` functions (`g_RenderStateCache`, `0x105` entries, cleared by the invalidate slot; plus texture/sampler/RT caches). Device-vtable hooks that only observe/forward calls are safe (the caches are caller-side); altering values at the device level would desync them — alter at the `Dx9_*` function level instead.
+
+## Draw-camera constant chain (E1/E1b, hardware-watch-proven 2026-10-06)
+
+The `viewContextData`/VP production chain, mapped end-to-end — **all PLAINTEXT after the VM's
+orchestration thunk** (plates on the named symbols in Ghidra; interpretation in
+`view_and_camera.md` § Where the draw camera lives; plan context in `../stereo_improvements_plan.md`):
+
+```
+VM'd packet interpreter (orchestrates only)
+  -> VMThunk_ViewContext_BuildCameraConstants (0x00506a26, no static xref = VM-called)
+  -> ViewContext_BuildCameraConstants (0x008591ac):
+       camera object = *(ctx+0x28)          (null -> identity defaults)
+       near/far/fov via self-indexed obj[obj[0]*0x1c + 0x14/0x15/0x16/0x1d]
+       view matrix read from the camera object (Matrix_Copy3x4)
+       projection built in plaintext (fov tan table DAT_00cf1900, aspect from
+         g_RenderShell fields 0xae6/0xae7/0xaf2/0xaf3/0xaf5)
+       D3DXMatrixMultiply(view@ctx+0xaa0, proj@ctx+0xb20) = VP matrix
+       Matrix_Copy3x4(VP -> scratch 0x017D04E0)            [call site 0x00859562]
+  -> record fill (once per frame, frame-build time, ~1.0-1.7 events/frame):
+       scratch -> g_ViewContextTable record
+       0x0046718c = Matrix_Copy3x4 (idx-6 record); 0x004673bf = inline fstp (idx-12)
+       record addr = 0x018c45e0 + (bufIdx*32 + viewIdx)*0x70, bufIdx = [0x00ff364c]
+       BOTH double-buffer bases written per event; NOT per submit
+  -> upload gate 0x00855a78 ([esp+0x18] = this pass's record ptr)
+  -> Dx9_SetVertexShaderConstantF -> device slot 94
+```
+
+- **Record census** (carrier per-record upload tally, `view: rec ...` log lines): world-scale records
+  **idx 6 and idx 12** — same VP row0 = same camera, 60–87k main-RT uploads/10s each; shadow-atlas
+  (1024x4096) idx 7/8; idx 5 exactly-once-per-submit main+offscreen pair; idx 4/13/11 minor;
+  idx 2/3/9/10 transient (menu/load). Stable across sessions.
+- **Cadences**: scratch ~4.4 writes/frame (builder runs per active view) vs record fill ~1.0–1.7/frame
+  — the builder runs more often than records refresh (consumption is change-gated).
+- **Methodology lesson**: the fill code lives in SecuROM-mutated `.text` (~0x004671xx–0x004674xx) with
+  NO defined function and no static callers — invisible to decompiler-text static hunts (why the
+  2026-10-03 static writer hunt was negative). `debug_watch=addr:` on the target address is the probe
+  that finds writers in such regions; watch the EIP + surrounding bytes, then decode by hand.
+- **Consequences**: record-level per-eye rewrites at pass boundaries are interference-free (the fill
+  is once per frame, before the passes; the S2c replay pass re-reads unchanged records — consistent
+  with its proven state-safety). Camera VALUES enter at the camera object (`ctx+0x28`) — its writer is
+  unknown and is the E2/I2 injection question.
 
 ## Open items
 
@@ -104,6 +145,12 @@ Navigate from the named symbols (all plate-commented). Only the non-obvious rule
   impossible; see docs/stereo_design.md §S4-5).
 - `g_RenderQueue2` (`0x00ff3650`) consumer — **narrowed (S0)**: its pointers sit inside the same 0x680 frame-ctx block handed per element; the VM interpreter at `0x0050f660` (call site `0x004c99f9`) is the prime suspect for consuming BOTH queues.
 - View/portal table walk — **RESOLVED (S0)**: intrusive linked list; `DAT_00d29e60` = head INDEX (M3 "registered-view count" label wrong; also stored to frame-ctx `+0xd2a10`), link `ViewEntry+0x4`, negative terminates. Per-view element format, camera staging sites, and the 768-element staging cap are on the `SubmitWorldPackets` plate comment.
+- **Camera-object pose writer (E2)** — the draw-camera chain (see the E1/E1b section above) reads
+  camera VALUES from the camera object at `ctx+0x28` inside `ViewContext_BuildCameraConstants`
+  (`0x008591ac`); who writes that object's pose, and whether the ViewEntry round-trip reaches it,
+  is unknown — the decisive E2 probe (ViewEntry write + serial bump, observe the draw camera) is
+  designed in `../stereo_improvements_plan.md`. A positive answer gives one injection point steering
+  draw camera + records + PS view consts + culling + LOD together.
 - `GameState3_Update` / `GameState2_Frontend_Update` internals — named by position, semantics unexplored.
 - `0x0117527c` adapter remap table / multi-adapter handling in `RenderSystem_Init` — not explored (single-GPU assumption).
 - `vt[4]`/`vt[5]`: ~~confirm anything actually CALLS them~~ **RESOLVED (M3)**: both slots called exactly once per frame by `GameShell_FrameTick` (claimable, mechanism proven via cloned vtable; survived alt-tabs/cutscene/mission load).

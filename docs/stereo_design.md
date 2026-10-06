@@ -239,11 +239,14 @@ a 256-entry published-view history and submits the projection layer with the pos
 of that id, so the compositor reprojects from what the image actually contains.
 
 Open: unit scale (`view_world_scale`, unverified), engine culling against the game
-frustum (2026-10-06: the culling-input verification tooling is in — carrier `debug_watch`
-hardware-watchpoints the ViewEntry camera fields and logs every accessor's EIP with
-plaintext/VM classification, `docs/reverse_engineering/view_and_camera.md` § open RE items;
-live run pending), non-`viewContextData` shaders / PS camera data (rotation exposes these),
-split VP uploads (counted: `view/hmd: split=`), handedness/sign validation live.
+frustum, non-`viewContextData` shaders / PS camera data (rotation exposes these), split VP uploads
+(counted: `view/hmd: split=`), handedness/sign validation live. **Draw-camera RE updated 2026-10-06
+(E1/E1b, complete — see `stereo_improvements_plan.md`)**: the `viewContextData` records are
+PLAINTEXT-filled once per frame (full chain in `docs/reverse_engineering/render_path.md` § Draw-camera
+constant chain); the per-upload scratch rewrite is now known to be replaceable by a record-level
+per-eye rewrite (I1) and possibly by one upstream injection (I2/E2, pending). The culling-input
+RE is complete (`docs/reverse_engineering/view_and_camera.md` § camera-data accessors); its
+injection design is `frustrum_cull_plan.md`.
 
 ### S4-5 — Session events, pacing, HUD (COMPLETE, live-verified 2026-10-06)
 

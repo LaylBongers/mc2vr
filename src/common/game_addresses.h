@@ -171,11 +171,33 @@
 // carrier's MidHook here publishes the exact register map so the
 // view rewrite targets registers, not row shapes (shape heuristics conflate
 // techniques that share register numbers).
+//
+// [esp+0x18] AT THE GATE = the viewContext RECORD pointer for the pass being
+// uploaded (the wrapper's data arg: `mov edx,[esp+0x18]; push edx`; the PS
+// upload gate just below re-reads the same slot). The MidHook logs each
+// distinct record VA + computed index so an E1 `debug_watch=addr:` run can
+// target the main pass's record directly (docs/stereo_improvements_plan.md).
 #define MC2_VCD_UPLOAD_CMP ((uintptr_t)0x00855a78u)
+#define MC2_VCD_GATE_REC_SLOT ((uintptr_t)0x18u)  // [esp+0x18] = record ptr
 #define MC2_TECH_VCD_REG_OFF ((uintptr_t)0xd4u)
 #define MC2_TECH_VCD_COUNT_OFF ((uintptr_t)0xd8u)
 #define MC2_TECH_VP_REG_OFF ((uintptr_t)0xdcu)
 #define MC2_TECH_VP_COUNT_OFF ((uintptr_t)0xe0u)
+
+// g_ViewContextTable (2026-10-06, E1 prep): holds a POINTER, not the array.
+// Sole plaintext xref is the initializer (FUN_00854da8, write 0x00854e6d):
+//   g_ViewContextTable = 0x018c45e0 + DAT_00ff364c * 0xe00
+// — a double-buffered array of 32 records x 0x70 stride, buffer-selected by
+// the same frame index that swings g_PrimitiveBase/g_MaterialTable/etc.
+// (readers are all VM-side, hence no plaintext read xrefs). Record layout:
+// +0x00 viewContextData (VP rows first), +0x40 PS view consts, +0x60
+// atmosphereData*, +0x64 globalLightData* (docs/reverse_engineering/
+// view_and_camera.md). A record VA rec decomposes as
+//   base = *g_ViewContextTable;  idx = (rec - base) / 0x70  (idx < 32)
+#define MC2_G_VIEWCONTEXTTABLE ((uintptr_t)0x01169774u)
+#define MC2_VIEWCONTEXT_STRIDE ((uintptr_t)0x70u)
+#define MC2_VIEWCONTEXT_RECORDS ((uintptr_t)0x20u)   // per buffer
+#define MC2_VIEWCONTEXT_BUFFERSZ ((uintptr_t)0xe00u) // 32 * 0x70
 
 // Probe (a) target: the OTHER per-frame counter (.data, bumped in
 // GameTimeAccumulate_Update). Deliberately not 0x011755bc — that one is what

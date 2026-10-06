@@ -26,10 +26,12 @@ Ghidra plates referenced there.
    the change-gate (and/or were overwritten by the next copy-back). The producer side is NOT proven
    dead for the draw camera — it is untested under the correct protocol (write + bump serial every
    frame, before the staging).
-5. What remains true: the draw camera's `viewContextData` VP rows are produced by the VM'd code into
-   the per-view render-context record (`g_ViewContextTable`, `0x01169774`, 0x70 stride, indexed by
-   `prim+0x49`; +0x00 viewContextData, +0x40 PS view consts) and reach the GPU as per-pass constant
-   uploads. The record itself is plaintext memory.
+5. What remains true: the draw camera's `viewContextData` VP rows are produced ~~by the VM'd code~~
+   **[CORRECTED by E1, see the E1 RESULT under Experiments: the record fill is PLAINTEXT
+   (Matrix_Copy3x4 call 0x0046718c / inline fstp 0x004673bf, source scratch 0x017D04E0, once per
+   frame)]** into the per-view render-context record (`g_ViewContextTable`, `0x01169774`, 0x70
+   stride, indexed by `prim+0x49`; +0x00 viewContextData, +0x40 PS view consts) and reach the GPU
+   as per-pass constant uploads. The record itself is plaintext memory.
 
 ## Improvements
 
@@ -56,8 +58,15 @@ Why this is better:
 
 Requirements / risks:
 
-- Resolve the record base first: `0x01169774` may hold the 0x70-stride array directly or a pointer to
-  it (the RE doc is ambiguous; check in Ghidra + a live dump).
+- Record base: RESOLVED statically (2026-10-06, E1 prep). `0x01169774` holds a
+  POINTER, not the array — sole plaintext xref is the initializer (`FUN_00854da8`,
+  write `0x00854e6d`): `g_ViewContextTable = 0x018c45e0 + DAT_00ff364c * 0xe00`, a
+  double-buffered array of 32 records × 0x70 stride (readers all VM-side, hence no
+  plaintext read xrefs). Constants in `game_addresses.h`
+  (`MC2_G_VIEWCONTEXTTABLE` + stride/size). The main-pass record VA needs no
+  `prim+0x49` hunt either: `[esp+0x18]` at the upload gate IS the pass's record
+  pointer, and the carrier MidHook now logs each distinct record VA + index +
+  pass-gate context (run 1 of E1).
 - **VM write timing** (experiment E1): the VM fills the record before the passes; verify it does not
   rewrite it mid-frame/per-pass. `debug_watch=addr:<record VP row VA>` (read+write) answers this in one
   run — the tooling exists.
@@ -113,13 +122,65 @@ no-op observer.
 
 | # | Question | Method | Cost |
 |---|---|---|---|
-| E1 | Does the VM rewrite the render-context record per frame or per pass? When is it stable? | `debug_watch=addr:<main record VP row>` (full mode) one gameplay run; read the accessor EIPs/cadence | one run |
+| E1 | Does the VM rewrite the render-context record per frame or per pass? When is it stable? | Prep DONE (2026-10-06): the upload-gate MidHook logs each distinct record VA + index + pass; run 1 = one gameplay run reading that log (picks the main-pass record VA), run 2 = `debug_watch=addr:<main record VP row>` (full mode); read the accessor EIPs/cadence | two runs, no new code |
+
+E1 RESULT (2026-10-06, COMPLETE — run 3, debug_watch write-mode on idx-6/idx-12 row0, both bases):
+**The premise "records are filled by the VM'd producer, no plaintext writer" is DISPROVEN.**
+The record VP rows are written by PLAINTEXT code in the SecuROM-mutated .text block
+~0x004671xx–0x004674xx (undefined function; the 2026-10-03 static hunt missed it because the
+region has no defined function/decompilation — reachable only via mutated control flow):
+- `0x0046718c` = `Matrix_Copy3x4(EAX=record, ECX=0x017D04E0)` — record addr computed as
+  `0x018c45e0 + (bufIdx*32 + viewIdx)*0x70` (bufIdx from `0x00ff364c`). Fills the idx-6 record.
+- `0x004673bf` = inline `fstp [eax]` — same event, fills the idx-12 record.
+- Cadence: both double-buffer bases written back-to-back per event, ~1.0–1.7 events/frame at
+  34 fps — **once per frame, NOT per submit** (frame_replay's second submit re-reads unchanged
+  records; consistent with S2c's proven state-safety).
+- Window value snapshots: all four watched row0 dwords identical — **idx 6 and idx 12 carry the
+  SAME VP row0** (same camera; two same-camera views, e.g. world opaque + a second layer).
+
+Consequences for the plan:
+- **I1 is safe as designed**: nothing rewrites the record between pass 1 and pass 2; a
+  pass-boundary rewrite lands after the once-per-frame fill and stays for both submits.
+- **I1's rewrite targets are idx 6 AND idx 12** (both bases refresh together, so rewriting the
+  current base suffices; the RT-size gate maps onto record-index gating as planned).
+- **New, better option opened (E1b)**: the fill copies from a plaintext scratch source
+  (`0x017D04E0`). Finding ITS writer tells us where camera VALUES enter this chain — if that
+  is also plaintext (or the staged round-trip), a single upstream injection could feed the
+  records, culling AND the draw camera at once (supersedes/simplifies I2+E2).
+- The GPU/record path stays the proven channel until E1b/E2 say otherwise.
+
+E1b RESULT (2026-10-06, COMPLETE — debug_watch=addr:0x017D04E0, write mode): the fill source
+scratch is written by **`Matrix_Copy3x4` again** (`0x00859562`), from a STACK-LOCAL matrix, inside
+**`ViewContext_BuildCameraConstants` (`0x008591ac`)** — THE plaintext draw-camera VP builder:
+- Called ONLY from the VM via the no-xref thunk `VMThunk_ViewContext_BuildCameraConstants`
+  (`0x00506a26`): **the VM orchestrates, plaintext does the math.**
+- Reads the CAMERA OBJECT (`*(ctx+0x28)`, self-indexed `obj[obj[0]*0x1c + 0x14/15/16/1d]` =
+  near/far/fov) + view matrix; builds the projection in plaintext (fov tan table, aspect from
+  g_RenderShell); `D3DXMatrixMultiply(view@ctx+0xaa0, proj@ctx+0xb20)` = VP; copies it to the
+  scratch.
+- Scratch write cadence ~4.4/frame (per active view) vs record fill ~1.0–1.7/frame.
+
+**The full draw-camera chain is now mapped end-to-end, all plaintext after the VM's orchestration
+thunk:** camera object → VP build (0x008591ac) → scratch 0x017D04E0 → record fill (0x0046718c /
+0x004673bf, both bases) → GPU upload gate (0x00855a78). Camera VALUES enter at the camera object
+(ctx+0x28) — whose writer is the remaining unknown, and the I2/E2 injection candidate.
+
+E2 is now strongly motivated: if the matched ViewEntry's pose round-trip (or this camera object)
+carries the game camera, one upstream injection steers records + PS view consts + culling together.
+
+E1 progress notes (runs 1–2): record census — gameplay's world-scale records are **idx 6 and
+idx 12** (60–87k main-RT uploads/10s each, both double-buffer bases in parity — the base flips
+per frame; all other records ≥10x smaller). Offscreen (shadow atlas 1024x4096): idx 7/8 (+9/10
+transient). Idx 5 is an exactly-once-per-submit main+offscreen pair; idx 4/13/11 minor. Run 1 vs
+run 2 censuses agree — idx assignment stable across sessions. Walk counts cannot discriminate
+views (all 24 walked uniformly every frame), upload dominance can.
 | E2 | Does upstream ViewEntry pose injection steer the draw camera? | Temporary `cull_probe`-style carrier feature: write big yaw + serial bump into the matched view's pose each frame; observe the rendered view (unmistakable), then revert | one run + code |
 | E3 | Which PS camera constants are record-derived at upload time vs pre-derived? | After I1 (or with a debug flag that perturbs only record+0x40): watch water reflections/blob shadows per eye — visible check; or `debug_watch=addr:` on the candidate derived-constant staging | one run |
 
 ## Rollout order
 
-1. E1 → resolve record base + index + timing (pure RE, no code risk).
+1. E1 → record base + index RESOLVED (see I1); remaining: run the two-watch gameplay runs
+   for VM write timing (pure RE, no further code).
 2. I1 record-level per-eye rewrite behind `view_record_rewrite=on` (keep the upload-level path as
    default/fallback; A/B via `hmd_identity`-style verification: shadows glued at each eye, monitor
    image sane, PS reflections per-eye where E3 said record-derived).

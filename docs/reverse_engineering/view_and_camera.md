@@ -22,8 +22,30 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
   the `viewContextData` VP rows.
 - **Source of `viewContextData`**: the per-view render-context record (`g_ViewContextTable` `0x01169774`,
   0x70 stride, indexed by `prim+0x49`): +0x00 viewContextData, +0x40 PS view consts, +0x60 atmosphereData*,
-  +0x64 globalLightData*. No plaintext writer — filled by the SecuROM-VM'd producer; plaintext code only
-  zeroes it and copies it to the GPU.
+  +0x64 globalLightData*. **Record fill is PLAINTEXT (E1/E1b watch-proven 2026-10-06; corrects the earlier
+  "no plaintext writer / VM'd producer" claim)** — the FULL draw-camera chain is mapped end-to-end,
+  plaintext after the VM's orchestration thunk: camera object (ctx+0x28) →
+  `ViewContext_BuildCameraConstants` (`0x008591ac`, VM-thunk `0x00506a26`; reads near/far/fov + view
+  matrix, plaintext `D3DXMatrixMultiply` view×proj) → scratch `0x017D04E0` → record fill
+  (`Matrix_Copy3x4` call `0x0046718c` idx-6 / inline `fstp` `0x004673bf` idx-12, in the SecuROM-mutated
+  .text block ~0x004671xx — undefined function, no static callers, which is why the static hunt missed
+  it) → GPU upload gate `0x00855a78`. Cadence: scratch ~4.4/frame (per active view); record fill
+  once per frame, both double-buffer bases together, NOT per submit (frame_replay's second submit
+  re-reads unchanged records). Gameplay's world-scale records are idx 6 and idx 12 (same VP row0 —
+  same camera); shadow-atlas records idx 7/8; census via the carrier's per-record upload tally
+  (`view: rec ...` lines). Camera VALUES enter at the camera object — its writer is the open
+  E1b/E2 question and the I2 injection candidate (see `docs/stereo_improvements_plan.md`).
+  - **Table layout resolved (2026-10-06, E1 prep)**: `0x01169774` holds a POINTER, not the array — sole
+    plaintext xref is the initializer (`FUN_00854da8`, write `0x00854e6d`):
+    `g_ViewContextTable = 0x018c45e0 + DAT_00ff364c * 0xe00` — a double-buffered array of 32 records ×
+    0x70 stride, buffer-selected by the same frame index that swings `g_PrimitiveBase`/`g_MaterialTable`.
+    Readers are all VM-side (hence no plaintext read xrefs). Constants: `game_addresses.h`
+    (`MC2_G_VIEWCONTEXTTABLE`, `MC2_VIEWCONTEXT_STRIDE`, `MC2_VIEWCONTEXT_BUFFERSZ`).
+  - **Record pointer at the gate**: `[esp+0x18]` at the upload gate `0x00855a78` IS the pass's record
+    pointer (the wrapper's data arg; the PS gate just below re-reads the same slot) — no `prim+0x49`
+    computation needed. The carrier MidHook logs each distinct record VA + index + pass-gate context
+    (E1 run 1); `debug_watch=addr:` then targets the main pass's record directly
+    (`docs/stereo_improvements_plan.md` E1).
 - **Constant-name → technique-field map** (plate on `Technique_ResolveConstantRegisters` `0x0085b260`): reg
   at technique+X, count/gate at +X+4 — objectData +0x94, LocalToWorld +0x9c, PrevLocalToWorld +0xa4,
   BoneMatrixArray +0xac (N bones × 3 rows of 3x4 skinning matrices; no view content), InvViewport +0xb4,
@@ -192,8 +214,12 @@ views are t3=01 ones like idx14). Findings:
   originate in the VM'd packet consumer (post-walk deref of the staged block ctx+0xc2110+idx*0x30) and reach
   the plaintext ViewEntry only via the walk-tail copy-back (0x0048F72D, Pose_Copy semantics, serial+1). Slot
   matrices + fov are derived in plaintext (ViewEntry_MatrixFromGlobalCam) from the camera object; the culling
-  volume is built by the plaintext task ViewEntry_DeriveCullTask (0x00876a90). The g_ViewContextTable VP rows
-  themselves remain VM-produced (GPU-boundary rewrite stays the draw-camera channel). The
+  volume is built by the plaintext task ViewEntry_DeriveCullTask (0x00876a90). ~~The g_ViewContextTable VP rows
+  themselves remain VM-produced (GPU-boundary rewrite stays the draw-camera channel).~~ **CORRECTED
+  (2026-10-06, E1/E1b): the record VP rows are plaintext-written** (chain in the "Where the draw
+  camera lives" section: camera object → ViewContext_BuildCameraConstants 0x008591ac → scratch
+  0x017D04E0 → record fill 0x0046718c/0x004673bf). The remaining unknown is the camera-object pose
+  writer — E2 territory. The
   debug-register-watch tooling (carrier `debug_watch`) is the proven probe for further questions of this
   kind; watchpoint lessons (Wine Dr6 absence, CONTEXT flags, arming order) are recorded in the accessors
   section and in src/carrier/debug/watch.hpp.

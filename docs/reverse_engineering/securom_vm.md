@@ -29,6 +29,13 @@ facts: `target_binary.md`. Mod-side rules for hooking around it: `../launcher_pl
    A `.text` return address therefore does not prove "ordinary game code"; classify by behavior.
    Protected routines also call plaintext helpers all the time outside the stub (`.securom`
    callers of `PoseStore_GetPoseByHandle`, `Pose_Copy`, `PgMaterial_ctor`).
+   MORE EXAMPLES (2026-10-06, E1/E1b watch runs): (a) the viewContext-record fill lives in a
+   MUTATED, UNDEFINED `.text` block `~0x004671xx-0x004674xx` with no static callers — a static
+   decompiler-text hunt for its writer returned nothing; `debug_watch=addr:` on the target found
+   it in one run (decode the hit EIP's bytes by hand). Check such regions by WATCHING, not by
+   text search. (b) A no-xref 11-byte thunk (`0x00506a26`) is the VM's only entry into
+   `ViewContext_BuildCameraConstants` (`0x008591ac`) — plain thunks with zero static callers are
+   the VM's call-gate signature (`render_path.md` § Draw-camera constant chain).
 
 4. **Runtime-patched thunk slots — many "VM" thunks are native at runtime** (found 2026-10-03,
    carrier `debug_vm_dump=on`, `src/carrier/debug/vm_dump.cpp`). The file image of a `jmp [slot]` thunk names a

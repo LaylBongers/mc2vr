@@ -59,6 +59,18 @@ volatile uint32_t g_vp_reg = REG_INVALID;
 volatile uint32_t g_vp_count = 0;
 uintptr_t g_tech_seen[32];  // distinct technique objects (log once each)
 uint32_t g_tech_seen_n = 0;
+// E1 prep (docs/stereo_improvements_plan.md): viewContext RECORD stats from
+// the gate ([esp+0x18] = the pass's record pointer). Each distinct record VA
+// is logged once with the table base + computed index; per-window main/off
+// upload counts then identify the world view's record by dominance. 32 slots
+// covers all 11-ish indices x both double-buffer bases seen so far.
+struct RecStats {
+    uintptr_t va;
+    uint64_t main_hits;
+    uint64_t off_hits;
+};
+RecStats g_rec_seen[32];
+uint32_t g_rec_seen_n = 0;
 SafetyHookMid g_vcd_mid;
 
 // ---- pass gate (RT0 size) -----------------------------------------------------
@@ -134,6 +146,48 @@ void vcd_midhook(safetyhook::Context &ctx)
     if (do_log) {
         MC2VR_LOG("view: technique %p: viewContextData c%u (count %u), ViewProj c%u (count %u)",
                   (void *)tech, vcd_reg, vcd_count, vp_reg, vp_count);
+    }
+    // Record discovery (E1 prep, docs/stereo_improvements_plan.md): [esp+0x18]
+    // at the gate is this pass's viewContext record pointer (game_addresses.h).
+    // Each distinct record logs once with the live table base + index; every
+    // hit also counts toward the per-window main/offscreen tally so the world
+    // view's record identifies by upload dominance (all 24 views are walked
+    // uniformly, so walk counts cannot discriminate — 2026-10-06 run 1).
+    const uintptr_t rec =
+        *(const uintptr_t *)(uintptr_t)(ctx.esp + MC2_VCD_GATE_REC_SLOT);
+    uint32_t slot = g_rec_seen_n;
+    for (uint32_t k = 0; k < g_rec_seen_n; k++) {
+        if (g_rec_seen[k].va == rec) {
+            slot = k;
+            break;
+        }
+    }
+    if (slot == g_rec_seen_n) {
+        if (g_rec_seen_n >= sizeof(g_rec_seen) / sizeof(g_rec_seen[0])) {
+            return;  // table full — count nothing further (diagnostic only)
+        }
+        const uintptr_t base = *(const uintptr_t *)MC2_G_VIEWCONTEXTTABLE;
+        const uintptr_t off = rec - base;
+        // Current buffer only (32 slots); the other buffer's records differ by
+        // 0xe00 and would wrap the modulo check anyway.
+        const bool plausible =
+            rec != 0 && base != 0 && (off % MC2_VIEWCONTEXT_STRIDE) == 0 &&
+            off < MC2_VIEWCONTEXT_BUFFERSZ;
+        if (plausible) {
+            MC2VR_LOG("view: record %p = table %p + idx %u, pass %s (RT %ux%u)",
+                      (void *)rec, (void *)base,
+                      (unsigned)(off / MC2_VIEWCONTEXT_STRIDE),
+                      pass_is_main() ? "main" : "offscreen", g_rt_w, g_rt_h);
+        } else {
+            MC2VR_LOG("view: record slot %p implausible (table %p) — kept for diagnosis",
+                      (void *)rec, (void *)base);
+        }
+        g_rec_seen[g_rec_seen_n++] = {rec, 0, 0};
+    }
+    if (pass_is_main()) {
+        g_rec_seen[slot].main_hits++;
+    } else {
+        g_rec_seen[slot].off_hits++;
     }
 }
 
@@ -567,6 +621,20 @@ void report_window()
                   (double)g_hmd_resid_max, g_hmd.id, (int)g_hmd.valid);
         g_hmd_blocks = g_hmd_cam_only = g_hmd_split = g_hmd_decomp_fail = 0;
         g_hmd_resid_max = 0.0f;
+    }
+    // Record upload tally (E1 prep): which viewContext record the passes read.
+    // The world view's record dominates main-RT uploads; offscreen dominance
+    // identifies the shadow-atlas records. Both double-buffer bases of the
+    // same idx should show near-identical counts (buffer flip parity).
+    for (uint32_t k = 0; k < g_rec_seen_n; k++) {
+        if (g_rec_seen[k].main_hits != 0 || g_rec_seen[k].off_hits != 0) {
+            MC2VR_LOG("view: rec %p uploads main=%llu offscreen=%llu",
+                      (void *)g_rec_seen[k].va,
+                      (unsigned long long)g_rec_seen[k].main_hits,
+                      (unsigned long long)g_rec_seen[k].off_hits);
+            g_rec_seen[k].main_hits = 0;
+            g_rec_seen[k].off_hits = 0;
+        }
     }
     g_vs_calls = 0;
     g_vs_vec4s = 0;
