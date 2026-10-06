@@ -65,6 +65,20 @@
 #define MC2_QUEUE_COUNTERS_A ((uintptr_t)0x00ff3628u) // packed u16 consumer/producer
 #define MC2_QUEUE_COUNTERS_B ((uintptr_t)0x00ff362cu) // packed u16 producer batch
 
+// g_RenderQueue2 (0x00ff3650) — 2D/overlay submissions (docs/reverse_engineering/view_and_camera.md).
+// No plaintext xref: the frame-ctx block hands &g_RenderQueue2 to the SecuROM-VM'd
+// interpreter (frame-ctx +0x78/+0x90; queue1's counters are at +0x60/+0x6c/+0x9c/+0xa8).
+// Same struct as g_RenderQueue (elem +0x04, cap +0x08, buffer +0x0c, countersA +0x10
+// = low16 consumer-advanced / high16 producer elements, countersB +0x14). S4-5 HUD
+// timing: the carrier samples these counters at Present + pass boundaries because
+// the consumer itself is unhookable (VM).
+#define MC2_G_RENDERQUEUE2 ((uintptr_t)0x00ff3650u)
+#define MC2_QUEUE2_ELEM_SIZE ((uintptr_t)0x00ff3654u)
+#define MC2_QUEUE2_CAPACITY ((uintptr_t)0x00ff3658u)
+#define MC2_QUEUE2_BUFFER ((uintptr_t)0x00ff365cu)
+#define MC2_QUEUE2_COUNTERS_A ((uintptr_t)0x00ff3660u)
+#define MC2_QUEUE2_COUNTERS_B ((uintptr_t)0x00ff3664u)
+
 // GetD3DDevice — thunk (6 bytes, jmp into a SecuROM VM stub), void* (void),
 // 12 call sites. Hooking VM stubs is forbidden; CALLING them is fine (probe).
 // g_LtiRenderer (LtiRenderer*; NULL until the engine builds it) and the

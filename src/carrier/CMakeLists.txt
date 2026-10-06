@@ -10,6 +10,7 @@ add_library(mc2vr_carrier SHARED
     vp_camera.cpp
     eye_replay.cpp
     eye_share.cpp
+    hud_timing.cpp
     ipc.cpp
     log.cpp
     # Diagnostic/instrumentation modules (mostly conf-gated, default off).

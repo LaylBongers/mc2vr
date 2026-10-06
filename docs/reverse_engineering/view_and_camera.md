@@ -104,3 +104,6 @@ row-major, clip_i = dot(VP_row_i, worldpos)
   `ViewContextRecord`'s VP rows to log the writer's EIP (SecuROM anti-debug is documented inert, but untested
   for DRx).
 - `g_RenderQueue2` consumption timing relative to Present (HUD handling needs the 2D stream's frame timing).
+  RESOLVED (S4-5, 2026-10-06): consumed once per frame between SubmitToGPU entry and pass-1's BeginSubmit
+  Present (frozen through both pass walks) — HUD drawn into both eyes; see render_path.md queue counter item
+  and the `g_RenderQueue2` plate.

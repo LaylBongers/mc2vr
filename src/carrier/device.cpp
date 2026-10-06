@@ -11,6 +11,7 @@
 #include "game_addresses.h"
 #include "eye_replay.hpp"
 #include "hooks.hpp"
+#include "hud_timing.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
 
@@ -230,6 +231,9 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
     if (!g_params_logged) {
         log_present_params(); // main thread — first Present is the safe point
     }
+
+    // S4-5 HUD timing: Present is a per-frame phase sample point.
+    hud::on_present();
 
     // 10s call-pattern report — the runtime pinning evidence: Present /
     // EndScene / BeginScene counts must track the FrameTick frame count 1:1.

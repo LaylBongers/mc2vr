@@ -17,9 +17,28 @@ The M4 design now lives in `stereo_design.md` (incl. the distilled evidence for 
 - Build lock: carrier verifies exe size + SHA-256 on disk against `src/carrier/build_lock.h`, refuses to hook on mismatch. Regenerate after re-RE: `tools/gen-build-lock.sh <exe>`.
 - `tools/selftest/run.sh`: full chain test under plain Wine using a sleeper stand-in (base 0x400000 + ticking counter at the literal VA). Also verifies build-lock refusal. Run after carrier changes.
 
+## Live-run workflow & healthy signatures
+
+Iteration loop: the agent implements/logs; the human runs `./launch.sh` into GAMEPLAY (SteamVR up) and
+reports; the agent audits `<GAME_DIR>/mc2vr/mc2vr_{carrier,host,launcher}.log` (`GAME_DIR` from
+`launch.conf`; `tools/analyze_dumps.py <log>` parses view/S2c/eye evidence). Win64 host build:
+`cmake -B build/win64 -DCMAKE_TOOLCHAIN_FILE=cmake/x86_64-w64-mingw32.cmake` →
+`build/win64/bin/mc2vr_host.exe`. Selftest needs an unsandboxed terminal (`mkdir -p /tmp/opencode`
+first). Pure camera math: `tools/test/test_vp_camera.cpp` (native g++, one-line build in its header).
+`launch.sh` deploys with `cp -u` (binaries) / `cp -n` (conf — the deployed `mc2vr.conf` is never
+overwritten; edit it in place). Env: `MC2VR_NO_HOST` (skip host), `MC2VR_IPC_NAME` (section name
+override). Deployed conf steady state: `frame_replay=on eye_pass=on eye_rt=on eye_monitor_pin=on
+eye_share=on view_row_rewrite=hmd vsync=off` (in-tree defaults stay host-less + vsync=on).
+
+Healthy-run signatures: host `submit: blit shaders ready`, `openxr: using swapchain format 91`,
+`submit: window fresh/reused/pattern=0`, `submit: pose ids miss=0`; carrier `share window:` ~1330
+L/R per 10 s with `ringFull=0` (≈ game fps × 10), `view/hmd: split=0 decompFail=0`; game cadence with
+`vsync=off`: `FrameTick: dt avg` ~7.4 ms (~135 Hz). Pulsing test pattern in the HMD = carrier pipeline
+not talking (`eye_share=off` or host not receiving).
+
 ## HMD host process (S4)
 
-`mc2vr_host.exe` (x86_64 mingw; `cmake -B build/win64 -DCMAKE_TOOLCHAIN_FILE=cmake/x86_64-w64-mingw32.cmake && cmake --build build/win64` → `build/win64/bin/`; a 64-bit configure builds ONLY the host, a 32-bit configure the game side) runs in the same Proton prefix with DXVK D3D11 (`proton run`; plain `wine` only works with `--mock`) and owns the OpenXR session, presentation and event pump. `launch.sh` deploys it beside the carrier; the launcher spawns it before the game and waits for its `mc2vr_host: ready` log line (non-fatal on early exit/timeout/missing exe; env `MC2VR_NO_HOST` skips). Rules: the host never blocks the game and the carrier never blocks on the host (no host ⇒ game runs as before, logged once); log `mc2vr_host.log` in the deploy dir; the host is our own process (not subject to the SecuROM/hooking rules). Host exits on carrier `Shutdown` or game exit. Selftest: phase A host lifecycle line, phase B `--mock` ↔ probe round trip. Design, IPC contract, Proton/OpenXR gotchas: `stereo_design.md` §S4; status and next steps: `s4_handover.md`.
+`mc2vr_host.exe` (x86_64 mingw; `cmake -B build/win64 -DCMAKE_TOOLCHAIN_FILE=cmake/x86_64-w64-mingw32.cmake && cmake --build build/win64` → `build/win64/bin/`; a 64-bit configure builds ONLY the host, a 32-bit configure the game side) runs in the same Proton prefix with DXVK D3D11 (`proton run`; plain `wine` only works with `--mock`) and owns the OpenXR session, presentation and event pump. `launch.sh` deploys it beside the carrier; the launcher spawns it before the game and waits for its `mc2vr_host: ready` log line (non-fatal on early exit/timeout/missing exe; env `MC2VR_NO_HOST` skips). Rules: the host never blocks the game and the carrier never blocks on the host (no host ⇒ game runs as before, logged once); log `mc2vr_host.log` in the deploy dir; the host is our own process (not subject to the SecuROM/hooking rules). Host exits on carrier `Shutdown` or game exit. Selftest: phase A host lifecycle line, phase B `--mock` ↔ probe round trip. Design, IPC contract, Proton/OpenXR gotchas: `stereo_design.md` §S4; S4 status/record (events/pacing/HUD, all live-verified): `stereo_design.md` §S4-5.
 
 ## Launch sequence (launcher)
 
@@ -57,7 +76,7 @@ The M4 design now lives in `stereo_design.md` (incl. the distilled evidence for 
 | `RenderCmd_ExecuteStream` | `0x008569d0` | MidHook at opcode cmp `0x008569f5` (EAX=opcode, 27 ops) | M3 histogram + S2c stream tap — installed |
 | `RenderQueue_SubmitWorldPackets` | `0x0048e620` | MidHook at view-loop lea `0x0048e9ea` (ESI=idx, ECX=type, EAX=off; entry+0x7e4 = per-view object; 3rd table `0x014095e0` stride 0x20) | M3 view aggregation — installed. S0-mapped, uninstalled: staging `0x0048ef71` (superseded S3 clone site), iterator `0x0048f013` (re-emit fallback) |
 | `g_RenderShell` slots 4/5 (`EndOfFrameHook`/`PostUpdateHook`) | live vtable = base `LtiRenderer_vtbl` `0x00bd38e8`; object `0x017ceaf0` (=`*g_RenderShellPtr` `0x00dfb2f8`) | cloned-vtable swap (VmtHook), counting no-op handlers | M3 claim PROVEN 1:1 with frames. S4-5: slot-5 handler is now the host-event drain point (`ipc::drain_events()` — session-state/recenter logs; `MC2VR_MSG_EXIT` → one-shot `WM_CLOSE` to the game's root window via HWND global `0x01175274`). Risk (unobserved): the `0x00a7d950` reinit fragment reinstalls the original vtable — re-claim on device-lost if counts stop |
-| `g_RenderQueue` counters | `0x00ff3618` | poller thread (250ms), 10s window reports | M3 producer rhythm — installed (ambient telemetry). S0: halves resolved — producers do `countersB(+0x14).low += count`, `countersA(+0x10).high += count`; `countersA.low` advanced only by the VM'd consumer (explains M3's "ring position" wrap). |
+| `g_RenderQueue` counters | `0x00ff3618` | poller thread (250ms), 10s window reports | M3 producer rhythm — installed (ambient telemetry). S0: halves resolved — producers do `countersB(+0x14).low += count`, `countersA(+0x10).high += count`, spin-wait until the consumer-derived position `(countersA.low + countersA.high) % capacity` matches the producer slot `(countersB.low + countersA.low) % capacity`. `countersA.low` is advanced only by the CONSUMER — which is SecuROM-VM'd (no plaintext writer), explaining M3's "ring position" wrap. Old packed-pair spin model: close, but the halves' roles were swapped. S4-5 HUD timing (`src/carrier/hud_timing.cpp`, ambient): samples queue1+queue2 counters at Present + `set_pass` boundaries, 10s per-phase consumer/producer deltas (`hud2:` lines; queue2 = 2D/overlay) |
 | viewContextData upload gate | `0x00855a78` | MidHook | DONE: `cmp [edi+0xd8],0` in PgPrimitive_SubmitToGPU before the gated Dx9_SetVertexShaderConstantF call; EDI = CURRENT technique — publishes exact viewContextData reg/count (+0xd4/+0xd8) + ViewProj (+0xdc/+0xe0) to the device-level rewriter |
 
 Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device vtable is the one sanctioned vtable patch (via clone). NOTE (S0): the ring/packet interpreter is itself VM-protected (stub `0x0050f660` via call site `0x004c99f9`) — probe it by bracketing the plaintext call sites, never by hooking the stub.
@@ -71,7 +90,7 @@ Rules: plaintext `.text` only; never `0x01a48000+` or VM-stub thunks; the device
   - Slot 4/5 claim (VmtHook clone on `g_RenderShell`): **PROVEN** — 1:1 with frames through everything; no vtable reinstalls.
   - View entry field map and view-loop facts moved to `reverse_engineering/view_and_camera.md`.
   - Carrier keeps the M3 instrumentation as ambient telemetry for future runs.
-- M4: stereo rendering (design and status: `stereo_design.md`). **S0/S1/S2 (incl. S2c second draw pass) COMPLETE and live-verified** (the draw camera never surfaces in patchable plaintext data — the GPU-boundary `SetVertexShaderConstantF` rewrite is the per-eye channel). Remaining: S4 HMD presentation + pose via the separate 64-bit OpenXR host (`s4_handover.md`; design `stereo_design.md` §S4). OpenVR is not used; OpenXR is not possible inside the 32-bit DX9 game process, hence the host. The carrier now loads before the game creates its device (early attach), so creation params can be changed at `Direct3DCreate9`/`CreateDevice` instead of via device-lost + `Reset`; the shared-texture copy needs no swapchain changes.
+- M4: stereo rendering (design and status: `stereo_design.md`). **S0/S1/S2 (incl. S2c second draw pass) COMPLETE and live-verified** (the draw camera never surfaces in patchable plaintext data — the GPU-boundary `SetVertexShaderConstantF` rewrite is the per-eye channel). **S4 (S4-0..S4-5, HMD presentation via the separate 64-bit OpenXR host) COMPLETE and live-verified 2026-10-06** — events, pacing (`vsync=off`, free-run ~135 Hz) and HUD all resolved; record: `stereo_design.md` §S4-5. OpenVR is not used; OpenXR is not possible inside the 32-bit DX9 game process, hence the host. The carrier loads before the game creates its device (early attach), so creation params are changed at `Direct3DCreate9`/`CreateDevice` (the vsync-unlock mechanism) instead of via device-lost + `Reset`; the shared-texture copy needs no swapchain changes.
 
 ## Motion-control / logic-mod track (long-term)
 

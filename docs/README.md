@@ -10,10 +10,11 @@ Two kinds of documentation:
 
 | Doc | Read it for |
 |---|---|
-| `launcher_plan.md` | Launcher/carrier architecture, build/test, proven mechanism rules, hook inventory, milestone history (M0–M4) |
-| `stereo_design.md` | Stereo design + status (S0–S5), the view-rewrite channel, S2c second pass, OpenXR host/IPC (S4), HMD camera (S4-4), frame-level hook strategy |
-| `s4_handover.md` | Active brief: S4 status, S4-5 task list (events/pacing/HUD), live-run workflow, hard rules |
+| `launcher_plan.md` | Launcher/carrier/host architecture, build/test/live-run workflow + healthy-run log signatures, proven mechanism rules, hook inventory, milestone history (M0–M4) |
+| `stereo_design.md` | Stereo design + status (S0–S5), the view-rewrite channel, S2c second pass, OpenXR host/IPC (§S4), HMD camera (§S4-4), the S4-5 record (events/pacing/HUD) incl. the **known reprojection-staleness issue (must fix eventually)**, frame-level hook strategy |
 | `render_diagram.svg` | Frame flow with the opaque VM stub and every MC2VR hook point (keep in sync when hooks change) |
 
 Per-address facts live in the Ghidra project (plates, labels, structs). Config keys are documented in
-`conf/mc2vr.conf` (debug tools: `debug_*`, code in `src/carrier/debug/`).
+`conf/mc2vr.conf` (debug tools: `debug_*`, code in `src/carrier/debug/`). Per-milestone handover briefs
+were dissolved into the long-lived docs once each milestone closed (history in git,
+`git log --follow -- docs/*_handover.md`).

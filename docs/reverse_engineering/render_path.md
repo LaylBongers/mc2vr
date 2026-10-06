@@ -90,7 +90,18 @@ Navigate from the named symbols (all plate-commented). Only the non-obvious rule
 - `DAT_017d1818` / `DAT_017d2a94` — vtable'd singletons used by the type-8/9 passes (surface/rect providers); unidentified.
 - The two frame-preamble hash keys (`0x5e84ea6d`, `0x16085a8d`, both with low dword `0xf011157a`) — presumed the two named world views; reverse the name strings if a registry-writer is found.
 
-- Producer counter semantics in `g_RenderQueue` — **RESOLVED (S0)**: two packed 16-bit halves at +0x10 (countersA) and +0x14 (countersB). Producers (single-element and bulk paths in `SubmitWorldPackets`, plus the other nine producers) do: `countersB.low += count`, `countersA.high += count`, spin-wait until the consumer-derived position `(countersA.low + countersA.high) % capacity` matches the producer slot `(countersB.low + countersA.low) % capacity`. `countersA.low` is advanced only by the CONSUMER — which is SecuROM-VM'd (no plaintext writer), explaining M3's "queue+0x10 wraps like a ring position" and "+0x14 stayed 0" observations. Old packed-pair spin model: close, but the halves' roles were swapped.
+- Queue counter semantics — **RUNTIME-RESOLVED (S4-5 HUD measurement, 2026-10-06, live-verified menu +
+  gameplay via `hud2 raw` bursts)**: `+0x10` high16 = pending-unconsumed element count (producers `+=`
+  during the frame — visible nonzero at SubmitToGPU entry; the VM consumer CLEARS it and advances low16
+  between SubmitToGPU entry and BeginSubmit's Present); `+0x10` low16 = ring position (moves on
+  publish/consume; FROZEN during both pass walks and the inter-pass gap — `p1=b2=p2=b0` in every sampled
+  frame); `+0x14` NEVER moves at runtime (unused by the live path — the S0 static model's
+  `countersB.low += count` producer step does not manifest). The static packed-halves model was close on
+  the halves' roles but wrong on their meaning and the consume timing. CONSUMPTION POINT: both queues are
+  fully consumed BEFORE pass 1 begins drawing (inside pass-1 SubmitToGPU, pre-BeginSubmit) — this also
+  refines the frame chain: the VM interpreter's consume effect lands inside the pass-1 submit window, and
+  HUD/2D records therefore exist in the record table both passes walk (S4-5 HUD conclusion: one-eye HUD
+  impossible; see docs/stereo_design.md §S4-5).
 - `g_RenderQueue2` (`0x00ff3650`) consumer — **narrowed (S0)**: its pointers sit inside the same 0x680 frame-ctx block handed per element; the VM interpreter at `0x0050f660` (call site `0x004c99f9`) is the prime suspect for consuming BOTH queues.
 - View/portal table walk — **RESOLVED (S0)**: intrusive linked list; `DAT_00d29e60` = head INDEX (M3 "registered-view count" label wrong; also stored to frame-ctx `+0xd2a10`), link `ViewEntry+0x4`, negative terminates. Per-view element format, camera staging sites, and the 768-element staging cap are on the `SubmitWorldPackets` plate comment.
 - `GameState3_Update` / `GameState2_Frontend_Update` internals — named by position, semantics unexplored.

@@ -10,6 +10,7 @@
 #include <new>
 
 #include "hooks.hpp"
+#include "hud_timing.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
 #include "device.hpp"
@@ -557,6 +558,10 @@ void set_pass(uint32_t pass)
     if (pass == g_pass) {
         return;
     }
+
+    // S4-5 HUD timing: boundary sample point (pass = the NEW pass; 1 =
+    // pass-1 start, 2 = pass 1 done, 0 = pass 2 done). Main thread.
+    hud::on_boundary(pass);
 
     // Dump window opens on a frame boundary (0 -> 1) so left/right dumps of
     // one frame land as a pair (left at 1->2, right at 2->0).

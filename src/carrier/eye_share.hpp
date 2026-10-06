@@ -1,5 +1,4 @@
-// S4-2: shared-handle image path — carrier side (docs/stereo_design.md §S4,
-// docs/s4_handover.md S4-2).
+// S4-2: shared-handle image path — carrier side (docs/stereo_design.md §S4).
 //
 // At the pass boundaries the backbuffer holds the per-eye tonemapped LDR
 // finals (1->2 = pass-1 LEFT, 2->0 = pass-2 RIGHT before the monitor-pin

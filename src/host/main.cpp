@@ -1,4 +1,4 @@
-// mc2vr_host: 64-bit OpenXR/D3D11 host (S4). See docs/s4_handover.md.
+// mc2vr_host: 64-bit OpenXR/D3D11 host (S4). See docs/stereo_design.md §S4.
 //   mc2vr_host.exe [--mock] [--frames N] [--xr-debug] [--ipc-name NAME]
 // Logs to mc2vr_host.log beside the exe; the launcher waits for the
 // "mc2vr_host: ready" line there. The IPC section is created BEFORE the

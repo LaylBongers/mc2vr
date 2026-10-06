@@ -12,8 +12,17 @@ Mechanism rules and hook list: `launcher_plan.md`. Overview diagram: `render_dia
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`) |
-| S4 HMD presentation | **S4-0..S4-4 COMPLETE + LIVE-VERIFIED 2026-10-05**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (full VP replacement, §S4-4). S4-5 (events/pacing/HUD) not started; brief + task list in `s4_handover.md` |
-| S5 motion controls | not started |
+| S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (full VP replacement, §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below |
+| S5 motion controls | not started — NEXT |
+
+> **KNOWN ISSUE — reprojection staleness (MUST BE FIXED EVENTUALLY, do not lose track of it).**
+> During head motion there is visible apparent stutter/micro-judder that vanishes when the head is held
+> still. This is NOT frame drops (frame timing is steady, dt min 5.8–7.8 ms) — it is the OpenXR
+> compositor extrapolating the newest submitted pair (0–7 ms old at ~135 Hz game / ~120 Hz host),
+> whose error scales with head velocity. Accepted for now (closed the pacing decision as free-run on
+> 2026-10-06); it is the single biggest remaining VR-experience defect and is expected to be addressed
+> after S5 motion controls (or during, if it blocks accurate aiming). Fix options and details: §S4-5
+> pacing decision.
 
 ## Verified-in-game record
 
@@ -125,10 +134,10 @@ Code: `src/carrier/debug/stream_capture.cpp` (stream tap + replay hook), `src/ca
   (SAD 2.16 vs 3.28 at shift-0; `debug_eye_dump_frames`, `tools/analyze_dumps.py`).
 - **Monitor pin** = backbuffer SNAPSHOT before pass 2 / RESTORE after (suppressing backbuffer writes
   is wrong under SwapEffect=DISCARD — stale driver page, live-observed); stable and free.
-- Details: `s4_handover.md`; run-by-run record in git history
+- Details: §S4 (asset flow) and §S4-5 (record); run-by-run history in git
   (`git log --follow -- docs/s2c_handover.md`).
 
-### S4 — Presentation / HMD runtime (OpenXR host process) — S4-0..S4-4 COMPLETE, live-verified
+### S4 — Presentation / HMD runtime (OpenXR host process) — S4-0..S4-5 COMPLETE, live-verified
 
 **Why a host process**: the game is 32-bit + D3D9 (DXVK); Valve's OpenXR driver has no 32-bit+DX9 support. A
 **64-bit host exe in the same Wine prefix** (`src/host/` → `build/win64/bin/mc2vr_host.exe`, statically
@@ -195,15 +204,11 @@ DWORD `state`=1 (normally published by vrclient_x64 for an OpenVR app; state=2 f
 space, per-eye swapchains 2016×2240 ×3 images, runtime `SteamVR/OpenXR 2.17.10`, `ActiveRuntime` →
 `C:\openxr\wineopenxr64.json`.
 
-**Open risks / items**: HUD in-composite or not and `g_RenderQueue2` timing (S4-5); pacing step 1
-live-verified (vsync unlock, see below); if per-eye RTs ever can't differ
-at the D3D level, fall back to single-backbuffer interop blit.
-Session events (S4-5): the slot-5 PostUpdateHook drains the host event ring
-(state/recenter logged; `MC2VR_MSG_EXIT` → one-shot `WM_CLOSE` to the game's
-root window — the engine pump's quit path is VM-protected so the message is
-the signal; the host pushes EXIT only for runtime-initiated ends via its
-`selfExit` flag). Focus lost needs no carrier action: host submission is
-gated on `shouldRender` (zero layers while not VISIBLE/FOCUSED).
+**Open risks / items**: if per-eye RTs ever can't differ at the D3D level, fall back to
+single-backbuffer interop blit. HUD was resolved (see §S4-5) — the host quad-layer idea is dead.
+Deferred (accepted): the second per-frame Present presents identical pinned-LEFT content; with
+`vsync=off` it is a non-blocking blit and was deliberately left in place (re-evaluate only if
+compositor pressure is implicated in the staleness issue).
 
 ### S4-4 — HMD camera replacement (COMPLETE, live-verified 2026-10-05)
 
@@ -235,6 +240,64 @@ of that id, so the compositor reprojects from what the image actually contains.
 Open: unit scale (`view_world_scale`, unverified), engine culling against the game
 frustum, non-`viewContextData` shaders / PS camera data (rotation exposes these),
 split VP uploads (counted: `view/hmd: split=`), handedness/sign validation live.
+
+### S4-5 — Session events, pacing, HUD (COMPLETE, live-verified 2026-10-06)
+
+**Session events.** The host event ring is drained at the slot-5 `PostUpdateHook`
+(`ipc::drain_events()`, main thread, once per frame; the 250 ms IPC monitor thread never pops —
+SPSC ring, one consumer). `SESSION_STATE` transitions are logged; `RECENTER` is logged only (nothing
+to apply — the camera consumes live HMD poses, so a reference-space change propagates at the next
+pass-1 pose sample by construction); `MC2VR_MSG_EXIT` = one-shot `WM_CLOSE` to the game's root window
+(HWND global `0x01175274`; the pump/WndProc quit path is VM-protected — `PostQuitMessage`/`GetMessageA`
+are only SecuROM-region references — so the window message is the clean-quit signal; engine pump exits →
+carrier pid dies → host follows via its death watch). The host pushes EXIT only for runtime-initiated
+ends (session EXITING/LOSS_PENDING or instance loss without a prior self-initiated `xrRequestExitSession`
+— `State::selfExit` flag at the Shutdown-cmd/carrier-death/frame-limit sites). Focus lost needs no
+carrier action: the host gates layer submission on `shouldRender` (zero layers while not
+VISIBLE/FOCUSED, Begin/End keeps cadence), and the game keeps running with the camera pass-through
+(`view/hmd: valid=0`). Live-verified: SteamVR recenter ×2 (→ `session: recenter #N`, view stable
+`split=0 decompFail=0`), SteamVR quit in-game (→ EXIT chain → `WM_CLOSE` → clean game exit, no
+FATAL lines), HMD standby (→ session SYNCHRONIZED + `valid=0` pass-through, submission pauses, clean
+recovery).
+
+**Pacing.** The frame's two Presents (present-prev at each `BeginSubmit`) were vsync-locked 60 Hz,
+capping the game at ~30 Hz (~600 Presents vs ~300 frames per 10 s — live-log-proven). Fix: conf key
+`vsync=off` forces `D3DPRESENT_INTERVAL_IMMEDIATE` at CreateDevice via a stage-1 InlineHook of the
+game's `Direct3DCreate9` IAT thunk (`0x00a4e892`, single caller `RenderSystem_Init`) + an `IDirect3D9`
+VmtHook on `CreateDevice` (slot 16); the device-level `Reset` hook re-patches on Reset (the engine's
+own CreateDevice call site is VM-gated — `FUN_0074c9b0` → ptr `0x024cd09c`, never hooked). Live result:
+~135 Hz gameplay (dt avg ~7.4 ms; pass 2 costs 3.2 ms — the 30 Hz was pure vsync wait), steady under
+full VR load, host ~120 Hz `pose ids miss=0`.
+
+**Pacing decision — FREE-RUN (closed 2026-10-06).** At ~135 Hz the game outpaces the ~120 Hz host;
+the host consumes the newest pair and the runtime reprojects. Adaptive-framerate bypass
+(`g_FrameratePolicy` / `AdaptiveFramerate_Govern`) stayed unneeded — no dt-related instability at
+~135 Hz. **KNOWN ARTIFACT, MUST BE FIXED EVENTUALLY** (see the callout above the status table):
+apparent stutter during head motion that vanishes when the head is still = reprojection staleness,
+not frame drops. Fix options, in preference order: (a) timewarp inputs — feed motion vectors/late-stage
+data via slot-4 `EndOfFrameHook` so the compositor reprojects accurately instead of extrapolating;
+(b) throttle the game to HMD cadence (slot-4) so pairs are always fresh at submit time; (c) the
+deferred second-Present suppression if compositor pressure is implicated.
+
+**HUD/2D — RESOLVED, no fallback needed.** `g_RenderQueue2` (`0x00ff3650`, 2D/overlay) has no
+plaintext consumer (the frame-ctx hands `&g_RenderQueue2` to the VM interpreter), so the carrier
+sampled both queues' counters at the per-frame phase points (Present×2 + the three `set_pass`
+boundaries — `src/carrier/hud_timing.cpp`, now a one-shot raw diagnostic). Result: both queues are
+fully consumed between SubmitToGPU entry and pass-1's BeginSubmit Present, and are FROZEN from `p1`
+through `b0` — identical values through both pass walks and the inter-pass gap, every sampled frame,
+menu and gameplay. The interpreter therefore builds the 2D/HUD draw records once per frame BEFORE
+pass 1 draws, and pass 2 re-walks the same record table (S2c-1-proven) — the HUD lands in both eyes'
+composites and both per-eye captures contain it. The one-eye-HUD scenario is structurally impossible;
+the host quad-layer fallback is dead. Side finding: the queue counter protocol was re-derived at
+runtime (`render_path.md` open items; `+0x10` high16 = pending-unconsumed count cleared by the
+consumer pre-Present, low16 = ring position frozen during passes, `+0x14` unused — the S0 static
+model was wrong).
+
+**S4-4 follow-ups (backlog, can interleave with S5):** measure `view_world_scale` (game units/metre —
+unverified default 1.0; the 0.065 IPD was never checked); engine culling still uses the GAME camera
+frustum (edge pop-in at wide FOV / head turns — check whether the game FOV is reachable);
+non-`viewContextData` shaders, PS-side camera data and texgen stay mono/lag with rotation; pixel density
+of 2560×1440 over a ~100°+ eye frustum.
 
 ### S5 — Motion controls (separate track)
 
@@ -291,7 +354,9 @@ data. **Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
   S4-5 first step LIVE-VERIFIED (2026-10-06): `vsync=off` breaks the game's
   vsync lock (IMMEDIATE interval at CreateDevice/Reset via the Direct3DCreate9 thunk
   InlineHook + IDirect3D9 VmtHook, `src/carrier/device.cpp`) — the game runs ~135 Hz
-  (7.4 ms/frame; the wait was the cost, not the GPU). Free-run currently healthy: game
-  (135 Hz) outpaces the host (~120 Hz), `pose ids miss=0`, host consumes the newest pair.
-  Whether to additionally pace the game to the HMD (slot-4 `EndOfFrameHook`) is the
-  remaining decision — run-free is the current default.
+  (7.4 ms/frame; the wait was the cost, not the GPU). DECISION CLOSED: FREE-RUN (2026-10-06)
+  — healthy end-to-end (game 135 Hz > host 120 Hz, `pose ids miss=0`, host consumes the
+  newest pair). KNOWN ARTIFACT, revisit later: apparent stutter during head motion that
+  vanishes when still = reprojection staleness (extrapolation error scales with head
+  velocity); candidate fixes = timewarp inputs or HMD-cadence throttle via slot-4
+  `EndOfFrameHook`. Adaptive-framerate bypass stayed unneeded (no dt instability at 135 Hz).

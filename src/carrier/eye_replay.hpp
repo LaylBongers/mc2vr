@@ -1,4 +1,4 @@
-// S2c-2: per-eye draw passes (docs/stereo_design.md §S2, docs/s4_handover.md).
+// S2c-2: per-eye draw passes (docs/stereo_design.md §S2, §S4).
 //
 // With frame_replay=on (S2c-1) the frame is submitted twice. This module makes
 // the two passes a real stereo pair:
