@@ -10,10 +10,11 @@ Mechanism rules and hook list: `launcher_plan.md`. Overview diagram: `render_dia
 | Phase | State |
 |---|---|
 | S0 loop-body RE | complete |
-| S1 draw-camera hunt | complete — the camera is only reachable at the GPU boundary |
+| S1 draw-camera hunt | complete — GPU-boundary channel proven; 2026-10-06 correction: the record itself + (pending E2) the upstream ViewEntry pose are additional candidate channels (`stereo_improvements_plan.md`) |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`) |
-| S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (full VP replacement, §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below |
+| S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (full VP replacement, §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below; improvement plan: `stereo_improvements_plan.md` |
 | S5 motion controls | not started — NEXT |
+| S6 frustum-culling alignment | RE COMPLETE 2026-10-06 (culling chain all-plaintext, change-gated; `reverse_engineering/view_and_camera.md` § camera-data accessors) — design drafted, not implemented: `frustrum_cull_plan.md`; experiments E1–E3 in `stereo_improvements_plan.md` unblock parts of it |
 
 > **KNOWN ISSUE — reprojection staleness (MUST BE FIXED EVENTUALLY, do not lose track of it).**
 > During head motion there is visible apparent stutter/micro-judder that vanishes when the head is held
@@ -297,9 +298,12 @@ consumer pre-Present, low16 = ring position frozen during passes, `+0x14` unused
 model was wrong).
 
 **S4-4 follow-ups (backlog, can interleave with S5):** measure `view_world_scale` (game units/metre —
-unverified default 1.0; the 0.065 IPD was never checked); engine culling still uses the GAME camera
-frustum (edge pop-in at wide FOV / head turns — check whether the game FOV is reachable);
-non-`viewContextData` shaders, PS-side camera data and texgen stay mono/lag with rotation; pixel density
+unverified default 1.0; the 0.065 IPD was never checked); engine culling vs the game camera frustum —
+**RESOLVED as a track (2026-10-06)**: the culling-input chain is fully RE'd (plaintext, change-gated,
+culminating in `ViewEntry_DeriveCullTask` `0x00876a90`); design in `frustrum_cull_plan.md` (§S6);
+non-`viewContextData` shaders, PS-side camera data and texgen stay mono/lag with rotation (improvement
+path now drafted: `stereo_improvements_plan.md` - record-level per-eye rewrite + upstream-ViewEntry
+experiment E2); pixel density
 of 2560×1440 over a ~100°+ eye frustum.
 
 ### S5 — Motion controls (separate track)
@@ -307,6 +311,18 @@ of 2560×1440 over a ~100°+ eye frustum.
 Follows the logic-mod track in `launcher_plan.md` (XInput stubs
 `0x00a64d56/0x00a64d5c`, idle-reset buffer pair `0x017d30e8`/`0x00f7fb90`
 first). Pose/input marshal point is the slot-5 hook (S4); controller poses and button/axis state arrive from the host's OpenXR actions over the same IPC.
+
+### S6 — Frustum culling alignment (design drafted, not implemented)
+
+Align engine frustum culling + LOD with the HMD (head rotation, widened FOV). RE complete 2026-10-06 via the
+carrier `debug_watch` hardware-watchpoint tooling; full evidence in
+`reverse_engineering/view_and_camera.md` § camera-data accessors, design in **`frustrum_cull_plan.md`**.
+Headlines: the culling volume is built by the plaintext task `ViewEntry_DeriveCullTask` (`0x00876a90`)
+from ViewEntry fov/slot/pose fields; the whole pipeline is serial-gated (write fields + bump serials to
+propagate); pose VALUES originate in the VM via the staged-block round-trip (copy-back at `0x0048F72D`);
+no VM involvement in the culling math itself. Injection: identify the main draw view at runtime by
+matching slot matrices against the S4-4 decomposed draw-camera basis, write HMD-union pose + widened
+FOV into that ViewEntry, bump the serial.
 
 ## Hook strategy (frame level)
 

@@ -11,7 +11,7 @@ and open items. Check here before researching anything. Mod implementation notes
 | `pandemic_engine.md` | Engine naming layers, identification oracles, name hashing, render data model, decompiler idioms |
 | `main_game_loop.md` | How the game loop was located, timing/input facts, open items |
 | `render_path.md` | Threading, frame driver chain, VM stub callbacks, D3D device slots, Dx9 state wrapper, queue counters |
-| `view_and_camera.md` | Where the draw camera lives, `viewContextData` layout, technique constant map, view table/queue, open RE items |
+| `view_and_camera.md` | Where the draw camera lives, `viewContextData` layout, technique constant map, view table/queue, **§ camera-data accessors: the watch-proven culling data flow (all plaintext, change-gated, `ViewEntry_DeriveCullTask 0x00876a90`; pose values originate in the VM via the staged round-trip)**, the `debug_watch` tooling lessons, open RE items |
 | `shader_ctab_map.md` | Generated VS constant-register map (`tools/shader_ctab.py`) |
 | `vtables.md` | Recipe for annotating vtables in Ghidra |
 | `ghidra-reva.md` | ReVa MCP usage notes and tool-call gotchas |

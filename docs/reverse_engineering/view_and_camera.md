@@ -10,10 +10,14 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
 - **The draw camera is external to the view system.** The plaintext consumer path (the `PgPrimitive`
   record walk, `0x58` stride) carries only table indices (material/technique/env/view-context/view-scale/
   screen) and draw params. Patching `ViewEntry` fields, staging slots, the camera ring, frame-ctx blocks
-  or the pose-record store never moved the draw camera (they are derived copies feeding streaming/
-  culling). The camera crosses plaintext code only as interpreter-issued D3D constant uploads, so the
-  GPU boundary is the only place the camera can be changed. Producer-side duplication cannot work: the
-  consumer never reads view camera data.
+  or the pose-record store never moved the draw camera in the M3-era experiments. **CORRECTION
+  (2026-10-06):** those patches predate the discovery of the serial change-gating and the staged-block
+  ROUND-TRIP (§ Camera-data accessors below) — the VM'd consumer demonstrably reads AND writes the
+  staged camera block (copy-back at 0x0048F72D), so "the consumer never reads view camera data" was
+  wrong as an absolute. Whether the VM's draw-camera DERIVATION consumes the staged pose as input is
+  still open — decisive experiment E2 in `docs/stereo_improvements_plan.md`. Until then the GPU
+  boundary (or the record itself, I1 there) remains the proven draw-camera channel; the ViewEntry
+  upstream path is proven for CULLING inputs only (docs/frustrum_cull_plan.md).
 - **There is NO fixed-function projection** — `SetTransform` is never called. The projection is folded into
   the `viewContextData` VP rows.
 - **Source of `viewContextData`**: the per-view render-context record (`g_ViewContextTable` `0x01169774`,
