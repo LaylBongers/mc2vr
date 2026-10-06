@@ -74,6 +74,18 @@
 #define MC2_LTIRENDERER_DX9STATE_OFF ((uintptr_t)0x5bcu)
 #define MC2_GETD3DDEVICE_THUNK ((uintptr_t)0x0047f2f0u)
 
+// Direct3DCreate9 IAT thunk (6 bytes: JMP dword ptr [0x00b05620], the D3D9.DLL
+// import slot), plaintext .text, single caller: RenderSystem_Init
+// (0x0074c7a0, call at 0x0074c7e6, SDK version 0x20, result stored to g_D3D9
+// 0x01175284). The IDirect3D9::CreateDevice call itself happens behind the
+// VM/gate trampoline FUN_0074c9b0 (indirect through 0x024cd09c, inside the
+// SecuROM region — never hooked), so the plaintext way to reach device
+// creation params is: InlineHook this thunk, VmtHook the returned IDirect3D9
+// (CreateDevice = slot 16) and patch the D3DPRESENT_PARAMETERS there.
+// S4-5 pacing: vsync=off forces PresentationInterval=IMMEDIATE (two
+// vsync-locked Presents per frame cap the game at ~30 Hz).
+#define MC2_D3DCREATE9_THUNK ((uintptr_t)0x00a4e892u)
+
 // PgPrimitive_SubmitToGPU (0x00855690, plate on the function) — per-frame D3D
 // submission: BeginSubmit (Present prev + BeginScene + GPU-sync + RT set +
 // Clear) then the SecuROM-mutated per-record walk (state + ExecuteStream +

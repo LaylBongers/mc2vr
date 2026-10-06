@@ -153,6 +153,13 @@ static void load_conf()
             if (!share::set_enabled(value)) {
                 MC2VR_LOG("conf: eye_share=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "vsync") == 0) {
+            // S4-5 pacing: off = force D3DPRESENT_INTERVAL_IMMEDIATE at
+            // CreateDevice/Reset (the frame's two Presents are vsync-locked
+            // and cap the game at ~30 Hz).
+            if (!device::set_vsync(value)) {
+                MC2VR_LOG("conf: vsync=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "debug_eye_dump_frames") == 0) {
             uint32_t n;
             if (parse_count(key, value, &n)) {
@@ -347,6 +354,9 @@ void init()
 
     hooks::install();
     render::install_early();
+    // S4-5 pacing (vsync=off): must run while the game is still suspended —
+    // RenderSystem_Init calls Direct3DCreate9 during boot, before stage 2.
+    device::install_d3d9_gate();
     MC2VR_LOG("early init done"); // launcher's resume marker
 
     // ---- Stage 2: late. Needs the engine up (device, render shell).

@@ -21,6 +21,19 @@
 
 namespace mc2vr::device {
 
+// mc2vr.conf vsync=on|off (default on — the game's own PresentationInterval
+// is untouched). off = S4-5 pacing: force D3DPRESENT_INTERVAL_IMMEDIATE in
+// CreateDevice (via the Direct3DCreate9 thunk hook below) and on every Reset —
+// each frame has two Presents (one per draw pass) and both block on a 60 Hz
+// vsync slot, capping the game at ~30 Hz (live-log-proven 2026-10-05).
+bool set_vsync(const char *value);
+
+// Stage 1: InlineHook the game's Direct3DCreate9 import thunk
+// (MC2_D3DCREATE9_THUNK) and VmtHook the returned IDirect3D9 so CreateDevice
+// params can be patched before the device exists. No-op when vsync=on. Must
+// run before the game's first instruction (the game is suspended then).
+bool install_d3d9_gate();
+
 // Capture the device, log present parameters (from the first Present call),
 // and install the vtable hooks. Returns false on capture/install failure
 // (the game keeps running either way; failures are logged).

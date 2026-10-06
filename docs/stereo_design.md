@@ -115,8 +115,9 @@ Code: `src/carrier/debug/stream_capture.cpp` (stream tap + replay hook), `src/ca
 
 - **S2c-0** capture + census: full opcode table + interpreter facts on the
   `RenderCmd_ExecuteStream` Ghidra plate (dedupe global `0x011697b8` → replay must use copied pointers).
-- **S2c-1** second pass: stable 30 Hz (2 × 16.6 ms passes exceed the 60 Hz vsync budget — S4 pacing
-  owns the fix).
+- **S2c-1** second pass: was vsync-capped at 30 Hz (2 blocking presents exceed the 60 Hz budget);
+  S4-5 fix LIVE-VERIFIED 2026-10-06: `vsync=off` forces `D3DPRESENT_INTERVAL_IMMEDIATE` via the
+  Direct3DCreate9-thunk + IDirect3D9-VmtHook gate — game now ~135 Hz (pass 2 costs 3.2 ms).
 - **S2c-2** `eye_pass` (pass 1 = LEFT, pass 2 = RIGHT) + `eye_rt` (pass-2 device-level
   SetRenderTarget(0)/StretchRect redirect to a carrier backbuffer-sized eye RT). Without the monitor pin the two per-frame EndSubmit copies
   alternate L/R on the monitor (rapid horizontal oscillation = working temporal stereo).
@@ -277,7 +278,14 @@ data. **Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
 - `g_RenderQueue2` consumption timing relative to Present (HUD handling needs
   the 2D stream's frame timing; RE side in `view_and_camera.md`) — add queue2 counters when S4 starts.
 - GPU sync: every frame begins by waiting for all prior GPU work (event-query spin in `LtiRenderer_BeginSubmit`, see `reverse_engineering/render_path.md`). Per-eye passes inherit it; the pacing design must account for it (S2c replay happens after this point).
-- Frame pacing: game vsync-locked 60 Hz (30 Hz with two passes); HMD typically 90 Hz.
-  The host runs at HMD cadence independently and re-submits the newest pair with
-  runtime reprojection. Whether the game should be throttled to the HMD or run free
-  is decided in S4-5.
+- Frame pacing: game vsync-locked 60 Hz (30 Hz with two passes; live-log-proven
+  2026-10-05: ~600 Presents vs ~300 frames per 10s — one present-prev Present per pass at
+  `LtiRenderer_BeginSubmit`). HMD typically 90 Hz. The host runs at HMD cadence
+  independently and re-submits the newest pair with runtime reprojection.
+  S4-5 first step LIVE-VERIFIED (2026-10-06): `vsync=off` breaks the game's
+  vsync lock (IMMEDIATE interval at CreateDevice/Reset via the Direct3DCreate9 thunk
+  InlineHook + IDirect3D9 VmtHook, `src/carrier/device.cpp`) — the game runs ~135 Hz
+  (7.4 ms/frame; the wait was the cost, not the GPU). Free-run currently healthy: game
+  (135 Hz) outpaces the host (~120 Hz), `pose ids miss=0`, host consumes the newest pair.
+  Whether to additionally pace the game to the HMD (slot-4 `EndOfFrameHook`) is the
+  remaining decision — run-free is the current default.

@@ -6,6 +6,7 @@
 #include <d3d9.h> // types only; nothing here references Direct3DCreate9, so the carrier gains no d3d9.dll import
 
 #include <cstdint>
+#include <cstring>
 
 #include "game_addresses.h"
 #include "eye_replay.hpp"
@@ -47,6 +48,10 @@ constexpr size_t SLOT_UpdateTexture = 31;
 constexpr size_t SLOT_Surface_GetDesc = 12;
 // IDirect3DSwapChain9::GetPresentParameters
 constexpr size_t SLOT_SC_GetPresentParameters = 9;
+// IDirect3D9::CreateDevice (d3d9.h method order, cross-checked against the
+// game's observed use: RenderSystem_Init reads the adapter count through
+// IDirect3D9 vtable +0x10 = slot 4 GetAdapterCount).
+constexpr size_t SLOT_D3D9_CreateDevice = 16;
 
 using GetD3DDevice_t = void *(*)();
 
@@ -94,6 +99,69 @@ struct CallStat {
 
 CallStat g_present, g_beginscene, g_endscene, g_reset;
 LARGE_INTEGER g_qpc_freq = {};
+
+// ---- S4-5 pacing: vsync=off (CreateDevice/Reset interval patch) ----------
+// The frame's two Presents (present-prev at each BeginSubmit) each block on
+// a 60 Hz vsync slot -> ~30 Hz game (live-log-proven). vsync=off forces
+// D3DPRESENT_INTERVAL_IMMEDIATE so the game renders as fast as the passes
+// actually cost; the OpenXR host/runtime paces the HMD.
+bool g_present_immediate = false;
+SafetyHookInline g_d3dcreate9_hook;          // game's IAT thunk, stage 1
+safetyhook::VmtHook *g_d3d9_vmt_hook = nullptr;  // IDirect3D9, leaked by design
+safetyhook::VmHook *g_createdevice_hook = nullptr; // leaked by design
+
+HRESULT __stdcall createdevice_hook(void *self, UINT adapter, DWORD device_type,
+                                     HWND focus_window, DWORD behavior_flags,
+                                     D3DPRESENT_PARAMETERS *pp, void **out_device)
+{
+    if (pp != nullptr && g_present_immediate &&
+        pp->PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
+        MC2VR_LOG("vsync: CreateDevice params: %ux%u windowed=%u swapeffect=%u "
+                  "refresh=%u interval=0x%08x -> forcing IMMEDIATE",
+                  pp->BackBufferWidth, pp->BackBufferHeight, pp->Windowed,
+                  pp->SwapEffect, pp->FullScreen_RefreshRateInHz,
+                  pp->PresentationInterval);
+        pp->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    }
+    return g_createdevice_hook->stdcall<HRESULT>(self, adapter, device_type,
+                                                 focus_window, behavior_flags,
+                                                 pp, out_device);
+}
+
+// The game's Direct3DCreate9 thunk (jmp [0x00b05620]). The original is
+// reached through the trampoline — the carrier still gains no d3d9.dll
+// import. Main thread, called exactly once (RenderSystem_Init guards on
+// g_D3D9 NULL); the fresh IDirect3D9 is unshared at this point, so the VmtHook
+// (vptr swap, aligned store) is safe without thread suspension.
+void *__stdcall d3dcreate9_hook(UINT sdk_version)
+{
+    void *d3d = g_d3dcreate9_hook.stdcall<void *>(sdk_version);
+    if (d3d == nullptr || g_d3d9_vmt_hook != nullptr) {
+        return d3d;
+    }
+
+    auto vmt = safetyhook::VmtHook::create(d3d);
+    if (!vmt) {
+        MC2VR_LOG("vsync: IDirect3D9 VmtHook create failed (error %u) — "
+                  "CreateDevice params left as-is",
+                  (unsigned)vmt.error().type);
+        return d3d;
+    }
+    g_d3d9_vmt_hook = new safetyhook::VmtHook(std::move(*vmt)); // leaked by design
+
+    auto hook = g_d3d9_vmt_hook->hook_method(SLOT_D3D9_CreateDevice,
+                                             (void *)&createdevice_hook);
+    if (!hook) {
+        MC2VR_LOG("vsync: hook_method(CreateDevice, slot %u) failed (error %u) — "
+                  "CreateDevice params left as-is",
+                  (unsigned)SLOT_D3D9_CreateDevice, (unsigned)hook.error().type);
+        return d3d;
+    }
+    g_createdevice_hook = new safetyhook::VmHook(std::move(*hook)); // leaked by design
+    MC2VR_LOG("vsync: IDirect3D9 captured @ %p, CreateDevice hooked (slot %u)",
+              d3d, (unsigned)SLOT_D3D9_CreateDevice);
+    return d3d;
+}
 
 // ---- Diagnostics ----------------------------------------------------------
 // (address description lives in log.cpp: mc2vr::describe_code_address)
@@ -231,6 +299,16 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
     }
 
     eye::on_reset(); // surfaces are lost; drop the eye RT + main-RT recording
+
+    // S4-5 pacing: a Reset carries NEW present params (resolution etc.) —
+    // re-apply the vsync unlock so the interval survives device-reset paths.
+    if (pp != nullptr && g_present_immediate &&
+        pp->PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
+        MC2VR_LOG("vsync: Reset interval=0x%08x -> forcing IMMEDIATE",
+                  pp->PresentationInterval);
+        pp->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    }
+
     return g_reset_hook->stdcall<HRESULT>(self, pp);
 }
 
@@ -319,6 +397,50 @@ HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UI
 
 
 } // namespace
+
+bool set_vsync(const char *value)
+{
+    if (strcmp(value, "on") == 0) {
+        g_present_immediate = false;
+    } else if (strcmp(value, "off") == 0) {
+        g_present_immediate = true;
+    } else {
+        return false;
+    }
+    MC2VR_LOG("vsync: vsync=%s (%s)", value,
+              g_present_immediate
+                  ? "CreateDevice/Reset force D3DPRESENT_INTERVAL_IMMEDIATE"
+                  : "game's own present params untouched");
+    return true;
+}
+
+bool install_d3d9_gate()
+{
+    if (!g_present_immediate) {
+        return true; // vsync=on — no interception at all
+    }
+    if (g_d3dcreate9_hook) {
+        return true; // already installed
+    }
+
+    // Trap-based install while the game is still suspended (stage 1); the
+    // 6-byte `jmp dword ptr [IAT]` thunk is plaintext .text well below the
+    // SecuROM region. Failing this only costs the pacing fix — the game
+    // still runs with its own params.
+    auto result = SafetyHookInline::create(
+        reinterpret_cast<uint8_t *>(MC2_D3DCREATE9_THUNK),
+        reinterpret_cast<uint8_t *>(&d3dcreate9_hook));
+    if (!result) {
+        MC2VR_LOG("vsync: Direct3DCreate9 thunk hook install failed @ %p "
+                  "(error %u) — device params left as-is",
+                  (void *)MC2_D3DCREATE9_THUNK, (unsigned)result.error().type);
+        return false;
+    }
+    g_d3dcreate9_hook = std::move(*result);
+    MC2VR_LOG("vsync: installed Direct3DCreate9 thunk hook @ %p",
+              (void *)MC2_D3DCREATE9_THUNK);
+    return true;
+}
 
 bool capture_and_hook()
 {

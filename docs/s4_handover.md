@@ -20,7 +20,7 @@ design + gotchas. 3. `docs/launcher_plan.md` — mechanism rules, hook inventory
 | S4-2 shared-handle image path (carrier ring → host open/mirror) | DONE, live-verified |
 | S4-3 OpenXR submission (blit shared pair into swapchains) | DONE, live-verified |
 | S4-4 pose feedback (full VP replacement from HMD pose, pose-id handoff) | DONE, live-verified: head-tracked 3D in the HMD; `view/hmd:` windows `split=0 decompFail=0`; host `pose ids hit=all miss=0`; `fresh~600 reused~1800` |
-| S4-5 events + pacing + HUD | NOT STARTED |
+| S4-5 events + pacing + HUD | IN PROGRESS — pacing step 1 (vsync unlock) live-verified 2026-10-06: game 30 Hz → ~135 Hz (dt avg 7.4 ms, pass 2 = 3.2 ms), `pose ids miss=0`, `split=0 decompFail=0`, `ringFull=0`, HMD standby pass-through clean. Remaining: session events, HUD/2D, throttle-vs-free decision (free-run currently working: game 135 Hz > host 120 Hz, miss=0) |
 
 Deployed conf (`<GAME_DIR>/mc2vr/mc2vr.conf`, never overwritten by `launch.sh`) is the S4 steady state:
 `frame_replay=on eye_pass=on eye_rt=on eye_monitor_pin=on eye_share=on view_row_rewrite=hmd`. The in-tree conf
@@ -32,8 +32,18 @@ defaults stay host-less (`eye_share=off`, `view_row_rewrite=stereo`).
   shutdown; recenter (`MC2VR_MSG_RECENTER`) handling. Events already flow host→carrier (drain point is the
   slot-5 `PostUpdateHook`, currently a counting no-op; pose sampling happens at pass-1 start, not there).
 - **Pacing**: game ~30 Hz (two ~16.6 ms passes) vs host ~120 Hz re-submitting the newest pair with the
-  rendered pose (runtime reprojects). Decide throttle-to-HMD vs run-free; timewarp inputs via slot-4
-  `EndOfFrameHook` (see `docs/reverse_engineering/main_game_loop.md`).
+  rendered pose (runtime reprojects). STEP 1 IMPLEMENTED (2026-10-06, pending live verification):
+  `vsync=off` conf key forces `D3DPRESENT_INTERVAL_IMMEDIATE` at CreateDevice (stage-1 InlineHook of
+  the game's `Direct3DCreate9` IAT thunk `0x00a4e892` + IDirect3D9 VmtHook slot 16; Reset re-patches —
+  the engine's own CreateDevice call site is VM-gated `FUN_0074c9b0`, never hooked). Present-count
+  evidence first: ~600 Presents / ~300 frames per 10s = 2 blocking Presents per frame. LIVE-VERIFIED
+  2026-10-06 (with and without HMD out of standby): interval=0x80000000 in effect, dt avg ~7.4 ms
+  (~135 Hz gameplay, 3.2 ms per pass — the 30 Hz was pure vsync wait), host `pose ids miss=0`, carrier
+  `split=0 decompFail=0 ringFull=0`, HMD standby ⇒ session SYNCHRONIZED + carrier `valid=0` pass-through
+  (by design), clean shutdown. Remaining decision:
+  throttle-to-HMD vs run-free (timewarp inputs via slot-4 `EndOfFrameHook`, see
+  `docs/reverse_engineering/main_game_loop.md`); adaptive-framerate bypass (`g_FrameratePolicy` /
+  `AdaptiveFramerate_Govern`) if the game fights the new cadence.
 - **HUD/2D**: `g_RenderQueue2` consumption timing vs Present is UNKNOWN — add counters. If the HUD is drawn
   per-pass into the composite, the per-eye LDR captures already include it; if it lands between passes it may
   appear in one eye only — measure first. Fallback: separate quad layer in the host.
@@ -48,7 +58,9 @@ Agent implements/logs; the human runs `./launch.sh` into GAMEPLAY (SteamVR up) a
 `<GAME_DIR>/mc2vr/mc2vr_{carrier,host,launcher}.log` (`GAME_DIR` from `launch.conf`;
 `tools/analyze_dumps.py <log>` parses view/S2c/eye evidence). Healthy-run signatures: host `submit: blit shaders
 ready`, `openxr: using swapchain format 91`, `submit: window fresh/reused/pattern=0`, `submit: pose ids miss=0`;
-carrier `share window:` ~300 L/R per 10 s with `ringFull=0`, `view/hmd: split=0 decompFail=0`. Pulsing pattern in
+carrier `share window:` ~1330 L/R per 10 s with `ringFull=0` (≈ game fps × 10; ~300 was the
+vsync-locked 30 Hz era) and `view/hmd: split=0 decompFail=0`. Game cadence with `vsync=off`:
+`FrameTick: dt avg` ~7.4 ms (~135 Hz). Pulsing pattern in
 the HMD = carrier pipeline not talking (`eye_share=off` or host not receiving). Build: win32 carrier
 `cmake -B build/win32 -DCMAKE_TOOLCHAIN_FILE=cmake/i686-w64-mingw32.cmake`; win64 host same with
 `cmake/x86_64-w64-mingw32.cmake` → `build/win64/bin/mc2vr_host.exe`; chain selftest `tools/selftest/run.sh`
