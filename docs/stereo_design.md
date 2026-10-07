@@ -90,7 +90,18 @@ would be shifted (none seen); if render resolution ever differs from the
 backbuffer, key the gate on RT identity. Shadow *receivers* look up in world
 space (the VS passes world position to the PS), so they are eye-invariant.
 
-**Controls**: `view_row_rewrite`, `view_row_amp`, `view_ipd`, `view_stereo_hold`, `view_asym_x/y` — documented in `conf/mc2vr.conf`. The real per-eye offset is `D = ±right·IPD/2` (≈0.032 m).
+**Controls**: `view_row_rewrite` (off | hmd_delta | hmd_identity), `view_world_scale` — documented in `conf/mc2vr.conf`.
+
+> **SUPERSEDED (2026-10-07):** the S2 verification modes — `on`/`pulse` (row-shift
+> pans) and `stereo` (±right·IPD/2 A/B with the right-axis cache, the
+> `view_asym` NDC shift and the `view_row_amp`/`view_ipd`/`view_stereo_hold`
+> keys) — plus the `hmd` full-VP-replacement mode were REMOVED from the
+> carrier after the g_CameraTable union injection + `hmd_delta` went
+> live-verified (docs/stereo_improvements_plan.md). This section stays as the
+> S2 record: the row-shift math, the pass gate and the register-map MidHook are
+> still the machinery `hmd_delta` runs on; only the pan/hold/asym modes are
+> gone. The rewrite above now happens via `vpcam::decompose` + `apply_eye` on
+> the same register map.
 
 ## Architecture
 

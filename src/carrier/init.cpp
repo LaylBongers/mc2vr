@@ -11,7 +11,6 @@
 #include "ipc.hpp"
 #include "log.hpp"
 
-#include "debug/inject_probe.hpp"
 #include "debug/probes.hpp"
 #include "debug/render_dump.hpp"
 #include "debug/stream_capture.hpp"
@@ -27,10 +26,6 @@
 #include <cstring>
 
 namespace mc2vr {
-
-// Sticky state for the view_asym_x/y conf pair (each key updates one
-// component; both must survive the other's arrival).
-static float g_conf_asym_x = 0.0f, g_conf_asym_y = 0.0f;
 
 // Numeric conf values: true and *out set only on a clean, fully-consumed
 // parse; otherwise logs and leaves the setting alone.
@@ -205,42 +200,11 @@ static void load_conf()
                 s2c::set_dump_delay((float)d);
                 eye::set_dump_delay((float)d);
             }
-        } else if (strcmp(key, "view_row_amp") == 0) {
-            // Pan amplitude in world units (default 4.0).
-            double v;
-            if (parse_double(key, value, &v)) {
-                view::set_view_row_amp((float)v);
-            }
-        } else if (strcmp(key, "view_ipd") == 0) {
-            // Full IPD in world units (default 0.065; per-eye offset is half).
-            double v;
-            if (parse_double(key, value, &v)) {
-                view::set_view_ipd((float)v);
-            }
         } else if (strcmp(key, "view_world_scale") == 0) {
             // Game world units per metre for the HMD camera (default 1.0).
             double v;
             if (parse_double(key, value, &v)) {
                 view::set_view_world_scale((float)v);
-            }
-        } else if (strcmp(key, "view_stereo_hold") == 0) {
-            // Seconds each eye is held in stereo A/B mode (default 2.0).
-            double v;
-            if (parse_double(key, value, &v)) {
-                view::set_view_stereo_hold((float)v);
-            }
-        } else if (strcmp(key, "view_asym_x") == 0 ||
-                   strcmp(key, "view_asym_y") == 0) {
-            // Per-eye asymmetric-projection centre shift, NDC units. Both
-            // keys land in one setter; values are sticky (default 0).
-            double v;
-            if (parse_double(key, value, &v)) {
-                if (strcmp(key, "view_asym_x") == 0) {
-                    g_conf_asym_x = (float)v;
-                } else {
-                    g_conf_asym_y = (float)v;
-                }
-                view::set_view_asym(g_conf_asym_x, g_conf_asym_y);
             }
         } else if (strcmp(key, "debug_watch") == 0) {
             // S5: hardware watchpoints on ViewEntry camera fields (culling-RE
@@ -264,30 +228,6 @@ static void load_conf()
             uint32_t n;
             if (parse_count(key, value, &n)) {
                 watch::set_detail_hits(n);
-            }
-        } else if (strcmp(key, "debug_entry_inject") == 0) {
-            // ViewEntry entry-injection probe (E2 verdict: NEGATIVE — the entry
-            // pos/quat are output channels of the round-trip; kept for re-tests;
-            // docs/stereo_improvements_plan.md; needs view_row_rewrite=hmd_delta|
-            // hmd_identity AND the HMD tracked).
-            if (!injectprobe::set_entry_inject_enabled(value)) {
-                MC2VR_LOG("conf: debug_entry_inject=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "debug_entry_inject_offset") == 0) {
-            double d;
-            if (parse_double(key, value, &d)) {
-                injectprobe::set_entry_inject_offset((float)d);
-            }
-        } else if (strcmp(key, "debug_entry_inject_hz") == 0) {
-            double d;
-            if (parse_double(key, value, &d)) {
-                injectprobe::set_entry_inject_hz((float)d);
-            }
-        } else if (strcmp(key, "debug_cambuilder_dump") == 0) {
-            // Draw-camera VP builder entry dump (E2b) — camera-object address/
-            // layout discovery (docs/stereo_improvements_plan.md).
-            if (!injectprobe::set_cambuilder_enabled(value)) {
-                MC2VR_LOG("conf: debug_cambuilder_dump=%s not recognized (use on|off)", value);
             }
         } else {
             MC2VR_LOG("conf: unknown key '%s' ignored", key);

@@ -3,9 +3,12 @@
 Status: **IMPLEMENTED + LIVE-VERIFIED (2026-10-07).** The union HMD-pose injection at
 `g_CameraTable` and the per-eye `hmd_delta` record rewrite are live and correct: head rotation
 tracks through aim changes, HMD FOV/aspect and stereo 3D confirmed, culling/LOD follow the head.
-Open items (none blocking) are in Remaining work below. This doc started as an improvements plan
-after the culling RE changed old premises; the experiment log at the bottom is the evidence for
-the verdicts.
+A final cleanup pass the same day removed the superseded paths (the S2 `on`/`pulse`/`stereo`
+verification modes, the `hmd` full-VP-replacement mode, the E2/E2b inject_probe module) and
+was verified by a green run on the cleaned build (row-sign calibration locked at the recorded
+convention, fills=rewritten, noPose=0, decompFail=0). Open items (none blocking) are in
+Remaining work below. This doc started as an improvements plan after the culling RE changed
+old premises; the experiment log at the bottom is the evidence for the verdicts.
 
 ## The entry convention — probe-derived final model (2026-10-07)
 
@@ -133,9 +136,14 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
 - **Verification instruments** (all conf-gated, default off): `debug_camtable_probe` — the
   transfer-function probe that settled the entry convention (injects fixed +10° local-axis
   rotations, logs entry + rendered response; run standing-still, no HMD needed, pair with
-  `view_row_rewrite=hmd_identity`); `debug_entry_inject*` / `debug_cambuilder_dump`
-  (src/carrier/debug/inject_probe.cpp — E2's negative result kept for re-tests, SLOPE
-  regression metric, builder-entry dump); `debug_watch` for E3-classification runs.
+  `view_row_rewrite=hmd_identity`), plus the runtime row-sign calibration and the per-window
+  oracles (fills≈rewritten, noPose, deltaNoUnion, decompFail); `debug_watch` for
+  E3-classification runs. (The E2/E2b inject_probe module — ViewEntry entry-injection probe
+  and builder-entry dump — was REMOVED 2026-10-07: E2's channel is disproven and both were
+  superseded by the above.)
+- The S2 verification modes (`on`/`pulse`/`stereo` row-shift pans) and the old `hmd`
+  full-VP-replacement mode were REMOVED 2026-10-07 — superseded by view_table_inject +
+  hmd_delta. Remaining view_row_rewrite values: off | hmd_delta | hmd_identity.
 
 ## Remaining work
 

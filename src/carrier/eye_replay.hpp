@@ -4,7 +4,7 @@
 // the two passes a real stereo pair:
 //   - eye_pass=on:  pass 1 renders LEFT, pass 2 renders RIGHT — deterministic
 //     per-frame eye selection via view::set_pass_eye() (replaces the
-//     view_stereo_hold A/B timer while a pass override is active).
+//     deterministic eye while a pass override is active).
 //   - eye_rt=on:    during pass 2 every device SetRenderTarget(0, mainRT) is
 //     redirected to a carrier-created backbuffer-sized eye render target, and
 //     StretchRect/UpdateSurface sources pointing at the main RT are redirected

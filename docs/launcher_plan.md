@@ -28,7 +28,11 @@ first). Pure camera math: `tools/test/test_vp_camera.cpp` (native g++, one-line 
 `launch.sh` deploys with `cp -u` (binaries) / `cp -n` (conf — the deployed `mc2vr.conf` is never
 overwritten; edit it in place). Env: `MC2VR_NO_HOST` (skip host), `MC2VR_IPC_NAME` (section name
 override). Deployed conf steady state: `frame_replay=on eye_pass=on eye_rt=on eye_monitor_pin=on
-eye_share=on view_row_rewrite=hmd vsync=off` (in-tree defaults stay host-less + vsync=on).
+eye_share=on view_table_inject=on view_row_rewrite=hmd_delta vsync=off` (in-tree defaults stay
+host-less + vsync=on). Camera channel 2026-10-07: view_table_inject (union HMD pose at
+g_CameraTable) + view_row_rewrite=hmd_delta (per-eye FOV/IPD at the uploads) is the live pair —
+the old `hmd`/`stereo`/`on`/`pulse` modes were removed
+(docs/stereo_improvements_plan.md).
 
 Healthy-run signatures: host `submit: blit shaders ready`, `openxr: using swapchain format 91`,
 `submit: window fresh/reused/pattern=0`, `submit: pose ids miss=0`; carrier `share window:` ~1330
