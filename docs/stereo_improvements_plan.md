@@ -10,18 +10,38 @@ found and fixed two defects (see "Live-run corrections" below). What remains is 
 re-verification. This doc started as an improvements plan drafted after the culling RE changed
 old premises; the experiment log at the bottom is the evidence for everything above it.
 
-## Live-run corrections (2026-10-07 first run — keep for the record)
+## Live-run corrections (2026-10-07 — keep for the record)
+
+**Round 2** (pitch OK, yaw flipped; FOV/aspect wrong; no stereo fusion; culling
+follows the camera):
+
+3. **hmd_delta never fired**: `on_set_vs_constant`'s dispatch only routed
+   Hmd/HmdIdentity into `hmd_rewrite` — HmdDelta fell through to the legacy
+   pan path and did nothing (`view/hmd: blocks=0`, `rewritten rows=0` the
+   whole run, deltaNoUnion=0). That alone explains "no 3D" (both eyes got
+   the identical union image, no per-eye projection/IPD) and "FOV wrong"
+   (game projection untouched). Fixed: HmdDelta joins the dispatch.
+4. **Camera local frame is x=LEFT**: with the record path dead, the observed
+   pose behavior was pure table-union. Pitch correct + yaw flipped +
+   x-translation inverted uniquely identify col0 = -R (local x = LEFT;
+   right-handedness of the entry's columns with col2=B forces
+   (col0, col1) = (-R, U) or (R, -U), and (R, -U) would flip pitch). The
+   game's proj_xx is negative, canceling the mirror (decompose's R is still
+   the physical right via the double negative — the record path is
+   frame-safe). Fixed in the table composition: XR->camera x-mirror,
+   q_cam = (q.x, -q.y, -q.z, q.w), v_cam = (-v.x, v.y, v.z).
+
+**Round 1** (head turn opposite, widescreen FOV):
 
 1. **Entry convention**: the camera-table/camera-object entry is the camera-to-WORLD
-   transform — COLUMN j = local axis j (right/up/backward; decomposed VP F = −col2),
-   position +0x40 = positive world C. Builder-disassembly-proven: ViewContext_BuildCamera
+   transform — COLUMN j = local axis j, position +0x40 = positive world C.
+   Builder-disassembly-proven: ViewContext_BuildCamera
    Constants copies entry rot+pos VERBATIM into ctx+0xaa0 (call 0x008592a1), then INVERTS
    it (FUN_008225c0 = Matrix_Inverse4x4, call 0x008593db) back into the view slot
    (0x008593e4) before the view×proj multiply. The E2b probe's "rows = right/up/fwd"
    reading was a transpose error invisible to its fabsf(dot) match — the first union
    implementation composed the HMD rotation onto the ROWS (= inverse rotation = head
-   motion in the OPPOSITE direction). Fix: compose onto the columns, E' = E·M(q_hmd),
-   C += E·(union pos)·scale (game local frame = XR LOCAL, no sign flips).
+   motion in the OPPOSITE direction). Fix: compose onto the columns (E' = E·M(q)).
 2. **Widescreen FOV regression**: expected, not a bug — the game's projection (aspect from
    the RenderShell screen dims, fov from entry+0x58 fovCos) is untouched by the union
    injection BY DESIGN (the table has no projection). Fix = I1 implemented as the new

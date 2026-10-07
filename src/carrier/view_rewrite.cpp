@@ -567,7 +567,8 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     }
     g_vs_vec4s += vec4_count;
 
-    if (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdIdentity) {
+    if (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdDelta ||
+        g_mode == RewriteMode::HmdIdentity) {
         return pass_is_main() ? hmd_rewrite(start_register, data, vec4_count) : data;
     }
 
@@ -659,7 +660,7 @@ void report_window()
                   : "");
     if (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdDelta ||
         g_mode == RewriteMode::HmdIdentity) {
-        if (g_mode == RewriteMode::HmdDelta) {
+        if (g_mode == RewriteMode::HmdDelta && g_delta_no_union > 0) {
             MC2VR_LOG("view/hmd: deltaNoUnion=%llu (uploads passed through — the "
                       "camtable union was missing for that frame)",
                       (unsigned long long)g_delta_no_union);

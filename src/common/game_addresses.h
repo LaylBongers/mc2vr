@@ -217,21 +217,22 @@
 #define MC2_VCCAM_CTX_CAMARRAY_OFF ((uintptr_t)0x28u) // camera object slot
 #define MC2_VCCAM_ENTRY_STRIDE ((uintptr_t)0x70u)
 // Camera object entry layout (E2b run 1, 2026-10-06, live-dumped;
-// CONVENTION CORRECTED 2026-10-07 — the first live union-injection run
-// inverted head direction, builder disassembly settled it):
+// CONVENTION live-verified 2026-10-07 over two union-injection runs):
 //   +0x00 status dword (1.0 = populated slot, 0 = empty)
 //   +0x10..0x3c 3x3 rotation — the camera-to-WORLD transform, row-major:
-//                COLUMN j = camera local axis j in world coords
-//                (col0 = right, col1 = up, col2 = BACKWARD — the decomposed
-//                VP camera's F = -col2). NOT "rows = right/up/fwd": the E2b
-//                fabsf(dot) match cannot see the transpose (for small pitch
-//                rows and columns are near-identical); ViewContext_BuildCamera
-//                Constants copies the entry rot+pos verbatim then INVERTS it
-//                (FUN_008225c0 = 4x4 matrix inverse) into the view slot
-//                (copy ctx+0xaa0 <- entry+0x10 @0x008592a1, inverse call
-//                @0x008593db, final copy @0x008593e4) before the view*proj
-//                multiply — a view matrix would need -R*C translation, but
-//                the entry holds the POSITIVE world position C.
+//                COLUMN j = camera local axis j, and the local frame is
+//                x=LEFT, y=up, z=backward: col0 = -R, col1 = U, col2 = B
+//                (the decomposed VP camera's F = -col2; R_decomp = -col0
+//                because the game's proj_xx is NEGATIVE — the double
+//                negative keeps rendering non-mirrored). Right-handedness
+//                of the columns with col2=B forces col0*col1 = -R,U or R,-U;
+//                the live symptoms (pitch OK, yaw flipped, x-translation
+//                inverted when composing with raw XR coords) pick the
+//                (col0=-R, col1=U) case. ViewContext_BuildCameraConstants
+//                copies the entry rot+pos verbatim into ctx+0xaa0
+//                (@0x008592a1) then INVERTS it (FUN_008225c0 =
+//                Matrix_Inverse4x4, call @0x008593db) back into the view
+//                slot (@0x008593e4) before the view*proj multiply.
 //   +0x40 position (x,y,z) + w=1.0 — world position, positive (camera-to-
 //                world translation; NOT a view-matrix translation)
 //   +0x50 near, +0x54 far (2400), +0x58 fovCos (0.9597)

@@ -173,18 +173,29 @@ void fill_midhook(safetyhook::Context &ctx)
         return;
     }
 
-    // Union rotation composed on the LOCAL side: E' = E * M(q_hmd), i.e.
-    // each new column = E applied to rotate(q_hmd, e_j). Position =
-    // C + E*(union pos), scaled by view_world_scale. Row w components are
-    // left untouched (0 / 1.0).
+    // Union rotation composed on the LOCAL side: E' = E * M(q_cam), i.e.
+    // each new column = E applied to rotate(q_cam, e_j). Position =
+    // C + E*(union pos in camera-local coords), scaled by view_world_scale.
+    // Row w components are left untouched (0 / 1.0).
+    //
+    // FRAME CORRECTION (live-run round 2, 2026-10-07): the camera's local
+    // frame is x=LEFT, y=up, z=backward — col0 = -R (forced by the columns'
+    // right-handedness with col2 = B; the game's negative proj_xx cancels
+    // the mirror so rendering stays non-mirrored). XR LOCAL is x=right:
+    // mirror every XR vector/quat across x before composing with E
+    // (v_cam = (-x, y, z); reflection-conjugation gives q_cam = (x,-y,-z,w)
+    // — keeps pitch, flips yaw/roll back to correct). Symptom of getting
+    // this wrong: pitch correct, yaw opposite, x translation inverted.
     auto to_world = [&](Vec3 v) { return c0 * v.x + c1 * v.y + c2 * v.z; };
-    const Vec3 n0 = to_world(math::rotate(g_pose_rot, {1, 0, 0}));
-    const Vec3 n1 = to_world(math::rotate(g_pose_rot, {0, 1, 0}));
-    const Vec3 n2 = to_world(math::rotate(g_pose_rot, {0, 0, 1}));
+    const Quat q_cam{g_pose_rot.x, -g_pose_rot.y, -g_pose_rot.z, g_pose_rot.w};
+    const Vec3 p_cam{-g_pose_pos.x, g_pose_pos.y, g_pose_pos.z};
+    const Vec3 n0 = to_world(math::rotate(q_cam, {1, 0, 0}));
+    const Vec3 n1 = to_world(math::rotate(q_cam, {0, 1, 0}));
+    const Vec3 n2 = to_world(math::rotate(q_cam, {0, 0, 1}));
     e[0] = n0.x; e[4] = n0.y; e[8] = n0.z;
     e[1] = n1.x; e[5] = n1.y; e[9] = n1.z;
     e[2] = n2.x; e[6] = n2.y; e[10] = n2.z;
-    math::store3(e + 12, cpos + to_world(g_pose_pos) * view::world_scale());
+    math::store3(e + 12, cpos + to_world(p_cam) * view::world_scale());
 
     g_rewrites++;
     if (st) {
