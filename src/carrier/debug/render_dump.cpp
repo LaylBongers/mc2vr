@@ -15,6 +15,7 @@
 #include "stub_trace.hpp"
 #include "stream_capture.hpp"
 #include "view_rewrite.hpp"
+#include "view_table.hpp"
 #include "watch.hpp"
 
 namespace mc2vr::render {
@@ -311,6 +312,7 @@ void report_window()
     g_queue_changed_polls = 0;
 
     view::report_window();
+    camtable::report_window();
     trace::report_window();
     s2c::report_window();
     eye::report_window();
@@ -403,6 +405,10 @@ void install_early()
     // View rewrite: upload-gate MidHook (the device-level tap is installed
     // with the device VmtHook, device.cpp).
     view::install();
+
+    // Union HMD injection at g_CameraTable (mc2vr.conf view_table_inject=on;
+    // handler no-ops unless armed).
+    camtable::install();
 
     // E2b: builder-entry MidHook (no-op unless debug_cambuilder_dump=on).
     injectprobe::install();

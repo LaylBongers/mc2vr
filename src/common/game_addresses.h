@@ -216,12 +216,24 @@
 #define MC2_VCCAM_ARG_EBP_OFF ((uintptr_t)0x8u)      // arg = [ebp+8] at entry
 #define MC2_VCCAM_CTX_CAMARRAY_OFF ((uintptr_t)0x28u) // camera object slot
 #define MC2_VCCAM_ENTRY_STRIDE ((uintptr_t)0x70u)
-// Camera object entry layout (E2b run 1, 2026-10-06, live-dumped):
+// Camera object entry layout (E2b run 1, 2026-10-06, live-dumped;
+// CONVENTION CORRECTED 2026-10-07 — the first live union-injection run
+// inverted head direction, builder disassembly settled it):
 //   +0x00 status dword (1.0 = populated slot, 0 = empty)
-//   +0x10..0x3c 3x3 rotation, three 4-strided rows (right, up, fwd;
-//                gameplay main camera: F=(0,-0.137,0.991) — matches the
-//                decomposed VP camera exactly)
-//   +0x40 position (x,y,z) + w=1.0
+//   +0x10..0x3c 3x3 rotation — the camera-to-WORLD transform, row-major:
+//                COLUMN j = camera local axis j in world coords
+//                (col0 = right, col1 = up, col2 = BACKWARD — the decomposed
+//                VP camera's F = -col2). NOT "rows = right/up/fwd": the E2b
+//                fabsf(dot) match cannot see the transpose (for small pitch
+//                rows and columns are near-identical); ViewContext_BuildCamera
+//                Constants copies the entry rot+pos verbatim then INVERTS it
+//                (FUN_008225c0 = 4x4 matrix inverse) into the view slot
+//                (copy ctx+0xaa0 <- entry+0x10 @0x008592a1, inverse call
+//                @0x008593db, final copy @0x008593e4) before the view*proj
+//                multiply — a view matrix would need -R*C translation, but
+//                the entry holds the POSITIVE world position C.
+//   +0x40 position (x,y,z) + w=1.0 — world position, positive (camera-to-
+//                world translation; NOT a view-matrix translation)
 //   +0x50 near, +0x54 far (2400), +0x58 fovCos (0.9597)
 //   +0x60.. LOD-ish params (0.1, 100, 300, 0.3)
 // The array base is a self-index (active idx = *(u32*)base). GAMEPLAY
@@ -244,6 +256,29 @@
 // entries is the remaining unknown (E2b step 4).
 #define MC2_G_CAMERA_POSE_CLEAR ((uintptr_t)0x00dfbbd0u)
 #define MC2_CAMPOSE_CLEAR_ENTRY ((uintptr_t)0x004665b0u)
+
+// ---- g_CameraTable: union HMD injection site (2026-10-07, docs/ ----
+// ---- stereo_improvements_plan.md "Decided architecture")           ----
+// g_CameraTable = 5 camera-entity slots x 0x620 (constructed by FUN_0070f020:
+// FUN_00401890(&g_CameraTable,0x620,5,ctor)); camera-object ptr at slot+0x1e0,
+// fov source at slot+0x614. Once per frame the CameraTable_FillFromPose loop
+// (FUN_0070f430, tail do-while at 0x0070f62c, from InGameShellState_FramePipeline)
+// fills every slot whose +0x1e0 camera object exists (~1.7/frame live) from the
+// camera entity's quat+pos. Each slot is a self-indexed 0x70-stride camera
+// entry array (active entry = slot + [slot+4]*0x70) with the MC2_VCCAM_ENTRY_*
+// layout; the fill's Matrix_Copy3x4 (call 0x0070aef3 -> 0x00836120, dest
+// `lea eax,[ecx+esi*1+0x10]` at 0x0070aee5) writes entry+0x10..0x4c: rotation
+// rows +0x10/+0x20/+0x30, position +0x40.
+#define MC2_G_CAMTABLE ((uintptr_t)0x014a2ee0u)
+#define MC2_CAMTABLE_SLOT_STRIDE ((uintptr_t)0x620u)
+#define MC2_CAMTABLE_SLOTS ((uintptr_t)5u)
+// MidHook site: the first instruction AFTER the fill copy's call (ret addr
+// 0x0070aef8, `fld [ebp+8]`). At this instruction EAX = the just-filled
+// entry+0x10 (single caller = the fill loop; ESI = slot base, live across the
+// call). The carrier rewrites EAX's rotation rows + position in place —
+// after every fill, before every consumer (draw-camera builder path AND the
+// culling/fov readers 0x0048067E family read this table).
+#define MC2_CAMTABLE_FILL_COPY_END ((uintptr_t)0x0070aef8u)
 
 // Probe (a) target: the OTHER per-frame counter (.data, bumped in
 // GameTimeAccumulate_Update). Deliberately not 0x011755bc — that one is what

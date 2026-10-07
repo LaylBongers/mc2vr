@@ -53,6 +53,17 @@ inline Vec3 rotate(Quat q, Vec3 v)
 
 inline float norm_sq(Quat q) { return q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w; }
 
+// Hamilton product: rotate(a * b, v) == rotate(a, rotate(b, v)).
+inline Quat operator*(Quat a, Quat b)
+{
+    return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+
+inline Quat conj(Quat q) { return {-q.x, -q.y, -q.z, q.w}; }
+
 // Read/write 3 consecutive floats (shader-constant rows are float[4], xyz first).
 inline Vec3 load3(const float *p) { return {p[0], p[1], p[2]}; }
 inline void store3(float *p, Vec3 v)

@@ -34,11 +34,14 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
 void on_set_render_target(uint32_t w, uint32_t h);
 void set_main_rt_size(uint32_t w, uint32_t h);
 
-// mc2vr.conf view_row_rewrite=off|on|pulse|stereo|hmd|hmd_identity (hmd =
-// S4-4 full VP replacement from the HMD pose; hmd_identity = decompose/rebuild
-// self-check, output must equal input). off = pass-through. stereo
-// = per-eye offset D = ±right·view_ipd/2 (see docs/stereo_design.md §S2,
-// handover step 1). Returns false on unrecognized values.
+// mc2vr.conf view_row_rewrite=off|on|pulse|stereo|hmd|hmd_delta|hmd_identity
+// (hmd = S4-4 full VP replacement from the HMD pose; hmd_delta = I1, the
+// intended pairing with view_table_inject=on — per-eye projection from the
+// OpenXR FOV + per-eye position delta, pose already in the records from the
+// table union; hmd_identity = decompose/rebuild self-check, output must
+// equal input). off = pass-through. stereo = per-eye offset
+// D = ±right·view_ipd/2 (see docs/stereo_design.md §S2, handover step 1).
+// Returns false on unrecognized values.
 bool set_view_row_rewrite(const char *value);
 
 // mc2vr.conf view_row_amp=<float>: pan amplitude in world units for on/pulse
@@ -62,6 +65,14 @@ void set_view_asym(float x, float y);
 // mc2vr.conf view_world_scale=<float>: game world units per metre for the HMD
 // camera (default 1.0 — UNVERIFIED, measure it; see docs/stereo_design.md §S4-4).
 void set_view_world_scale(float units_per_metre);
+
+// The world scale the camtable union injection composes with (shared conf key).
+float world_scale();
+
+// True while view_row_rewrite=hmd (the FULL HMD pose replacement at the
+// upload) — camtable warns: that mode double-applies the pose on top of the
+// table union (stereo_improvements_plan.md remaining work 4).
+bool full_pose_rewrite_active();
 
 // Pose id (host hostFrame+1) the CURRENT frame renders with, 0 when the frame
 // is not rendered from an HMD pose. Constant across both passes of a frame;

@@ -16,6 +16,7 @@
 #include "ipc.hpp"
 #include "log.hpp"
 #include "vec_math.hpp"
+#include "view_table.hpp"
 #include "vp_camera.hpp"
 
 namespace mc2vr::view {
@@ -32,7 +33,11 @@ constexpr float DEFAULT_HOLD = 2.0f;    // stereo eye A/B hold, seconds
 // Hmd = S4-4 full VP replacement from the HMD pose (see hmd_rewrite below);
 // HmdIdentity = the same decompose/rebuild with the game's OWN camera and
 // projection — output must equal input (self-check of the decomposition).
-enum class RewriteMode { Off, On, Pulse, Stereo, Hmd, HmdIdentity };
+// HmdDelta = I1 (stereo_improvements_plan.md): the per-eye complement to the
+// camtable union injection — the raw VP already carries the union pose, so
+// this applies ONLY the per-eye projection (OpenXR FOV) + per-eye position
+// delta (eye pose relative to the table's union pose).
+enum class RewriteMode { Off, On, Pulse, Stereo, Hmd, HmdDelta, HmdIdentity };
 RewriteMode g_mode = RewriteMode::Off;
 float g_amp = DEFAULT_AMP;
 float g_ipd = DEFAULT_IPD;
@@ -209,6 +214,9 @@ RewriteMode parse_rewrite_mode(const char *value, bool *ok)
     if (strcmp(value, "hmd") == 0) {
         return RewriteMode::Hmd;
     }
+    if (strcmp(value, "hmd_delta") == 0) {
+        return RewriteMode::HmdDelta;
+    }
     if (strcmp(value, "hmd_identity") == 0) {
         return RewriteMode::HmdIdentity;
     }
@@ -332,6 +340,8 @@ uint64_t g_game_cam_ms = 0;
 uint64_t g_hmd_blocks = 0, g_hmd_split = 0, g_hmd_decomp_fail = 0, g_hmd_cam_only = 0;
 float g_hmd_resid_max = 0.0f;  // max |rebuilt - raw| over the window (identity self-check)
 uint32_t g_hmd_split_logged = 0, g_hmd_fail_logged = 0;
+uint64_t g_delta_no_union = 0;  // hmd_delta uploads skipped: no table union this frame
+uint32_t g_delta_warn_logged = 0;
 
 // Host-published eye (IPC layout) -> pure-math eye.
 vpcam::EyePose to_eye_pose(const Mc2IpcEyePose &e)
@@ -415,6 +425,30 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
     if (identity) {
         cam = game;
         g_hmd_resid_max = std::fmax(g_hmd_resid_max, vpcam::rebuild_residual(raw, game));
+    } else if (g_mode == RewriteMode::HmdDelta) {
+        // I1: the raw VP already carries the camtable UNION pose; apply only
+        // the per-eye complement — projection from this eye's OpenXR FOV,
+        // position/rotation delta relative to the union pose camtable used
+        // (same-frame reference, so pose and delta always pair up).
+        math::Quat u_rot;
+        math::Vec3 u_pos;
+        if (!camtable::get_union(&u_rot, &u_pos)) {
+            g_delta_no_union++;
+            if (g_delta_warn_logged++ < 8) {
+                MC2VR_LOG("view/hmd: delta upload passed through — no camtable union "
+                          "this frame (view_table_inject=on and HMD tracked?)");
+            }
+            return data;
+        }
+        const vpcam::EyePose &pose = g_hmd.eye[eye];
+        vpcam::EyePose delta;
+        delta.pos = pose.pos - u_pos;
+        delta.rot = pose.rot * math::conj(u_rot);
+        delta.fov_left = pose.fov_left;
+        delta.fov_right = pose.fov_right;
+        delta.fov_up = pose.fov_up;
+        delta.fov_down = pose.fov_down;
+        cam = vpcam::apply_eye(game, delta, g_world_scale);
     } else {
         cam = vpcam::apply_eye(game, g_hmd.eye[eye], g_world_scale);
     }
@@ -614,6 +648,7 @@ void report_window()
                        : g_mode == RewriteMode::On    ? "on"
                        : g_mode == RewriteMode::Stereo ? "stereo"
                        : g_mode == RewriteMode::Hmd ? "hmd"
+                       : g_mode == RewriteMode::HmdDelta ? "hmd_delta"
                        : g_mode == RewriteMode::HmdIdentity ? "hmd_identity"
                                                        : "off";
     MC2VR_LOG("view: uploads calls=%llu vec4s=%llu | rewritten rows=%llu (mode=%s%s)",
@@ -622,7 +657,14 @@ void report_window()
               g_mode == RewriteMode::Stereo
                   ? (g_stereo_eye > 0 ? ", eye=R" : ", eye=L")
                   : "");
-    if (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdIdentity) {
+    if (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdDelta ||
+        g_mode == RewriteMode::HmdIdentity) {
+        if (g_mode == RewriteMode::HmdDelta) {
+            MC2VR_LOG("view/hmd: deltaNoUnion=%llu (uploads passed through — the "
+                      "camtable union was missing for that frame)",
+                      (unsigned long long)g_delta_no_union);
+            g_delta_no_union = 0;
+        }
         MC2VR_LOG("view/hmd: blocks=%llu camOnly=%llu split=%llu decompFail=%llu "
                   "identityResidMax=%.3g poseId=%u valid=%d",
                   (unsigned long long)g_hmd_blocks, (unsigned long long)g_hmd_cam_only,
@@ -676,9 +718,21 @@ void set_view_world_scale(float units_per_metre)
     }
 }
 
+float world_scale()
+{
+    return g_world_scale;
+}
+
+bool full_pose_rewrite_active()
+{
+    return g_mode == RewriteMode::Hmd;
+}
+
 uint32_t current_pose_id()
 {
-    return g_hmd.valid && g_mode == RewriteMode::Hmd ? g_hmd.id : 0;
+    return g_hmd.valid && (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdDelta)
+               ? g_hmd.id
+               : 0;
 }
 
 bool get_game_camera(vpcam::Camera *out)
@@ -694,7 +748,7 @@ void set_pass_eye(int sign)
 {
     // Pass 1 start (-1 = LEFT): sample the HMD pose ONCE for the whole frame —
     // both eyes render with it and the id travels in FRAME_READY.
-    if (sign < 0 && g_mode == RewriteMode::Hmd) {
+    if (sign < 0 && (g_mode == RewriteMode::Hmd || g_mode == RewriteMode::HmdDelta)) {
         Mc2IpcState st;
         const bool sane = ipc::read_state(&st) && (st.flags & MC2VR_IPC_STF_TRACKED) &&
                           eye_is_sane(st.eye[0]) && eye_is_sane(st.eye[1]);

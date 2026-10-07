@@ -18,6 +18,7 @@
 #include "debug/stub_trace.hpp"
 #include "debug/watch.hpp"
 #include "view_rewrite.hpp"
+#include "view_table.hpp"
 #include "debug/vm_dump.hpp"
 #include "sha256.h"
 
@@ -117,8 +118,19 @@ static void load_conf()
             // The viewContextData camera channel (view_rewrite.cpp).
             if (!view::set_view_row_rewrite(value)) {
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
-                          "(use off|on|pulse|stereo|hmd|hmd_identity) — defaulting to off", value);
+                          "(use off|on|pulse|stereo|hmd|hmd_delta|hmd_identity) — defaulting to off",
+                          value);
                 view::set_view_row_rewrite("off");
+            }
+        } else if (strcmp(key, "view_table_inject") == 0) {
+            // Union HMD injection at g_CameraTable (docs/stereo_improvements_plan.md
+            // "Decided architecture"): rewrites each just-filled table entry's
+            // rotation+position with the game pose composed with the mid-eye HMD
+            // pose — the single upstream point feeding BOTH the draw-camera
+            // builder and the culling/fov readers. Do NOT combine with
+            // view_row_rewrite=hmd (double pose); stereo/hmd_identity are fine.
+            if (!camtable::set_inject_enabled(value)) {
+                MC2VR_LOG("conf: view_table_inject=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_stub_trace") == 0) {
             if (!trace::set_enabled(value)) {

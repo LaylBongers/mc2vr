@@ -7,6 +7,7 @@ add_library(mc2vr_carrier SHARED
     hooks.cpp
     device.cpp
     view_rewrite.cpp
+    view_table.cpp
     vp_camera.cpp
     eye_replay.cpp
     eye_share.cpp
