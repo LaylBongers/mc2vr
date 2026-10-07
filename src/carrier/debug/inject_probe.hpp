@@ -10,7 +10,7 @@
 //    (+A*right*sin(2*pi*f*t)) + serial bumps (frustrum_cull_plan.md D2 protocol)
 //    into every live type-2 view whose pos7c4 is within 100 units of the
 //    decomposed RAW game camera (view::get_game_camera — requires
-//    view_row_rewrite=hmd|hmd_identity AND the HMD tracked). The per-window
+//    view_row_rewrite=hmd_delta|hmd_identity AND the HMD tracked). The per-window
 //    SLOPE is the phase-immune verdict metric (≈1 = the draw camera follows,
 //    ≈0 = it does not) — the reusable injection-verification instrument.
 //      debug_entry_inject_offset=<world units>   amplitude (default 8.0)

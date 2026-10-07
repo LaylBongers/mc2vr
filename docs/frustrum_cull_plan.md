@@ -22,14 +22,24 @@ reads the same object — one injection point for culling + draw camera, E2b).
 `g_CameraTable` (`0x014A2EE0`) — a STATIC, runtime-LIVE global camera table, plaintext-filled
 ~1.7/frame by `CameraTable_FillFromPose` (`0x0070ae50`: camera entity quat+pos via D3DX → rotation +
 position), and read by BOTH the draw-camera builder path AND the culling/fov consumers
-(`0x0048067E` family). **Design: MidHook right after the fill's Matrix_Copy3x4 call (~0x0070AEF3),
-rewrite the entry's rotation (+0x10..0x3c) + position (+0x40..0x4c) with the HMD-UNION pose**
-(mid-point between eyes — exactly what the widened culling frustum wants; optionally also widen the
-fov fields). Per-eye is not this point's job (once-per-frame union; per-eye stays at the I1 record
-level). Full chain: `render_path.md` § Draw-camera constant chain; implementation notes in
-`stereo_improvements_plan.md` E2b conclusion. D1's view-matching and D3's derive-ordering question
-become moot for the injection itself (the fill hook is inherently ordered); D4's "inject only into
-matched views" maps to "rewrite only the entry/entries just filled by the hooked call".
+(`0x0048067E` family). **Design: MidHook at 0x0070AEF8** — right after the fill's
+Matrix_Copy3x4 call — **rewriting the just-filled entry with the HMD-UNION pose** (mid-point
+between eyes — exactly what the widened culling frustum wants; optionally also widen the fov
+fields). Per-eye is not this point's job (once-per-frame union; per-eye stays at the record
+level). Full chain: `render_path.md` § Draw-camera constant chain; D1's view-matching and D3's
+derive-ordering question become moot for the injection itself (the fill hook is inherently
+ordered); D4's "inject only into matched views" maps to "rewrite only the entry/entries just
+filled by the hooked call". See the IMPLEMENTED note below for the composition.
+
+**✅ IMPLEMENTED + LIVE-VERIFIED (2026-10-07, `stereo_improvements_plan.md` rounds 1-8):**
+`view_table_inject=on` (`src/carrier/view_table.cpp`) — MidHook at 0x0070AEF8, rewrites the just-
+filled entry with the game pose composed with the HMD-union pose. Composition is PROBE-DERIVED
+(the entry's ROWS are the rendered camera's axes, and a write of E·M renders M⁻¹ world-side —
+the builder's 4x4 inverse sits in between; closed form E' = S_r·L⁻¹·S_r·E, see the plate on
+CameraTable_FillFromPose). Live result: culling/LOD follow the head (rotation confirmed
+correct through aim changes, round 8). STILL OPEN here: the FOV-widening half of this plan —
+culling still uses the game's widescreen table fov, so watch for late pop-in at the HMD FOV
+edges (needs the entry fov-field semantics mapped first: `0x00B9B688` / +0x58 fovCos chain).
 
 ## What the RE proved (evidence summary)
 

@@ -216,25 +216,24 @@
 #define MC2_VCCAM_ARG_EBP_OFF ((uintptr_t)0x8u)      // arg = [ebp+8] at entry
 #define MC2_VCCAM_CTX_CAMARRAY_OFF ((uintptr_t)0x28u) // camera object slot
 #define MC2_VCCAM_ENTRY_STRIDE ((uintptr_t)0x70u)
-// Camera object entry layout (E2b run 1, 2026-10-06, live-dumped;
-// CONVENTION live-verified 2026-10-07 over two union-injection runs):
+// Camera object entry layout (E2b live-dumped 2026-10-06; convention
+// PROBE-PROVEN 2026-10-07 — camprobe transfer run, see the plate on
+// CameraTable_FillFromPose):
 //   +0x00 status dword (1.0 = populated slot, 0 = empty)
-//   +0x10..0x3c 3x3 rotation — the camera-to-WORLD transform, row-major:
-//                COLUMN j = camera local axis j, and the local frame is
-//                x=LEFT, y=up, z=backward: col0 = -R, col1 = U, col2 = B
-//                (the decomposed VP camera's F = -col2; R_decomp = -col0
-//                because the game's proj_xx is NEGATIVE — the double
-//                negative keeps rendering non-mirrored). Right-handedness
-//                of the columns with col2=B forces col0*col1 = -R,U or R,-U;
-//                the live symptoms (pitch OK, yaw flipped, x-translation
-//                inverted when composing with raw XR coords) pick the
-//                (col0=-R, col1=U) case. ViewContext_BuildCameraConstants
-//                copies the entry rot+pos verbatim into ctx+0xaa0
-//                (@0x008592a1) then INVERTS it (FUN_008225c0 =
-//                Matrix_Inverse4x4, call @0x008593db) back into the view
-//                slot (@0x008593e4) before the view*proj multiply.
-//   +0x40 position (x,y,z) + w=1.0 — world position, positive (camera-to-
-//                world translation; NOT a view-matrix translation)
+//   +0x10..0x3c 3x3 rotation, row-major — the RENDERED camera's axes are
+//                its ROWS: R = -row0, U = row1, F = row2. TRANSFER LAW for
+//                rewrites: E' = E*M renders axes' = M^-1 * axes (the
+//                builder's 4x4 inverse, FUN_008225c0, sits between the
+//                entry and the view). The carrier therefore writes the
+//                closed form E' = S_r*L^-1*S_r*E (LEFT multiply, S_r =
+//                diag(measured row signs) = diag(-1,1,1); composite quat
+//                (qx,-qy,+qz,qw) for the desired local rotation
+//                L = (-qx,-qy,+qz,qw)).
+//   +0x40 position (x,y,z) + w=1.0 — world position, positive
+//   +0x50 near, +0x54 far, +0x58 fovCos (the game's widescreen projection
+//                source — LEFT-HANDED pipeline, clip.w = +z_view; per-eye
+//                OpenXR FOV is applied at the record level,
+//                view_row_rewrite=hmd_delta)
 //   +0x50 near, +0x54 far (2400), +0x58 fovCos (0.9597)
 //   +0x60.. LOD-ish params (0.1, 100, 300, 0.3)
 // The array base is a self-index (active idx = *(u32*)base). GAMEPLAY

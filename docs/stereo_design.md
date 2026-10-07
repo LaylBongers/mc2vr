@@ -12,9 +12,9 @@ Mechanism rules and hook list: `launcher_plan.md`. Overview diagram: `render_dia
 | S0 loop-body RE | complete |
 | S1 draw-camera hunt | complete — GPU-boundary channel proven; 2026-10-06 correction: the record itself + (pending E2) the upstream ViewEntry pose are additional candidate channels (`stereo_improvements_plan.md`) |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`) |
-| S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (full VP replacement, §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below; improvement plan: `stereo_improvements_plan.md` |
+| S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (the S4-4-era full VP replacement; superseded 2026-10-07 by the g_CameraTable union injection + hmd_delta — §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below; improvement plan: `stereo_improvements_plan.md` |
 | S5 motion controls | not started — NEXT |
-| S6 frustum-culling alignment | RE COMPLETE 2026-10-06 (culling chain all-plaintext, change-gated; `reverse_engineering/view_and_camera.md` § camera-data accessors) — design drafted, not implemented: `frustrum_cull_plan.md`; experiments E1–E3 in `stereo_improvements_plan.md` unblock parts of it |
+| S6 frustum-culling alignment | **INJECTION IMPLEMENTED + LIVE-VERIFIED 2026-10-07**: union HMD pose injected at `g_CameraTable` post-fill (`view_table_inject=on`) — culling/LOD follow the head, rotation correct through aim changes (`stereo_improvements_plan.md` rounds 1-8; `frustrum_cull_plan.md` resolution note). Remaining: FOV widening for the culling frustum (game's widescreen fov still governs pop-in at HMD FOV edges) |
 
 > **KNOWN ISSUE — reprojection staleness (MUST BE FIXED EVENTUALLY, do not lose track of it).**
 > During head motion there is visible apparent stutter/micro-judder that vanishes when the head is held
@@ -248,8 +248,16 @@ upstream ViewEntry injection is disproven (output-only channel), and the SINGLE 
 injection point is `g_CameraTable` (0x014A2EE0) — hook after `CameraTable_FillFromPose`
 (0x0070ae50)'s fill, rewrite rotation+position with the HMD-union pose: steers draw camera
 (union) + culling + LOD together, and supersedes `frustrum_cull_plan.md`'s original D1/D2
-design. Per-eye stays at the record level (I1, shrunk to the per-eye delta). Implementation is
-the remaining work.
+design. Per-eye stays at the record level (I1, shrunk to the per-eye delta).
+**IMPLEMENTED + LIVE-VERIFIED 2026-10-07** (`stereo_improvements_plan.md` rounds 1-8):
+union injection live (`view_table_inject=on`, probe-derived composition — the entry's ROWS are
+the rendered camera's axes and writes pass through the builder's matrix inverse, closed form
+E' = S_r·L⁻¹·S_r·E; plate on CameraTable_FillFromPose) + per-eye projection/IPD at the record
+level (`view_row_rewrite=hmd_delta`). Head rotation verified correct through aim changes;
+FOV/aspect and stereo 3D confirmed. The composition convention was settled by the
+debug_camtable_probe transfer-function instrument, not by static RE — six rounds of
+symptom-triangulation were provably unsolvable analytically (state-dependent error).
+See `stereo_improvements_plan.md` § Remaining work for what is left.
 
 ### S4-5 — Session events, pacing, HUD (COMPLETE, live-verified 2026-10-06)
 

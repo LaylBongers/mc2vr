@@ -118,19 +118,27 @@ static void load_conf()
             // The viewContextData camera channel (view_rewrite.cpp).
             if (!view::set_view_row_rewrite(value)) {
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
-                          "(use off|on|pulse|stereo|hmd|hmd_delta|hmd_identity) — defaulting to off",
+                          "(use off|on|pulse|stereo|hmd_delta|hmd_identity) — defaulting to off",
                           value);
                 view::set_view_row_rewrite("off");
             }
         } else if (strcmp(key, "view_table_inject") == 0) {
             // Union HMD injection at g_CameraTable (docs/stereo_improvements_plan.md
             // "Decided architecture"): rewrites each just-filled table entry's
-            // rotation+position with the game pose composed with the mid-eye HMD
+            // camera entry with the game pose composed with the mid-eye HMD
             // pose — the single upstream point feeding BOTH the draw-camera
-            // builder and the culling/fov readers. Do NOT combine with
-            // view_row_rewrite=hmd (double pose); stereo/hmd_identity are fine.
+            // builder and the culling/fov readers. Pair with
+            // view_row_rewrite=hmd_delta for the per-eye FOV/position delta.
             if (!camtable::set_inject_enabled(value)) {
                 MC2VR_LOG("conf: view_table_inject=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_camtable_probe") == 0) {
+            // Transfer-function probe: injects fixed local-axis test
+            // rotations at the fill site and logs entry + rendered response
+            // — settles the rotation convention numerically (run standing
+            // still in gameplay; no HMD needed).
+            if (!camtable::set_probe_enabled(value)) {
+                MC2VR_LOG("conf: debug_camtable_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_stub_trace") == 0) {
             if (!trace::set_enabled(value)) {
@@ -260,7 +268,7 @@ static void load_conf()
         } else if (strcmp(key, "debug_entry_inject") == 0) {
             // ViewEntry entry-injection probe (E2 verdict: NEGATIVE — the entry
             // pos/quat are output channels of the round-trip; kept for re-tests;
-            // docs/stereo_improvements_plan.md; needs view_row_rewrite=hmd|
+            // docs/stereo_improvements_plan.md; needs view_row_rewrite=hmd_delta|
             // hmd_identity AND the HMD tracked).
             if (!injectprobe::set_entry_inject_enabled(value)) {
                 MC2VR_LOG("conf: debug_entry_inject=%s not recognized (use on|off)", value);

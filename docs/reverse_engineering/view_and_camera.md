@@ -32,8 +32,11 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
   **E2b RESOLVED (2026-10-06, complete)**: the draw camera + culling input is `g_CameraTable`
   (`0x014A2EE0`) — static, live, plaintext-filled ~1.7/frame by `CameraTable_FillFromPose`
   (`0x0070ae50`, camera-entity quat+pos via D3DX) and read by both the VP builder path and the
-  culling/fov consumers (`0x0048067E`). The injection hook goes right after the fill call
-  (~0x0070AEF3) — full chain in `render_path.md` § Draw-camera constant chain.
+  culling/fov consumers (`0x0048067E`). **IMPLEMENTED + live-verified (2026-10-07)**: carrier
+  MidHook at `0x0070AEF8` rewriting the just-filled entry with the HMD-union pose. The entry's
+  matrix conventions are non-obvious and PROBE-PROVEN (rows = rendered axes, builder inverse,
+  LH pipeline — see `render_path.md` § Draw-camera constant chain § Matrix & handedness
+  conventions; do NOT re-derive from static sign analysis).
 - **Source of `viewContextData`**: the per-view render-context record (`g_ViewContextTable` `0x01169774`,
   0x70 stride, indexed by `prim+0x49`): +0x00 viewContextData, +0x40 PS view consts, +0x60 atmosphereData*,
   +0x64 globalLightData*. **Record fill is PLAINTEXT (E1/E1b watch-proven 2026-10-06; corrects the earlier

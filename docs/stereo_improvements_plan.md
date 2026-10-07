@@ -1,61 +1,71 @@
 # Stereo Injection Improvements — findings, verdicts and the decided architecture
 
-Status: **EXPERIMENTS COMPLETE (2026-10-06); UNION INJECTION + hmd_delta (I1)
-IMPLEMENTED (2026-10-07), PENDING LIVE VERIFICATION.** E1, E1b, E2 and E2b (5 steps) are
-all answered; the draw-camera chain is mapped end-to-end, the injection architecture is
-DECIDED (below) and now IMPLEMENTED (`src/carrier/view_table.cpp` + the `hmd_delta` record
-mode in `view_rewrite.cpp`, conf `view_table_inject=on` + `view_row_rewrite=hmd_delta`);
-the fill loop is mapped statically (remaining work 2 below). The 2026-10-07 first live run
-found and fixed two defects (see "Live-run corrections" below). What remains is the live-run
-re-verification. This doc started as an improvements plan drafted after the culling RE changed
-old premises; the experiment log at the bottom is the evidence for everything above it.
+Status: **IMPLEMENTED + LIVE-VERIFIED (2026-10-07).** The union HMD-pose injection at
+`g_CameraTable` and the per-eye `hmd_delta` record rewrite are live and correct: head rotation
+tracks through aim changes, HMD FOV/aspect and stereo 3D confirmed, culling/LOD follow the head.
+Open items (none blocking) are in Remaining work below. This doc started as an improvements plan
+after the culling RE changed old premises; the experiment log at the bottom is the evidence for
+the verdicts.
 
-## Live-run corrections (2026-10-07 — keep for the record)
+## The entry convention — probe-derived final model (2026-10-07)
 
-**Round 2** (pitch OK, yaw flipped; FOV/aspect wrong; no stereo fusion; culling
-follows the camera):
+Eight live runs settled this (the round-by-round history lives in git history if ever
+needed); what is kept here is the final model, why static analysis could not have
+resolved it, and the failure modes that will recur in any future injection.
 
-3. **hmd_delta never fired**: `on_set_vs_constant`'s dispatch only routed
-   Hmd/HmdIdentity into `hmd_rewrite` — HmdDelta fell through to the legacy
-   pan path and did nothing (`view/hmd: blocks=0`, `rewritten rows=0` the
-   whole run, deltaNoUnion=0). That alone explains "no 3D" (both eyes got
-   the identical union image, no per-eye projection/IPD) and "FOV wrong"
-   (game projection untouched). Fixed: HmdDelta joins the dispatch.
-4. **Camera local frame is x=LEFT**: with the record path dead, the observed
-   pose behavior was pure table-union. Pitch correct + yaw flipped +
-   x-translation inverted uniquely identify col0 = -R (local x = LEFT;
-   right-handedness of the entry's columns with col2=B forces
-   (col0, col1) = (-R, U) or (R, -U), and (R, -U) would flip pitch). The
-   game's proj_xx is negative, canceling the mirror (decompose's R is still
-   the physical right via the double negative — the record path is
-   frame-safe). Fixed in the table composition: XR->camera x-mirror,
-   q_cam = (q.x, -q.y, -q.z, q.w), v_cam = (-v.x, v.y, v.z).
+**Measured facts** (debug_camtable_probe transfer-function run — fixed +10° local-axis
+injections at the fill site, entry + rendered response logged; the instrument stays in the
+carrier, conf `debug_camtable_probe=on`):
 
-**Round 1** (head turn opposite, widescreen FOV):
+1. **The rendered camera's axes are the entry's ROWS**: rendered basis = (−row0, row1, row2)
+   of the 3x3 at entry+0x10 — verified exactly (3 decimals) on yawed-camera samples. Every
+   earlier "columns" reading was an axis-aligned coincidence (rows ≈ columns near identity).
+2. **Writing E' = E·M renders axes' = M⁻¹·axes — WORLD-side application of the INVERSE.**
+   The builder's 4x4 matrix inverse (FUN_008225c0, called at 0x008593db between the entry and
+   the view·proj multiply) inverts whatever rotation is composed into the entry. This one fact
+   produced the entire misleading history: pure reversals on aligned cameras ("ever-shifting
+   sign conventions") and pitch/roll COUPLING once the aim is yawed/pitched (world-side
+   inverse rotation about the wrong axes mixes components exactly as reported).
 
-1. **Entry convention**: the camera-table/camera-object entry is the camera-to-WORLD
-   transform — COLUMN j = local axis j, position +0x40 = positive world C.
-   Builder-disassembly-proven: ViewContext_BuildCamera
-   Constants copies entry rot+pos VERBATIM into ctx+0xaa0 (call 0x008592a1), then INVERTS
-   it (FUN_008225c0 = Matrix_Inverse4x4, call 0x008593db) back into the view slot
-   (0x008593e4) before the view×proj multiply. The E2b probe's "rows = right/up/fwd"
-   reading was a transpose error invisible to its fabsf(dot) match — the first union
-   implementation composed the HMD rotation onto the ROWS (= inverse rotation = head
-   motion in the OPPOSITE direction). Fix: compose onto the columns (E' = E·M(q)).
-2. **Widescreen FOV regression**: expected, not a bug — the game's projection (aspect from
-   the RenderShell screen dims, fov from entry+0x58 fovCos) is untouched by the union
-   injection BY DESIGN (the table has no projection). Fix = I1 implemented as the new
-   `view_row_rewrite=hmd_delta` mode: per-eye projection from the OpenXR FOV + per-eye
-   position delta (relative to camtable's same-frame union pose) applied at the record
-   level on the already-union VP. `hmd` (full-pose replacement) stays as the fallback
-   and now correctly warns NOT to combine with view_table_inject (double pose).
+**The implemented composition** (`src/carrier/view_table.cpp`, verified live, round 8): to
+apply the desired aim-following LOCAL head rotation
+
+   L = (−qx, −qy, +qz, qw)   (rendered local frame = x right, y up, z FORWARD — left-handed
+                             D3D pipeline, clip.w = +z_view; XR LOCAL is z-back)
+
+write the closed form **E' = S_r·L⁻¹·S_r·E** (a LEFT multiply; S_r = diag(measured row signs)
+= diag(−1,1,1) in this game), whose composite quaternion is qB = (qx, −qy, +qz, qw), with
+position ΔC = (−px·r0 + py·r1 − pz·r2)·view_world_scale (r_j = entry rows). Nod always
+pitches, lean always rolls, yaw always yaws — regardless of aim. The runtime row-sign
+calibration ("camtable: camera frame MEASURED" log line) and the probe remain as per-run
+verification instruments.
+
+**Why static analysis failed** (worth remembering for future injections):
+- The E2b probe's fabsf(dot) evidence was sign- and transpose-blind; near-identity cameras
+  make rows ≈ columns and every sign hypothesis locally consistent.
+- The game's projection is nonstandard: clip.w z-coefficient +1.0 (LH) and x-scale from a
+  runtime tan-table — the disambiguating signs are data, not constants.
+- The builder's matrix inverse makes the transfer E·M → M⁻¹ — a state-dependent error that
+  no fixed sign convention can model. When symptoms keep fitting different conventions,
+  measure the transfer function instead of guessing.
+
+**Other implementation fixes made along the way** (still relevant):
+- `on_set_vs_constant` must dispatch HmdDelta into `hmd_rewrite` (a missed dispatch silently
+  passes everything through — blocks=0 with no other symptom).
+- `get_union` requires an actual rewrite in the current game frame, so hmd_delta's per-eye
+  delta never rides records whose pose didn't get the union.
+- apply_eye (used by hmd_delta) flips the decomposed R in/out (empirically validated by
+  correct 3D; theory still pending under the rows model — see Remaining work).
+- A row/column indexing bug in the final B·E multiply produced a clean unmixed L⁻¹ (run 7's
+  "all flipped, no mixing" signature) — row_i(B·E) takes the i-th component of EACH column
+  of B, not all components of one column.
 
 ## The complete draw-camera chain (all hardware-watch-proven, plates in Ghidra)
 
 ```
 camera entity pose (quat + pos, heap record; VALUES originate in game logic / VM)
-  -> CameraTable_FillFromPose (0x0070ae50, PLAINTEXT, ~1.7/frame; from FUN_0070f430's loop,
-       stride 0x620): CameraEntity_GetPoseRecord (0x0042ee50)
+  -> CameraTable_FillFromPose (0x0070ae50, PLAINTEXT, ~1.7/frame; from CameraTable_FillLoop
+       FUN_0070f430's 5-slot loop, stride 0x620): CameraEntity_GetPoseRecord (0x0042ee50)
        -> D3DXQuaternionNormalize -> D3DXMatrixRotationQuaternion -> position + w
        -> Matrix_Copy3x4 -> g_CameraTable entry (0x014A2EE0, STATIC — call site ~0x0070AEF3)
   -> per builder call (mutated block ~0x004665xx-0x004666xx):
@@ -102,72 +112,52 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
    draw-camera builder path AND the culling/fov consumers. It sits UPSTREAM of the output-only
    ViewEntry fields — I2 is realized, at a different address than originally hoped.
 
-## Decided architecture
+## Decided architecture (as implemented)
 
-- **Union injection at the table** (replaces S6's ViewEntry design and the "producer side" hunt):
-  MidHook immediately after the `Matrix_Copy3x4` call in `CameraTable_FillFromPose` (~0x0070AEF3);
-  rewrite the JUST-filled entry's rotation (+0x10..0x3c) and position (+0x40..0x4c) with
-  game pose + HMD rotation/translation (mid-point between eyes — the union is exactly what culling
-  wants; reuse `apply_hmd_eye` math + `view_world_scale`). Ordering is guaranteed by construction
-  (after every fill, before every consumer). Rewrite only the entry the hooked call filled (keyed by
-  its EAX) — the "inject only matched views" discipline maps to that. Optionally widen the fov
-  fields (+0x50/+0x54/+0x58) for the HMD FOV union (semantics of the widened values TBD — the
-  fovCos field matches the ViewEntry fovCos observation).
-- **Per-eye stays at the I1 record level** — the table is once-per-frame union. I1 (record-level
-  per-pass rewrite behind a conf flag, keep the upload-level path as fallback) proceeds as designed,
-  but shrinks to the per-eye projection/position delta because the pose now comes from the union.
-- **I3 becomes the checker, not the source**: keep the per-upload VP decompose as a one-shot
-  consistency/regression oracle (`hmd_identity` style), retire it as the camera source.
-- **Verification oracles**: `hmd_identity` residuals, shadow-glue per eye, culling pop-in on head
-  turn (before/after the union injection), the carrier's `view: rec` census tally, and a
-  post-implementation full-mode `debug_watch=addr:0x014A2EF0` run to classify the
-  texgen/matViewMat readers (E3 folded in — if the I4 "stays hard" derivations read the table,
-  the union injection fixes them too).
-- Probe tooling is retained as `src/carrier/debug/inject_probe.cpp` (renamed from `e2_probe`):
-  the entry-injection probe (negative result, kept for re-tests; its SLOPE regression verdict
-  metric is the reusable injection-verification instrument) and the builder-entry camera-object
-  dump (address discovery). Conf keys: `debug_entry_inject*`, `debug_cambuilder_dump` — see
-  `conf/mc2vr.conf`.
+- **Union injection at the table** (replaces S6's ViewEntry design and the "producer side"
+  hunt): MidHook at 0x0070AEF8 — the instruction after the fill's Matrix_Copy3x4 in
+  CameraTable_FillFromPose — rewriting the JUST-filled entry (keyed by its EAX = entry+0x10;
+  the table is 5 slots × 0x620, a slot is live iff its +0x1e0 camera-object ptr exists).
+  The rewrite composes the HMD-union pose (mid-point of the two IPC eyes, sampled once per
+  game frame) using the probe-derived closed form — see § The entry convention above.
+  Ordering is guaranteed by construction (after every fill, before every consumer — the
+  draw-camera builder AND the culling/fov readers 0x0048067E family).
+- **Per-eye at the record level** (`view_row_rewrite=hmd_delta`, I1 as designed): per-eye
+  OpenXR-FOV projection + per-eye position/rotation delta relative to camtable's same-frame
+  union (`camtable::get_union`), applied on the main-pass VP uploads. The old `hmd`
+  full-VP-replacement mode was REMOVED 2026-10-07 — superseded by this pair
+  (it double-applied the pose on top of the table union).
+- **I3 as the checker, not the source**: the per-upload VP decompose remains the one-shot
+  consistency oracle (`hmd_identity`), and `view::get_game_camera` is the calibration input
+  for the camtable row-sign measurement.
+- **Verification instruments** (all conf-gated, default off): `debug_camtable_probe` — the
+  transfer-function probe that settled the entry convention (injects fixed +10° local-axis
+  rotations, logs entry + rendered response; run standing-still, no HMD needed, pair with
+  `view_row_rewrite=hmd_identity`); `debug_entry_inject*` / `debug_cambuilder_dump`
+  (src/carrier/debug/inject_probe.cpp — E2's negative result kept for re-tests, SLOPE
+  regression metric, builder-entry dump); `debug_watch` for E3-classification runs.
 
 ## Remaining work
 
-1. **DONE 2026-10-07** — union injection at the table implemented, conf-gated
-   `view_table_inject=on` (`src/carrier/view_table.cpp`): fill-site MidHook at
-   0x0070AEF8 (instruction after the fill copy), pose = shortest-path mid-point of
-   the two IPC eyes sampled once per frame, composition = `vpcam::apply_eye`'s
-   body+offset model without projection terms, `view_world_scale` shared. NOT
-   combined with per-eye or projection changes (I1's scope). Census + noPose
-   counters in the 10s `camtable: window` report; warns when
-   `view_row_rewrite=hmd` double-applies the pose (until I1 lands).
-2. **DONE 2026-10-07** — fill loop mapped statically (plates: `CameraTable_FillLoop`
-   0x0070f430, `CameraTable_FillFromPose`): the table is **5 slots x 0x620**
-   (constructed by FUN_0070f020: `FUN_00401890(&g_CameraTable,0x620,5,ctor)`); the
-   loop fills every slot whose +0x1e0 camera-object ptr exists — so typically
-   1-2 live slots at ~1.7 fills/frame, and the two same-spot draw views (records
-   idx 6/12) map to the live slots. Injection keys on the copy's EAX = the
-   just-filled entry+0x10 (self-indexed: slot + [slot+4]*0x70 + 0x10), so every
-   live slot gets the union pose and no dead slot is touched. The runtime entry
-   census in the `camtable: window` report confirms which slot.sub fire live.
-3. **NEXT — live re-verification run** (`view_table_inject=on` + `view_row_rewrite=hmd_delta`,
-   gameplay, HMD tracked): head turn in the SAME direction, draw camera follows (decompose
-   residual), FOV/aspect back to the HMD's (the old hmd-mode look), culling/LOD follow the
-   head (S6's original goal — pop-in gone on head turn), no revert fights (the fill is
-   ~1.7/frame — the post-fill hook must win every race by construction), `camtable: window`
-   fills≈rewritten and noPose=0, `view/hmd:` blocks nonzero and deltaNoUnion=0.
-4. **DONE 2026-10-07** — I1 implemented as `view_row_rewrite=hmd_delta`: the record-level
-   per-eye rewrite on top of the union pose (per-eye OpenXR-FOV projection + per-eye
-   position delta relative to camtable's same-frame union via `camtable::get_union`);
-   `hmd` (full VP replacement) kept as the fallback path. Still to do: the A/B against the
-   `hmd` upload-level path with the established oracles once the live run is green.
-5. E3 classification run (full-mode watch on the table entry) → decide I4's fate.
-   Also open: the fov source global `0x00B9B688` (read by CamPose_FillEntryFov) —
-   semantics unexplored. Moot for the DRAW path since hmd_delta replaces the projection
-   at the record level, but still relevant to the CULLING consumers: they cull by the
-   table's fov fields (game's widescreen fov), so objects may pop in late at the edges of
-   the HMD's wider fov — if the live run shows edge pop-in, widening the table fov fields
-   (+0x50/+0x54/+0x58) is the fix and needs those semantics mapped first.
-6. Update `stereo_design.md` (S4-4 open items) + `frustrum_cull_plan.md` with
-   implementation results; retire this doc's "remaining work" as it completes.
+1. **DONE 2026-10-07 (verified live, round 8)** — union injection + hmd_delta live and
+   correct; oracles green (fills≈rewritten, noPose=0, deltaNoUnion=0, decompFail=0).
+2. **DONE 2026-10-07** — fill loop mapped: 5 slots × 0x620 (FUN_0070f020 ctor), live slots
+   keyed by +0x1e0; the two same-spot draw views (records idx 6/12) map to the live slots
+   (slot 0.0 / 0.1 in the runtime census).
+3. **Measure `view_world_scale`** — still the unverified 1.0 default; head TRANSLATION
+   distance is the one untested DOF (measure against a known-size object, then set it in
+   the deployed conf).
+4. ~~A/B `hmd_delta` vs the `hmd` upload-level fallback~~ — RETIRED 2026-10-07: the
+   `hmd` mode was removed (superseded); `hmd_delta` + the union injection is the
+   live-verified system.
+5. **Culling-fov widening**: culling still uses the game's widescreen table fov — watch for
+   late pop-in at the HMD FOV edges; the fix (widen entry fov fields +0x50/+0x54/+0x58)
+   needs the fov-source semantics mapped first (`0x00B9B688` / entry+0x58 fovCos chain).
+   Also: the record-path apply_eye R-flip is empirically validated by correct 3D but
+   theory-pending under the rows model — ground or retire the note if 3D ever looks off.
+6. **E3 classification run** (`debug_watch=addr:0x014A2EF0` full-mode) → decide I4's fate
+   (the I4 "stays hard" texgen/matViewMat derivations — if they read the table, the union
+   injection already fixed them).
 
 ### Phase oracles (reading a run's log — learned 2026-10-06)
 
@@ -179,6 +169,9 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
   screen.
 - `view/hmd: blocks=0` + `poseId=0` for whole windows = the HMD was never tracked (everything
   downstream of the hmd rewrite's decompose — matching, `get_game_camera` — is blind without it).
+- `camtable: camera frame MEASURED` = the row-sign calibration locked (expected
+  row0.R=−1, row1.U=+1, row2.F=+1 in this build; a different result means the convention
+  changed — re-run the probe before trusting the union pose).
 
 ## Experiment log (evidence — 2026-10-06, one line of method per result)
 

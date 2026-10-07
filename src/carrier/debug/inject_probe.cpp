@@ -162,7 +162,8 @@ bool set_entry_inject_enabled(const char *value)
     }
     g_enabled = on;
     MC2VR_LOG("inject: probe %s (pos oscillation +A*right*sin(2pi*%.3g*t), serial "
-              "bump per frame; requires view_row_rewrite=hmd for matching)",
+              "bump per frame; requires view_row_rewrite=hmd_delta (or "
+              "hmd_identity) for matching)",
               on ? "ARMED" : "disabled", (double)g_hz);
     return true;
 }
