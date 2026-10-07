@@ -152,9 +152,18 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
 2. **DONE 2026-10-07** — fill loop mapped: 5 slots × 0x620 (FUN_0070f020 ctor), live slots
    keyed by +0x1e0; the two same-spot draw views (records idx 6/12) map to the live slots
    (slot 0.0 / 0.1 in the runtime census).
-3. **Measure `view_world_scale`** — still the unverified 1.0 default; head TRANSLATION
-   distance is the one untested DOF (measure against a known-size object, then set it in
-   the deployed conf).
+3. ~~**Measure `view_world_scale`**~~ — **STATIC VERDICT 2026-10-07: units are METRES,
+   s = 1.0 is CORRECT** (Havok world gravity is 9.8–9.81 game units/s² — the Earth value:
+   hkpWorld ctor `0x008d8f40` defaults the cinfo gravity magnitude to 9.81 when zero
+   (const `0x00b58ff0`), and 21 stored `(0,−9.8,0)` hkClass default member vectors sit in
+   .rdata; ZERO feet-convention constants (32.174/32.2/0.3048/3.28084) in the whole
+   51.4 MB initialized image; plate + labels on hkpWorld_ctor, evidence in
+   `reverse_engineering/pandemic_engine.md` § World units). **LIVE IPD VERIFIED
+   2026-10-07** (eye-dump pair analysis): applied parallax = ipd_runtime·s/z
+   end-to-end — asymmetric-frustum offset −451 px (predicted −460), per-eye FOV span
+   scale 1.7%, door z agrees between width and parallax (3.5–3.9 m). s = 1.0 CLOSED
+   (static + live). The near-field focus discomfort is therefore NOT scale/IPD/stereo —
+   root-caused to the HUD/crosshair's crossed disparity (see docs/hud_plan.md);
 4. ~~A/B `hmd_delta` vs the `hmd` upload-level fallback~~ — RETIRED 2026-10-07: the
    `hmd` mode was removed (superseded); `hmd_delta` + the union injection is the
    live-verified system.

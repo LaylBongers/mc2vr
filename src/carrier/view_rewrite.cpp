@@ -209,7 +209,7 @@ struct HmdSnapshot {
     vpcam::EyePose eye[2];
 };
 HmdSnapshot g_hmd;
-float g_world_scale = 1.0f;  // game world units per metre (UNVERIFIED default)
+float g_world_scale = 1.0f;  // game world units per metre (VERIFIED: metres — gravity 9.81, docs/reverse_engineering/pandemic_engine.md)
 
 // Per-pass cache of the rebuilt camera position, for uploads that carry only
 // the camPos row (VP rows arrived in an earlier call).

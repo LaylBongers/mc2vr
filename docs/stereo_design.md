@@ -322,8 +322,14 @@ runtime (`render_path.md` open items; `+0x10` high16 = pending-unconsumed count 
 consumer pre-Present, low16 = ring position frozen during passes, `+0x14` unused — the S0 static
 model was wrong).
 
-**S4-4 follow-ups (backlog, can interleave with S5):** measure `view_world_scale` (game units/metre —
-unverified default 1.0; the 0.065 IPD was never checked); engine culling vs the game camera frustum —
+**S4-4 follow-ups (backlog, can interleave with S5):** ~~measure `view_world_scale` (the
+0.065 IPD was never checked)~~ — **CLOSED 2026-10-07**: units are METRES (Havok world gravity
+9.8–9.81 game units/s² — evidence in `reverse_engineering/pandemic_engine.md` § World units)
+and the per-eye pipeline is IPD-correct end-to-end (live eye-dump pair verification).
+**The near-field focus discomfort is root-caused to the HUD/crosshair: composited into the
+backbuffer, it ignores the per-eye asymmetric-frustum centers and acquires ~0.47 tangent units
+of CROSSED disparity — it visually floats ~14 cm in front of the user. Fix track:
+`docs/hud_plan.md`.** Engine culling vs the game camera frustum —
 **RESOLVED as a track (2026-10-06)**: the culling-input chain is fully RE'd (plaintext, change-gated,
 culminating in `ViewEntry_DeriveCullTask` `0x00876a90`); design in `frustrum_cull_plan.md` (§S6);
 non-`viewContextData` shaders, PS-side camera data and texgen stay mono/lag with rotation (improvement

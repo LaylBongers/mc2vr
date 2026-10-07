@@ -44,7 +44,8 @@ void set_main_rt_size(uint32_t w, uint32_t h);
 bool set_view_row_rewrite(const char *value);
 
 // mc2vr.conf view_world_scale=<float>: game world units per metre for the HMD
-// camera (default 1.0 — UNVERIFIED, measure it; see docs/stereo_design.md §S4-4).
+// camera (default 1.0 — VERIFIED 2026-10-07: units are metres; see
+// docs/reverse_engineering/pandemic_engine.md § World units).
 void set_view_world_scale(float units_per_metre);
 
 // The world scale the camtable union injection composes with (shared conf key).
