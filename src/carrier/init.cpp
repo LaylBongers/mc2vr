@@ -127,6 +127,44 @@ static void load_conf()
             if (!camtable::set_inject_enabled(value)) {
                 MC2VR_LOG("conf: view_table_inject=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "cull_fov_widen") == 0) {
+            // Frustum-cull FOV widening (frustum_cull_plan.md D0): MidHook at
+            // the ViewEntry fov-triple write rescales the culling fov to the
+            // HMD FOV union (+ cull_fov_margin) so the cull volume covers the
+            // whole HMD view (rotation-following is view_table_inject's job).
+            if (!camtable::set_fov_widen(value)) {
+                MC2VR_LOG("conf: cull_fov_widen=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "record_fov_widen") == 0) {
+            // Frustum-cull FOV widening, record channel (frustum_cull_plan.md
+            // I3): rewrite the CPU-side g_ViewContextTable record VP's
+            // projection rows to the HMD FOV union at the build epilogue —
+            // covers record-based culling the entry-fov hook can't reach.
+            // Shares cull_fov_margin with cull_fov_widen.
+            if (!view::set_record_fov_widen(value)) {
+                MC2VR_LOG("conf: record_fov_widen=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "cull_fov_margin") == 0) {
+            // Extra degrees added to the HMD FOV-union half-angles before
+            // widening (default 5; 0 = exactly the HMD FOV).
+            double v;
+            if (parse_double(key, value, &v)) {
+                camtable::set_fov_margin(v);
+            }
+        } else if (strcmp(key, "entry_fov_scale") == 0) {
+            // Camera-entry fov causal probe (frustum_cull_plan.md): scales the
+            // entry's +0x58 fov value at every fill. 1.0 = observe only.
+            double v;
+            if (parse_double(key, value, &v)) {
+                camtable::set_entry_fov_scale(v);
+            }
+        } else if (strcmp(key, "entry_fov_decouple") == 0) {
+            // Fov decouple (frustum_cull_plan.md I3 round 8): with the scale
+            // active, keep the game's own projection/camera at stock fov
+            // (filler loads -> 1.0) while the cull reads the wide constant.
+            if (!camtable::set_entry_fov_decouple(value)) {
+                MC2VR_LOG("conf: entry_fov_decouple=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "debug_camtable_probe") == 0) {
             // Transfer-function probe: injects fixed local-axis test
             // rotations at the fill site and logs entry + rendered response

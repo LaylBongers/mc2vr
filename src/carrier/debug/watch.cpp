@@ -525,6 +525,7 @@ bool set_targets(const char *value)
         {"slotparams", (uint32_t)MC2_VIEW_OFF_SLOTPARAMS, false},
         {"near", (uint32_t)MC2_VIEW_OFF_NEAR, false},
         {"fov", (uint32_t)MC2_VIEW_OFF_FOVCOS, false},
+        {"fovmid", (uint32_t)MC2_VIEW_OFF_FOVMID, false},
         {"fovsin", (uint32_t)MC2_VIEW_OFF_FOVSIN, false},
         {"dir670", (uint32_t)MC2_VIEW_OFF_DIR670, false},
         {"posprev", (uint32_t)MC2_VIEW_OFF_POS_PREV, false},

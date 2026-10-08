@@ -55,8 +55,39 @@ bool set_probe_enabled(const char *value);
 // not armed or the HMD wasn't tracked this frame.
 bool get_union(math::Quat *rot, math::Vec3 *pos);
 
+// True + fills *half_h/*half_v with the HMD FOV-union half-angles (radians,
+// BOTH eyes' outermost bounds) + cull_fov_margin degrees — the cull-fov
+// widening inputs (frustum_cull_plan.md). Valid when the pose was sampled
+// this game frame (requires view_table_inject=on). view_rewrite's
+// record_fov_widen builds its projection from these.
+bool get_fov_union(float *half_h, float *half_v);
+
+// mc2vr.conf cull_fov_widen=on|off (frustum_cull_plan.md D0): MidHook at the
+// ViewEntry fov-triple write scales the just-written cull fov to the HMD FOV
+// union (+ margin), so the culling volume covers the whole HMD view. Without
+// a tracked HMD it is a no-op. Returns false on unrecognized input.
+bool set_fov_widen(const char *value);
+
+// mc2vr.conf cull_fov_margin=<degrees> — extra half-angle added to the HMD
+// FOV union before widening (default 5). Returns false on non-numbers.
+bool set_fov_margin(double degrees);
+
+// mc2vr.conf entry_fov_scale=<float> — causal probe on the camera-entry fov
+// value (+0x58, engine units): 1.0 = observe only (census logging); >1
+// scales the value at every entry fill (it feeds the projection tan-table
+// index AND the 0x0048067E cull readers — if culling follows the scale, this
+// is the operative cull channel). Returns false out of range (0,10].
+bool set_entry_fov_scale(double scale);
+
+// mc2vr.conf entry_fov_decouple=on|off: with entry_fov_scale active, repoint
+// the camera-entry fillers' fov-constant loads at 1.0 (stock game
+// projection/camera) while the cull derivations keep reading the wide
+// patched constant. Returns false on unrecognized values.
+bool set_entry_fov_decouple(const char *value);
+
 // Install the fill-site MidHook (plaintext .text, single caller — the fill
-// loop; fires once per filled slot). Handler no-ops unless the conf enabled
+// loop; fires once per filled slot) and, when cull_fov_widen is on, the
+// fov-write MidHook. Handler no-ops unless the conf enabled
 // it. Failure is non-fatal: the union injection stays idle.
 void install();
 

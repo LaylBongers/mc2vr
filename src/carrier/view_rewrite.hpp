@@ -43,6 +43,15 @@ void set_main_rt_size(uint32_t w, uint32_t h);
 // view_table_inject + hmd_delta. Returns false on unrecognized values.
 bool set_view_row_rewrite(const char *value);
 
+// mc2vr.conf record_fov_widen=on|off (frustum_cull_plan.md I3): rewrite the
+// just-filled g_ViewContextTable record's VP projection rows to the HMD FOV
+// union at ViewContext_BuildCameraConstants' epilogue — feeds CPU-side
+// record consumers (any record-based culling) the HMD fov; the per-eye gate
+// rewrite (hmd_delta) is unaffected. Requires view_table_inject=on for the
+// pose/fov source; shadow/offscreen records skip by camera match. Shares
+// cull_fov_margin with cull_fov_widen. Returns false on unrecognized values.
+bool set_record_fov_widen(const char *value);
+
 // mc2vr.conf view_world_scale=<float>: game world units per metre for the HMD
 // camera (default 1.0 — VERIFIED 2026-10-07: units are metres; see
 // docs/reverse_engineering/pandemic_engine.md § World units).

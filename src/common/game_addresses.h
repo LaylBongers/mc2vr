@@ -71,15 +71,20 @@
 //   +0x20  slot[0].mtx[0] row0 (viewToWorld, camera pos at row 3)
 //   +0x60  slot[0].mtx[1] row0 (worldToView, negated pos)
 //   +0x8c  slot[0].dir[3]   +0xa8 slot[0].params  +0x188 near-plane-ish
-//   +0x2ec fovCos / +0x2f4 fovSin (FOV half-angle)  +0x670 dir670[3]
+//   +0x2ec fovH / +0x2f0 fovV / +0x2f4 = 0 (fov half-angle extents; static
+//           decode 2026-10-08: the live (kindA4==0) write at 0x0048a955 stores
+//           {h*scale*100, 0, v*scale*100} from the global-cam object — the old
+//           "fovCos/fovSin" names are wrong; observed +0x2ec 0.957826 ~
+//           tan(43.75deg), plausibly tan(half-angle))  +0x670 dir670[3]
 //   +0x7ac pos prev / +0x7c4 pos cur / +0x7d0 pose serial / +0x7d4 quat[4]
 #define MC2_VIEW_OFF_SLOT0      ((uintptr_t)0x20u)
 #define MC2_VIEW_OFF_SLOT0V      ((uintptr_t)0x60u)
 #define MC2_VIEW_OFF_SLOTDIR     ((uintptr_t)0x8cu)
 #define MC2_VIEW_OFF_SLOTPARAMS  ((uintptr_t)0xa8u)
 #define MC2_VIEW_OFF_NEAR        ((uintptr_t)0x188u)
-#define MC2_VIEW_OFF_FOVCOS      ((uintptr_t)0x2ecu)
-#define MC2_VIEW_OFF_FOVSIN      ((uintptr_t)0x2f4u)
+#define MC2_VIEW_OFF_FOVCOS      ((uintptr_t)0x2ecu) // fovH extent
+#define MC2_VIEW_OFF_FOVMID      ((uintptr_t)0x2f0u) // fovV extent
+#define MC2_VIEW_OFF_FOVSIN      ((uintptr_t)0x2f4u) // always 0 (old name)
 #define MC2_VIEW_OFF_DIR670      ((uintptr_t)0x670u)
 #define MC2_VIEW_OFF_POS_PREV    ((uintptr_t)0x7acu)
 #define MC2_VIEW_OFF_POS_CUR     ((uintptr_t)0x7c4u)
@@ -88,6 +93,31 @@
 #define MC2_VIEW_OFF_CAMDATA     ((uintptr_t)0x7ecu)
 #define MC2_VIEW_OFF_FLAGS808    ((uintptr_t)0x808u)
 #define MC2_VIEW_TYPE2 ((uint32_t)2u) // normal world view (ViewRef.type14)
+
+// Global-cam object — the SOURCE of the entry fov extents. Chain (static
+// decode 2026-10-08, ViewEntry_MatrixFromGlobalCam 0x0048a8f0 fallback
+// path, which is the live one — live views take kindA4==0): owner =
+// *(u32*)0x00e79dfc; gcam = *(u32*)(owner+0x104); then fovH = *(float*)
+// (gcam+0x17c), fovV = *(float*)(gcam+0x180), scale = *(float*)(gcam+0x184),
+// and the entry triple is written as {fovH*scale*100, 0, fovV*scale*100}
+// (+0x2ec/+0x2f0/+0x2f4). The cull task (0x00876a90) scales its bound
+// vectors by these — widening them widens the culling volume
+// (frustum_cull_plan.md open item).
+#define MC2_G_GLOBALCAM_OWNER      ((uintptr_t)0x00e79dfcu)
+#define MC2_GLOBALCAM_OBJ_OFF     ((uintptr_t)0x104u)
+#define MC2_GLOBALCAM_FOV_H_OFF   ((uintptr_t)0x17cu)
+#define MC2_GLOBALCAM_FOV_V_OFF   ((uintptr_t)0x180u)
+#define MC2_GLOBALCAM_FOV_SCALE_OFF ((uintptr_t)0x184u)
+
+// End of the fov-triple write in ViewEntry_MatrixFromGlobalCam's fallback
+// (kindA4==0 — the LIVE path; S5 watch-proven writer). 0x0048a966/6e/75 store
+// {fovH*k, 0, fovV*k} at EDI = entry+0x2ec (k = gcamScale*100, near dist;
+// {fovH,fovV} unit, v/h = tanV/tanH); 0x0048a97a re-reads [EDI] for the
+// length sqrt. MidHook there = cull_fov_widen: scale the just-written [EDI]
+// by tanHmdHalfH/fovH and [EDI+8] by tanHmdHalfV/fovV (frustum_cull_plan.md
+// D0) — widens the culling cross-section to the HMD FOV before the cull
+// task (0x00876a90) consumes it via Vector_Scale.
+#define MC2_VIEWENTRY_FOV_WRITE_END ((uintptr_t)0x0048a97au)
 
 // g_RenderShell (object, holds live base LtiRenderer_vtbl at frame time) and
 // its pointer global. VmtHook claim target for slots 4 (EndOfFrameHook) /
@@ -198,6 +228,74 @@
 #define MC2_VIEWCONTEXT_STRIDE ((uintptr_t)0x70u)
 #define MC2_VIEWCONTEXT_RECORDS ((uintptr_t)0x20u)   // per buffer
 #define MC2_VIEWCONTEXT_BUFFERSZ ((uintptr_t)0xe00u) // 32 * 0x70
+
+// Record-fill epilogue in ViewContext_BuildCameraConstants (2026-10-08,
+// frustum_cull_plan.md I3): the function writes the finished VP INLINE into
+// the current g_ViewContextTable record — record = 0x018c45e0 + (bufsel*0x20
+// + recidx)*0x70, VP rows at record+0x00..0x3c — then bumps recidx
+// (0x00ed9d42) BEFORE the copies, so at the epilogue the just-filled record
+// index is recidx-1. 0x00859912 = `MOV [0x01163734],EDI` (6 bytes, last
+// store before the pops + RET 4 at 0x0085991e): a MidHook there runs after
+// every record write — record_fov_widen rewrites the just-filled record's
+// VP projection rows to the HMD FOV union (view_rewrite.cpp; matched against
+// the latest main-pass decomposed camera so shadow/offscreen records skip).
+#define MC2_VIEWCTX_ARRAY_BASE  ((uintptr_t)0x018c45e0u) // both-buffer array base
+#define MC2_VIEWCTX_BUFSEL      ((uintptr_t)0x00ff364cu) // u32 0/1 buffer select
+#define MC2_VIEWCTX_RECIDX      ((uintptr_t)0x00ed9d42u)  // u32 next record idx
+#define MC2_VIEWCTX_BUILD_EPILOG ((uintptr_t)0x00859912u)
+
+// Site B — the REAL full-VP record fill in the mutated 0x004671xx fill block
+// (raw-decoded 2026-10-08; E1's live watch saw a main-record row0 fill here at
+// 0x004673bf): inline fld/fstp copy of the COMPLETE 16-dword VP
+// (record+0x00..0x3c) with EAX = record, idx byte bumped before. The last
+// store FSTP [EAX+0x3C] ends at 0x0046742a — the carrier's PRIMARY record-fov
+// hook point (site A, the Matrix_Copy3x4 call at 0x0046718c, copies only 12
+// dwords = rows 0-2 and never writes row 3 — aux records; the gate's 4-row
+// decompose only succeeds on site-B records).
+#define MC2_VIEWCTX_FILLB_COMPLETE ((uintptr_t)0x0046742au)
+
+// Site C — the WATCH-PROVEN main-record VP fill completion (2026-10-08, I3 round 3:
+// DR watchpoints on the main records' row0/row3 dwords hit 0x00859774 [FSTP [EAX],
+// row0] and 0x00859807 [after FSTP [EAX+0x30], row3] ~1100x/window with
+// EAX = MAIN records 018c4730/018c5530): the full 16-dword VP copy in
+// ViewContext_BuildCameraConstants continues D9 58 34/38/3C, the last store
+// FSTP [EAX+0x3C] at 0x0085982C ends at 0x0085982F — EAX = the record, VP
+// complete, +0x40 PS writes not yet done. NOTE: the mutated function exits
+// this path without reaching the 0x00859912 epilogue (the epi hook never saw
+// a main record — identity/aux calls only), which is why the earlier hook
+// never fired. This is the PRIMARY record-fov hook point.
+#define MC2_VIEWCTX_FILLC_COMPLETE ((uintptr_t)0x0085982fu)
+
+// Camera-entry template fill epilogue (raw-decoded 2026-10-08): the fill
+// (CamPose_CopyGlobal_To_Entry 0x004665b0 — clear-from-zero-template +
+// constants) writes via ESI = entry: near +0x50 (=[0x00B92B58]), far +0x54
+// (=[0x00BEAC28]=100), fov +0x58 (=[0x00BEAB5C]=300.0 — the game's fov in
+// engine units, feeds the projection tan-table AND the 0x0048067E cull-reader
+// +0x44/+0x48/+0x4c/+0x5c/+0x60/+0x64 misc. Hook point
+// 0x0046662F = the MOVSS [ESI+0x64] store (exactly 5 bytes; ESI = entry;
+// +0x58 already written) — the carrier's entry_fov diagnostic + scale point
+// (frustum_cull_plan.md: the ADS-narrowing clue implicates the entry fov
+// chain as the operative cull input). CAREFUL: 0x0046662e is the LAST BYTE
+// of the previous MOVSS [ESI+0x60] — hooking there decodes garbage and
+// crashes the game at boot (live-proven 2026-10-08, round-5 staging).
+#define MC2_CAMENTRY_FILL_EPILOG ((uintptr_t)0x0046662fu)
+
+// THE game fov constant (decoded 2026-10-08, frustum_cull_plan.md I3 round 5):
+// 300.0 in engine units (NOT a cos — the old "fovCos" names are wrong). Read
+// by EIGHT sites — the whole game fov chain derives from this one dword:
+// CamPose_CopyGlobal_To_Entry 0x004665b0 (+0x58 store) and FUN_004660a6
+// (camera-entry fillers — the latter likely the STACK-LOCAL gameplay entry
+// the fill hook missed), plus FUN_0070aa60 / FUN_0070a910 / FUN_0070aff6
+// (the 0x0070axx camera/view fov derivations — the gcam cull-fov sources).
+// Baseline (live 2026-10-08): value 300 -> rendered projection a=1.3440
+// b=2.3894 (halfH=36.65° halfV=22.71°, aspect-locked 16:9; CONSTANT under
+// ADS). Scale relation ≈ angle-linear (feeds a tan-table index ∝ value).
+// The carrier's entry_fov_scale PATCHES THIS CONSTANT at init — every
+// consumer (projection, cull derivations, entries) widens in the game's own
+// parametrization. NOTE: one value can't shape the HMD's ~1:1 tan aspect —
+// the widened frustum stays 16:9-shaped, over-covering horizontally
+// (conservative for culling: halfV 60° ⇒ halfH ~97°).
+#define MC2_CAMENTRY_FOV_CONST ((uintptr_t)0x00beab5cu)  // float 300.0
 
 // ViewContext_BuildCameraConstants (E1b watch-proven 2026-10-06, plate there):
 // the plaintext draw-camera VP builder, called ONLY from the VM via thunk
