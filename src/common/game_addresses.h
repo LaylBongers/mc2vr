@@ -109,6 +109,23 @@
 #define MC2_GLOBALCAM_FOV_V_OFF   ((uintptr_t)0x180u)
 #define MC2_GLOBALCAM_FOV_SCALE_OFF ((uintptr_t)0x184u)
 
+// ROUND 22->23 CORRECTION (2026-10-08, live + raw): the operative cull's
+// tan-extent reads are at 0x0047E35A / 0x0047E365 ([EAX+0x30]/[EAX+0x34],
+// site B sibling: 0x0047ED44) — but EAX there is RELOADED at 0x0047E276
+// from the LOCAL [ESP+0x30], NOT gcam. The mid-section gcam reads (MOV
+// EAX,[EAX+0x104] @ 0x0047E0EB, ADD EAX,0x10 @ 0x0047E119) are a different
+// EAX lifetime (fog/interp config); the round-22 "cull reads gcam+0x30/34"
+// attribution was WRONG, and the round-23 write-mode DR watch proved
+// gcam+0x30/+0x34 are never written in gameplay (0.5928/0.7291, static
+// across windows, zero traps on 27 threads) — NOT the cull input. The
+// DIVSS object = whatever [ESP+0x30] holds at runtime (decompiler model:
+// the render-slot ctx; the round-23 snapdump showed the snapshot's source
+// param_2 IS 0x017CF980 — the "round-15 static ctx" and the "render-slot
+// ctx" are the SAME object for the main view). The probe hooks below read
+// the DIVSS operands live — the wrong-object/attribution cutter.
+#define MC2_CULL_TAN_READ_A ((uintptr_t)0x0047e35au)
+#define MC2_CULL_TAN_READ_B ((uintptr_t)0x0047ed44u)
+
 // End of the fov-triple write in ViewEntry_MatrixFromGlobalCam's fallback
 // (kindA4==0 — the LIVE path; S5 watch-proven writer). 0x0048a966/6e/75 store
 // {fovH*k, 0, fovV*k} at EDI = entry+0x2ec (k = gcamScale*100, near dist;
@@ -265,30 +282,50 @@
 //     — a downstream derivation).
 // CRITICAL DETAIL: at 0x0085943B the builder's next instruction is
 // `LEA EAX,[EBX+0xB20]` — the projection matrix is built from REGISTER
-// copies, NOT the ctx slots — so overwriting the slots at 0x0085943B
-// widens ONLY the slot consumers (the cull), leaving the projection stock.
-// THE CLEAN FIX: hook 0x0085943B, verify the just-written terms are the
-// MAIN view's (match 1/g_game_cam.a within tolerance — shadow builds write
-// their own terms), then write tan(hmdHalfH+margin)/tan(hmdHalfV+margin).
+// copies, NOT the ctx slots. SUPERSEDED (round 16 clean negative): this ctx
+// is the STATIC frame-ctx 0x017CF980 — the operative cull reads the
+// per-view render-SLOT ctx (see MC2_VIEW_SNAPSHOT_TAN_SITE below), so a
+// write here is a no-op for the cull. Define kept for the decoded history;
+// no carrier hook installs here anymore.
 #define MC2_VCTX_TAN_STORES_DONE ((uintptr_t)0x0085943bu)
 #define MC2_FRAMECTX_TANH_OFF   ((uintptr_t)0x30u)
 #define MC2_FRAMECTX_TANV_OFF   ((uintptr_t)0x34u)
 
-// THE PER-VIEW SNAPSHOT (round-17/18, 2026-10-08): FUN_0061b930
-// (called by FUN_0061b7e0 ~5.5/frame, once per view) clones the view's
-// render-slot ctx into a per-view state object (param_1, in EBX) —
-// INCLUDING the tan extents (param_1[0xc]/[0xd] = +0x30/+0x34), the VP
-// rows (+0x10..0x1c), and the ctx+0x8c0/0x900 matrices (+0x230/+0x240).
-// THIS snapshot is what the per-object cull reads (no static address —
-// why every static-slot watch missed it). Round 16's static-ctx override
-// (0x0085943b) wrote a DIFFERENT ctx object than the snapshot's source —
-// hence the clean negative. THE FIX: hook the snapshot tail — 0x0061BB4E
-// = `FSTP [EBX+0xE70]` (6 bytes, EBX = param_1 = the snapshot, still live;
-// the function then does MOV EAX,EBX + more [EBX+0xE74] stores + RET 8) —
-// and rewrite the snapshot's tan fields to the HMD-union values. The
-// snapshot's source ctx/records stay stock (rendering stock); only the
-// per-view cull state sees the HMD frustum.
-#define MC2_VIEW_SNAPSHOT_TAN_SITE ((uintptr_t)0x0061bb4eu)
+// THE PER-VIEW SNAPSHOT (round-17/18, 2026-10-08): ViewCtx_BuildSnapshot
+// 0x0061b930 (called by FUN_0061b7e0 ~5.5/frame, once per view — single
+// caller) clones the view's render-slot ctx (param_2) into a per-view state
+// object (param_1, in EBX) — tans +0x30/+0x34, VP rows +0x10..0x1c, matrices
+// +0x8C0/+0x900, the +0xa70 block, more. Round 19 proved the operative cull
+// reads the SOURCE slot ctx's tans (the copy-write of round 18 moved
+// nothing).
+// RAW DECODE of the mutated convention (round 21, 2026-10-08 — the "one
+// decode away", settled):
+//   0061b930  PUSH EBX; MOV EBX,[ESP+8]        ; EBX = param_1 (snapshot)
+//   0061b935  MOV [EBX],vtable
+//   0061b93c  PUSH EBP
+//   0061b93d  MOV EBP,[ESP+0x10]               ; EBP = param_2 (SOURCE ctx)!
+//   ...body reads every param_2 field as [EBP+<exact field offset>]...
+//   0061bb3f  POP EDI
+//   0061bb40  FLD  [EBP+0xE70]                 ; <- HOOK HERE (6 bytes)
+//   0061bb46  POP ESI
+//   0061bb47  FSTP [EBX+0xE70]; MOV EAX,EBX
+//   0061bb4f  FLD [EBP+0xE74]
+//   0061bb55  POP EBP                          ; EBP dies HERE
+//   0061bb56  FSTP [EBX+0xE74]; POP EBX; RET 8
+// At 0x0061BB40: EBX = the snapshot (its tan copy was made at
+// 0x0061b970/0x0061b977) and EBP = the SOURCE render-slot ctx, both live;
+// the x87 stack is EMPTY (the FLD below the hook has not executed —
+// hooking at 0x0061BB47 instead would straddle a pending x87 load under
+// the C handler). ESI/EDI are dead MOVSD temps (always LEA'd from EBP —
+// the round-19 register sightings were EBP-derived addresses, not the
+// base). Round-20's [EBP+0xC] crash explained: EBP is NOT a frame pointer
+// — [EBP+0xC] is param_2+0xC, a header field.
+// THE CLEAN FIX: hook 0x0061BB40, discriminate the main view via the
+// snapshot's tan copy (tanH vs 1/g_game_cam.a, 30% — tracks ADS), then
+// write tan(hmdHalfH+margin)/tan(hmdHalfV+margin) into the SOURCE ctx
+// [EBP+0x30]/[EBP+0x34] — the cull's operative input. The snapshot copy and
+// everything rendering-side stay stock.
+#define MC2_VIEW_SNAPSHOT_TAN_SITE ((uintptr_t)0x0061bb40u)
 
 // Site C — the WATCH-PROVEN main-record VP fill completion (2026-10-08, I3 round 3:
 // DR watchpoints on the main records' row0/row3 dwords hit 0x00859774 [FSTP [EAX],

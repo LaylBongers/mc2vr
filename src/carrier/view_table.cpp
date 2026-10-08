@@ -433,24 +433,44 @@ void try_measure_frame(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2)
 // right after the hook re-reads the scaled memory, so the derived near
 // distance stays consistent.
 
-// ---- cull tan override (round 18 — THE CLEAN FIX, snapshot form) --------
-// The per-object cull reads the PER-VIEW SNAPSHOT built by FUN_0061b930
-// (~5.5/frame, one per view — no static address, why every static-slot
-// watch missed it). Hook at the snapshot tail 0x0061BB4E (EBX = param_1 =
-// the snapshot, proven live there): match the main view (snapshot tanH vs
-// 1/g_game_cam.a) and rewrite the snapshot's +0x30/+0x34 tan fields to
-// the HMD-union frustum. The snapshot SOURCE (ctx/records) stays stock —
-// rendering, monitor, offscreen passes, camera all stock; only the cull's
-// per-view state sees the HMD frustum.
+// ---- cull tan override (round 21 — THE CLEAN FIX, source-slot form) ----
+// The per-object cull reads the SOURCE render-slot ctx's tans (round 19:
+// the snapshot copy demonstrably carried the widen, yet round 18's
+// copy-write moved nothing). That source is param_2 of
+// ViewCtx_BuildSnapshot 0x0061b930 — which the mutated convention keeps
+// in EBP for the whole body (raw-decoded prologue: MOV EBP,[ESP+0x10];
+// every body read is [EBP+<exact field offset>]). EBP is still live at
+// the tail (POP EBP is at 0x0061bb55). Hook at 0x0061BB40
+// (MC2_VIEW_SNAPSHOT_TAN_SITE — the 6-byte `FLD [EBP+0xE70]`, x87 stack
+// empty there; EBX = param_1 = the snapshot also live): discriminate the
+// main view via the snapshot's tan copy (tanH vs 1/g_game_cam.a — tracks
+// ADS), then write tan(hmdHalf+margin) into the SOURCE's +0x30/+0x34.
+// Rendering, monitor, offscreen passes, camera all stock; only the cull's
+// input sees the HMD frustum.
 bool g_cull_tan_override = false;
 bool g_cull_snap_dump = false;  // log-only mode: dump snapshot fields, NO writes
 uint32_t g_snap_dump_logged = 0;
 SafetyHookMid g_tan_mid;
 uint64_t g_tan_overrides = 0, g_tan_skips = 0, g_tan_mismatches = 0;
+// The last pair we wrote into a source slot ctx (exact bits). If the game
+// does NOT rewrite the slot tans every frame (per-frame rewriting is
+// unproven — round 19 only proved rewriting on chain/fov changes), our own
+// previous write leaks into the next snapshot copy and would fail the
+// main-view discrimination below. Accept a copy that bit-matches our last
+// write as still-the-main-view.
+uint32_t g_tan_last_th_bits = 0, g_tan_last_tv_bits = 0;
+bool g_tan_written = false;
 
 void tan_midhook(safetyhook::Context &ctx)
 {
-    if (!g_cull_tan_override) {
+    // Round 24: OBSERVER ONLY. The snapshot is NOT the cull's input — the
+    // round-18 copy write and the round-21 source write were both live
+    // no-ops; the round-24 probe proved the operative cull reads the slot
+    // ctx tans IN PLACE at its own DIVSS sites (obj=0x017cf980 at both,
+    // every window) — cullsite_probe below does the writing now, directly at
+    // the read site (ordering-free by construction). This hook just gates
+    // the once-per-window snapshot field dump (cull_snap_dump=on).
+    if (!g_cull_snap_dump) {
         return;
     }
     const uintptr_t snap = ctx.ebx;
@@ -464,12 +484,18 @@ void tan_midhook(safetyhook::Context &ctx)
     vpcam::Camera cam;
     if (!(tan_h > 0.0f) || !std::isfinite(tan_h) || !view::get_game_camera(&cam) ||
         !(cam.a > 0.0f)) {
-        g_tan_skips++;
         return;
     }
     const float expected = 1.0f / cam.a;
-    if (std::fabs(tan_h - expected) > 0.3f * expected) {
-        g_tan_mismatches++;
+    bool main_view = (std::fabs(tan_h - expected) <= 0.3f * expected);
+    if (!main_view && g_tan_written) {
+        // Our previous write may have leaked into the copy — an exact bit
+        // match is still the main view.
+        uint32_t hb;
+        memcpy(&hb, &tan_h, 4);
+        main_view = (hb == g_tan_last_th_bits);
+    }
+    if (!main_view) {
         return;
     }
 
@@ -495,65 +521,144 @@ void tan_midhook(safetyhook::Context &ctx)
             MC2VR_LOG("camtable: snapdump a70: %.4f %.4f %.4f %.4f",
                       (double)rdf(snap + 0xa70), (double)rdf(snap + 0xa74),
                       (double)rdf(snap + 0xa78), (double)rdf(snap + 0xa7c));
+            // Round 21: the SOURCE slot ctx (EBP at the site — the game
+            // dereferenced it all through the body, so +0x30 is safe).
+            const uintptr_t srcp = ctx.ebp;
+            if (srcp > 0x10000 && srcp < 0x7fff0000 && srcp != snap) {
+                MC2VR_LOG("camtable: snapdump src: ctx=%p tanH=%.4f tanV=%.4f",
+                          (void *)srcp, (double)rdf(srcp + 0x30),
+                          (double)rdf(srcp + 0x34));
+            }
+            // Round 22: the operative per-object cull (FUN_0047ded0) reads
+            // its frustum tan extents from the GLOBAL CAMERA OBJECT —
+            // gcam = [[0x00e79dfc]+0x104], tans at +0x30/+0x34 (EAX at the
+            // 0x0047E35C/0x0047E367 DIVSS pair, raw-decoded). Log its
+            // identity/values vs the snapshot copy — one run answers
+            // whether gcam carries the projection tans and whether it is
+            // the round-15 "static ctx" 0x017CF980.
+            const uintptr_t g_owner = *(const uintptr_t *)MC2_G_GLOBALCAM_OWNER;
+            if (g_owner > 0x10000 && g_owner < 0x7fff0000) {
+                const uintptr_t gcam =
+                    *(const uintptr_t *)(g_owner + MC2_GLOBALCAM_OBJ_OFF);
+                if (gcam > 0x10000 && gcam < 0x7fff0000) {
+                    MC2VR_LOG("camtable: snapdump gcam: owner=%p gcam=%p "
+                              "tanH=%.4f tanV=%.4f%s",
+                              (void *)g_owner, (void *)gcam,
+                              (double)rdf(gcam + MC2_FRAMECTX_TANH_OFF),
+                              (double)rdf(gcam + MC2_FRAMECTX_TANV_OFF),
+                              gcam == 0x017cf980u
+                                  ? " (== round-15 static ctx)" : "");
+                } else {
+                    MC2VR_LOG("camtable: snapdump gcam: owner=%p gcam=%p (unresolved)",
+                              (void *)g_owner, (void *)gcam);
+                }
+            }
         }
         g_tan_overrides++;
         return;
     }
 
-    // Write the HMD-union tans (+ cull_fov_margin). No tracked HMD = leave
-    // the game's own terms (stock behavior).
-    float half_h, half_v;
-    if (!get_fov_union(&half_h, &half_v)) {
+    // Round 24: no write path here anymore — see the header comment. The
+    // operative mechanism is cullsite_probe() at the cull's own read sites.
+}
+
+// ---- cull-site tan override (round 24 — THE ordering-free clean fix) ---
+// The operative cull's tan-extent reads, RAW-DECODED: site A = 0x0047E35A
+// (`DIVSS XMM2,[EAX+0x30]`, 5 bytes; site B = 0x0047ED44 the same read in
+// the sibling second pass). The round-24 probe run proved live that EAX =
+// 0x017CF980 (the main slot ctx — the same object rounds 15/17 called
+// "static ctx"/"snapshot source") at BOTH sites, every window. Since the
+// cull reads the tans RIGHT HERE, we write the HMD-union tans in place,
+// immediately before the DIVSS — ordering-free by construction (the
+// round-16/21 writes at other frame times were live no-ops). Main-view
+// discrimination: ctx tanH vs 1/g_game_cam.a (tracks ADS), or an exact
+// bit-match to our own last write (the game's rewrite cadence is unknown;
+// a persisted write must keep being rewritten, not stall). Diagnostics:
+// once-per-window cullsiteA/B log lines trace the mechanism live.
+SafetyHookMid g_cullsiteA_mid, g_cullsiteB_mid;
+uint32_t g_cullsiteA_logged = 0, g_cullsiteB_logged = 0;
+uint64_t g_cullsite_hits = 0;
+
+static void cullsite_probe(safetyhook::Context &ctx, bool site_b)
+{
+    if (!g_cull_tan_override) {
+        return;
+    }
+    const uintptr_t obj = ctx.eax;
+    if (obj <= 0x10000 || obj >= 0x7fff0000) {
+        return;
+    }
+    float tan_h, tan_v;
+    memcpy(&tan_h, (const void *)(obj + MC2_FRAMECTX_TANH_OFF), 4);
+    memcpy(&tan_v, (const void *)(obj + MC2_FRAMECTX_TANV_OFF), 4);
+
+    // Once-per-window diagnostic line (both sites fire per frame; the
+    // verdict line is the live trace of the mechanism working).
+    uint32_t &latch = site_b ? g_cullsiteB_logged : g_cullsiteA_logged;
+    if (latch == 0) {
+        latch = 1;
+        g_cullsite_hits++;
+        uint32_t hb, vb;
+        memcpy(&hb, (const void *)(obj + MC2_FRAMECTX_TANH_OFF), 4);
+        memcpy(&vb, (const void *)(obj + MC2_FRAMECTX_TANV_OFF), 4);
+        bool ours = g_tan_written && hb == g_tan_last_th_bits && vb == g_tan_last_tv_bits;
+        MC2VR_LOG("camtable: cullsite%s: obj=%p [tanH=%.4f tanV=%.4f] %s — "
+                  "writesSoFar=%llu",
+                  site_b ? "B" : "A", (const void *)obj,
+                  (double)tan_h, (double)tan_v,
+                  ours ? "VALUES ARE OURS at cull time"
+                       : "values NOT ours at cull time",
+                  (unsigned long long)g_tan_overrides);
+    }
+
+    // Main-view discrimination (same as the retired snapshot-tail writer):
+    // the ctx tanH must match the live main projection (1/cam.a — tracks
+    // ADS), or bit-match our own last write (leak-robustness: the game
+    // rewrite cadence is unknown; if our write persists into the next
+    // invocation we must keep rewriting, not stall).
+    vpcam::Camera cam;
+    if (!(tan_h > 0.0f) || !std::isfinite(tan_h) || !view::get_game_camera(&cam) ||
+        !(cam.a > 0.0f)) {
         g_tan_skips++;
         return;
     }
-    const float th = std::tan(half_h);
-    const float tv = std::tan(half_v);
-
-    // Round 20: write the SOURCE (the render-slot ctx), not the copy —
-    // round 19's diff proved the snapshot tans carry the widen yet round
-    // 18's copy-write moved nothing: the per-object cull reads the slot
-    // ctx's tan slots directly. FUN_0061b930 is RET 8 (two stack args):
-    // at this hook point the frame is live — param_1 (the snapshot) at
-    // [EBP+8] (== EBX, sanity-check) and param_2 (the slot ctx) at
-    // [EBP+0xC]. Overwriting the source slot ctx +0x30/+0x34 feeds the
-    // per-object tests directly; the copy and everything rendering-side
-    // stays stock.
-    // CRASH LESSON (round 20 live): [EBP+0xC] held a stale stack slot in
-    // some invocations (the mutated convention likely keeps param_2 in a
-    // register) — the unguarded write crashed at the first HMD-tracked
-    // frame. VALIDATE before writing: VirtualQuery the page (safe for any
-    // pointer), then require the candidate to hold the EXACT bitwise
-    // tan_h — the snapshot copied [source+0x30] moments ago, so a true
-    // source must match bit-for-bit. Anything else = wrong slot.
-    const uintptr_t ebp = ctx.ebp;
-    const uintptr_t arg1 = *(const uintptr_t *)(ebp + 0x8);
-    const uintptr_t arg2 = *(const uintptr_t *)(ebp + 0xc);
-    bool source_ok = false;
-    if (arg1 == snap && arg2 > 0x10000 && arg2 < 0x7fff0000) {
-        MEMORY_BASIC_INFORMATION mbi;
-        if (VirtualQuery((void *)arg2, &mbi, sizeof(mbi)) == sizeof(mbi) &&
-            (mbi.State & MEM_COMMIT) != 0 &&
-            ((uintptr_t)mbi.BaseAddress + mbi.RegionSize) > (arg2 + 0x38)) {
-            uint32_t src_th;
-            memcpy(&src_th, (const void *)(arg2 + MC2_FRAMECTX_TANH_OFF), 4);
-            uint32_t want;
-            memcpy(&want, &tan_h, 4);
-            source_ok = (src_th == want);
-        }
+    const float expected = 1.0f / cam.a;
+    bool main_view = (std::fabs(tan_h - expected) <= 0.3f * expected);
+    if (!main_view && g_tan_written) {
+        uint32_t hb;
+        memcpy(&hb, &tan_h, 4);
+        main_view = (hb == g_tan_last_th_bits);
     }
-    if (source_ok) {
-        memcpy((void *)(arg2 + MC2_FRAMECTX_TANH_OFF), &th, 4);
-        memcpy((void *)(arg2 + MC2_FRAMECTX_TANV_OFF), &tv, 4);
+    if (!main_view) {
+        g_tan_mismatches++;
+        return;
+    }
+    if (g_cull_snap_dump) {
+        // Log-only mode: observe, don't write.
         g_tan_overrides++;
         return;
     }
-    // Fallback (unexpected frame layout / wrong slot): the copy only —
-    // harmless (round-18 semantics), counted so the miss is visible.
-    g_tan_mismatches++;
-    memcpy((void *)(snap + MC2_FRAMECTX_TANH_OFF), &th, 4);
-    memcpy((void *)(snap + MC2_FRAMECTX_TANV_OFF), &tv, 4);
+    float half_h, half_v;
+    if (!get_fov_union(&half_h, &half_v)) {
+        // No tracked HMD pose (e.g. desktop run) — leave the game's terms.
+        g_tan_skips++;
+        return;
+    }
+    // THE WRITE — in place, immediately before the DIVSS consumes the
+    // fields. Ordering-free by construction: this IS the cull's read site
+    // (round-24 probe: obj=0x017cf980 at both sites, every window).
+    const float th = std::tan(half_h);
+    const float tv = std::tan(half_v);
+    memcpy((void *)(obj + MC2_FRAMECTX_TANH_OFF), &th, 4);
+    memcpy((void *)(obj + MC2_FRAMECTX_TANV_OFF), &tv, 4);
+    memcpy(&g_tan_last_th_bits, &th, 4);
+    memcpy(&g_tan_last_tv_bits, &tv, 4);
+    g_tan_written = true;
+    g_tan_overrides++;
 }
+
+void cullsite_probe_a(safetyhook::Context &ctx) { cullsite_probe(ctx, false); }
+void cullsite_probe_b(safetyhook::Context &ctx) { cullsite_probe(ctx, true); }
 
 void fov_midhook(safetyhook::Context &ctx)
 {
@@ -978,22 +1083,48 @@ void install()
               (void *)MC2_CAMENTRY_FILL_EPILOG,
               g_entry_fov_scale != 1.0f ? ", SCALING" : ", observe");
 
-    // THE CLEAN FIX (round 16): overwrite the frame-ctx tan extents with
-    // the HMD-union frustum right after the main view's builder stores them
-    // — the cull tests then test against what we actually render, while the
-    // projection (built from register copies) stays stock.
-    auto tmid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_VCTX_TAN_STORES_DONE),
+    // THE CLEAN FIX (round 21): the snapshot-tail MidHook — after the
+    // per-view snapshot copy completes, rewrite the SOURCE render-slot
+    // ctx's tan extents (the cull's operative input, in EBP at the site)
+    // to the HMD-union frustum; the snapshot copy and the projection
+    // (built from register copies) stay stock.
+    auto tmid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_VIEW_SNAPSHOT_TAN_SITE),
                                       tan_midhook);
     if (!tmid) {
         MC2VR_LOG("camtable: cull-tan MidHook install FAILED @ %p (error %u) — "
                   "the clean cull fix stays idle",
-                  (void *)MC2_VCTX_TAN_STORES_DONE, (unsigned)tmid.error().type);
+                  (void *)MC2_VIEW_SNAPSHOT_TAN_SITE, (unsigned)tmid.error().type);
         return;
     }
     g_tan_mid = std::move(*tmid);
-    MC2VR_LOG("camtable: installed cull-tan MidHook @ %p (ctx tan override%s)",
-              (void *)MC2_VCTX_TAN_STORES_DONE,
+    MC2VR_LOG("camtable: installed snapshot-tail MidHook @ %p (source-ctx tan override%s)",
+              (void *)MC2_VIEW_SNAPSHOT_TAN_SITE,
               g_cull_tan_override ? ", ARMED" : ", idle");
+
+    // Round-24 clean fix: the cull's own tan-extent read sites — the write
+    // lands immediately before the DIVSS consumes it (ordering-free).
+    auto probeA = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_CULL_TAN_READ_A),
+                                        cullsite_probe_a);
+    if (!probeA) {
+        MC2VR_LOG("camtable: cullsite-A hook install FAILED @ %p (error %u)",
+                  (void *)MC2_CULL_TAN_READ_A, (unsigned)probeA.error().type);
+    } else {
+        g_cullsiteA_mid = std::move(*probeA);
+        MC2VR_LOG("camtable: installed cullsite-A hook @ %p (in-place cull tan override%s)",
+                  (void *)MC2_CULL_TAN_READ_A,
+                  g_cull_tan_override ? ", ARMED" : ", idle");
+    }
+    auto probeB = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_CULL_TAN_READ_B),
+                                        cullsite_probe_b);
+    if (!probeB) {
+        MC2VR_LOG("camtable: cullsite-B hook install FAILED @ %p (error %u)",
+                  (void *)MC2_CULL_TAN_READ_B, (unsigned)probeB.error().type);
+    } else {
+        g_cullsiteB_mid = std::move(*probeB);
+        MC2VR_LOG("camtable: installed cullsite-B hook @ %p (in-place cull tan override%s)",
+                  (void *)MC2_CULL_TAN_READ_B,
+                  g_cull_tan_override ? ", ARMED" : ", idle");
+    }
 
     // The causal SCALE at the SOURCE: patch the game's fov constant itself —
     // all 8 readers (both camera-entry fillers incl. the stack-local one the
@@ -1112,6 +1243,7 @@ void report_window()
                   (unsigned long long)g_tan_mismatches);
         g_tan_overrides = g_tan_skips = g_tan_mismatches = 0;
         g_snap_dump_logged = 0;
+        g_cullsiteA_logged = g_cullsiteB_logged = 0;
     }
 }
 

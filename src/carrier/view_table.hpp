@@ -92,11 +92,12 @@ bool set_entry_fov_decouple(const char *value);
 // third-person camera pulling in. Returns false on unrecognized values.
 bool set_boom_pin(const char *value);
 
-// mc2vr.conf cull_tan_override=on|off: THE CLEAN CULL FIX — overwrite the
-// frame-ctx tan extents (the cull tests' divisors) with the HMD-union
-// frustum after the main view's builder writes them. The game renders
+// mc2vr.conf cull_tan_override=on|off: THE CLEAN CULL FIX (round 24) —
+// rewrite the tan extents IN PLACE at the operative cull's own DIVSS read
+// sites (ordering-free) to the HMD-union frustum; the game renders
 // 100% stock; only the cull tests against the wider (true) frustum.
 // Supersedes entry_fov_scale/boom_pin/cull_fov_widen/record_fov_widen.
+// Needs a tracked HMD (no pose -> skip).
 bool set_cull_tan_override(const char *value);
 
 // mc2vr.conf cull_snap_dump=on|off: log-only mode for the snapshot hook —

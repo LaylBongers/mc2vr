@@ -172,10 +172,11 @@ static void load_conf()
                 MC2VR_LOG("conf: boom_pin=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "cull_tan_override") == 0) {
-            // THE CLEAN CULL FIX (frustum_cull_plan.md round 16): overwrite
-            // the frame-ctx tan extents (the cull test divisors) with the
-            // HMD-union frustum; the game renders 100% stock. Supersedes
-            // entry_fov_scale/boom_pin/cull_fov_widen/record_fov_widen.
+            // THE CLEAN CULL FIX (frustum_cull_plan.md round 24): rewrite the
+            // tan extents IN PLACE at the operative cull's own DIVSS read
+            // sites (ordering-free) with the HMD-union frustum; the game
+            // renders 100% stock. Supersedes entry_fov_scale/boom_pin/
+            // cull_fov_widen/record_fov_widen.
             if (!camtable::set_cull_tan_override(value)) {
                 MC2VR_LOG("conf: cull_tan_override=%s not recognized (use on|off)", value);
             }
