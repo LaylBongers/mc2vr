@@ -108,7 +108,7 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
 2. **Upstream ViewEntry pose injection does NOT steer the draw camera** (E2). The ViewEntry
    `pos7c4`/`quat7d4` fields are OUTPUT channels of the staged round-trip: every serial bump is
    answered by the copy-back re-asserting the VM's pose within one frame (write+bump, into all 16
-   camera-adjacent views, measured regression SLOPE 0.00). This also kills `frustrum_cull_plan.md`'s
+   camera-adjacent views, measured regression SLOPE 0.00). This also kills `frustum_cull_plan.md`'s
    original D1/D2 entry-injection design.
 3. **`g_CameraTable` (0x014A2EE0) is the single injection point** (E1b + E2b). Static VA, runtime-live,
    plaintext-filled ~1.7/frame from the camera entity's quat+pos (via D3DX), and read by BOTH the
@@ -239,5 +239,5 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
 - "The producer side cannot work / ViewEntry injection steers anything" — the ViewEntry path
   specifically is dead (E2), but the producer side WORKS at `g_CameraTable` (E2b); the M3-era
   negative was an address error, not a category error.
-- `frustrum_cull_plan.md` D1/D2 (ViewEntry injection) — superseded by the table injection; the
+- `frustum_cull_plan.md` D1/D2 (ViewEntry injection) — superseded by the table injection; the
   plan doc carries the resolution note.

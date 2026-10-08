@@ -17,7 +17,7 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
   wrong as an absolute. Whether the VM's draw-camera DERIVATION consumes the staged pose as input is
   still open — decisive experiment E2 in `docs/stereo_improvements_plan.md`. Until then the GPU
   boundary (or the record itself, I1 there) remains the proven draw-camera channel; the ViewEntry
-  upstream path is proven for CULLING inputs only (docs/frustrum_cull_plan.md).
+  upstream path is proven for CULLING inputs only (docs/frustum_cull_plan.md).
 - **There is NO fixed-function projection** — `SetTransform` is never called. The projection is folded into
   the `viewContextData` VP rows. **E2 verdict (2026-10-06, live-proven): the ViewEntry pose fields are NOT a
   draw-camera input.** Injecting pos (+ serial bump, every frame, into ALL 16 camera-adjacent views — the

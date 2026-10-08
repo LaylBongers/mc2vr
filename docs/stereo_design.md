@@ -14,7 +14,7 @@ Mechanism rules and hook list: `launcher_plan.md`. Overview diagram: `render_dia
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`) |
 | S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (the S4-4-era full VP replacement; superseded 2026-10-07 by the g_CameraTable union injection + hmd_delta — §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below; improvement plan: `stereo_improvements_plan.md` |
 | S5 motion controls | not started — NEXT |
-| S6 frustum-culling alignment | **INJECTION IMPLEMENTED + LIVE-VERIFIED 2026-10-07**: union HMD pose injected at `g_CameraTable` post-fill (`view_table_inject=on`) — culling/LOD follow the head, rotation correct through aim changes (`stereo_improvements_plan.md` rounds 1-8; `frustrum_cull_plan.md` resolution note). Remaining: FOV widening for the culling frustum (game's widescreen fov still governs pop-in at HMD FOV edges) |
+| S6 frustum-culling alignment | **INJECTION IMPLEMENTED + LIVE-VERIFIED 2026-10-07**: union HMD pose injected at `g_CameraTable` post-fill (`view_table_inject=on`) — culling/LOD follow the head, rotation correct through aim changes (`stereo_improvements_plan.md` rounds 1-8; `frustum_cull_plan.md` resolution note). Remaining: FOV widening for the culling frustum (game's widescreen fov still governs pop-in at HMD FOV edges) |
 
 > **KNOWN ISSUE — reprojection staleness (MUST BE FIXED EVENTUALLY, do not lose track of it).**
 > During head motion there is visible apparent stutter/micro-judder that vanishes when the head is held
@@ -258,7 +258,7 @@ frame (full chain in `docs/reverse_engineering/render_path.md` § Draw-camera co
 upstream ViewEntry injection is disproven (output-only channel), and the SINGLE upstream
 injection point is `g_CameraTable` (0x014A2EE0) — hook after `CameraTable_FillFromPose`
 (0x0070ae50)'s fill, rewrite rotation+position with the HMD-union pose: steers draw camera
-(union) + culling + LOD together, and supersedes `frustrum_cull_plan.md`'s original D1/D2
+(union) + culling + LOD together, and supersedes `frustum_cull_plan.md`'s original D1/D2
 design. Per-eye stays at the record level (I1, shrunk to the per-eye delta).
 **IMPLEMENTED + LIVE-VERIFIED 2026-10-07** (`stereo_improvements_plan.md` rounds 1-8):
 union injection live (`view_table_inject=on`, probe-derived composition — the entry's ROWS are
@@ -331,7 +331,7 @@ backbuffer, it ignores the per-eye asymmetric-frustum centers and acquires ~0.47
 of CROSSED disparity — it visually floats ~14 cm in front of the user. Fix track:
 `docs/hud_plan.md`.** Engine culling vs the game camera frustum —
 **RESOLVED as a track (2026-10-06)**: the culling-input chain is fully RE'd (plaintext, change-gated,
-culminating in `ViewEntry_DeriveCullTask` `0x00876a90`); design in `frustrum_cull_plan.md` (§S6);
+culminating in `ViewEntry_DeriveCullTask` `0x00876a90`); design in `frustum_cull_plan.md` (§S6);
 non-`viewContextData` shaders, PS-side camera data and texgen stay mono/lag with rotation (improvement
 path now drafted: `stereo_improvements_plan.md` - record-level per-eye rewrite + upstream-ViewEntry
 experiment E2); pixel density
@@ -347,7 +347,7 @@ first). Pose/input marshal point is the slot-5 hook (S4); controller poses and b
 
 Align engine frustum culling + LOD with the HMD (head rotation, widened FOV). RE complete 2026-10-06 via the
 carrier `debug_watch` hardware-watchpoint tooling; full evidence in
-`reverse_engineering/view_and_camera.md` § camera-data accessors, design in **`frustrum_cull_plan.md`**.
+`reverse_engineering/view_and_camera.md` § camera-data accessors, design in **`frustum_cull_plan.md`**.
 Headlines: the culling volume is built by the plaintext task `ViewEntry_DeriveCullTask` (`0x00876a90`)
 from ViewEntry fov/slot/pose fields; the whole pipeline is serial-gated (write fields + bump serials to
 propagate); pose VALUES originate in the VM via the staged-block round-trip (copy-back at `0x0048F72D`);
