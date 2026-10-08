@@ -94,47 +94,8 @@
 #define MC2_VIEW_OFF_FLAGS808    ((uintptr_t)0x808u)
 #define MC2_VIEW_TYPE2 ((uint32_t)2u) // normal world view (ViewRef.type14)
 
-// Global-cam object — the SOURCE of the entry fov extents. Chain (static
-// decode 2026-10-08, ViewEntry_MatrixFromGlobalCam 0x0048a8f0 fallback
-// path, which is the live one — live views take kindA4==0): owner =
-// *(u32*)0x00e79dfc; gcam = *(u32*)(owner+0x104); then fovH = *(float*)
-// (gcam+0x17c), fovV = *(float*)(gcam+0x180), scale = *(float*)(gcam+0x184),
-// and the entry triple is written as {fovH*scale*100, 0, fovV*scale*100}
-// (+0x2ec/+0x2f0/+0x2f4). The cull task (0x00876a90) scales its bound
-// vectors by these — widening them widens the culling volume
-// (frustum_cull_plan.md open item).
-#define MC2_G_GLOBALCAM_OWNER      ((uintptr_t)0x00e79dfcu)
-#define MC2_GLOBALCAM_OBJ_OFF     ((uintptr_t)0x104u)
-#define MC2_GLOBALCAM_FOV_H_OFF   ((uintptr_t)0x17cu)
-#define MC2_GLOBALCAM_FOV_V_OFF   ((uintptr_t)0x180u)
-#define MC2_GLOBALCAM_FOV_SCALE_OFF ((uintptr_t)0x184u)
 
-// ROUND 22->23 CORRECTION (2026-10-08, live + raw): the operative cull's
-// tan-extent reads are at 0x0047E35A / 0x0047E365 ([EAX+0x30]/[EAX+0x34],
-// site B sibling: 0x0047ED44) — but EAX there is RELOADED at 0x0047E276
-// from the LOCAL [ESP+0x30], NOT gcam. The mid-section gcam reads (MOV
-// EAX,[EAX+0x104] @ 0x0047E0EB, ADD EAX,0x10 @ 0x0047E119) are a different
-// EAX lifetime (fog/interp config); the round-22 "cull reads gcam+0x30/34"
-// attribution was WRONG, and the round-23 write-mode DR watch proved
-// gcam+0x30/+0x34 are never written in gameplay (0.5928/0.7291, static
-// across windows, zero traps on 27 threads) — NOT the cull input. The
-// DIVSS object = whatever [ESP+0x30] holds at runtime (decompiler model:
-// the render-slot ctx; the round-23 snapdump showed the snapshot's source
-// param_2 IS 0x017CF980 — the "round-15 static ctx" and the "render-slot
-// ctx" are the SAME object for the main view). The probe hooks below read
-// the DIVSS operands live — the wrong-object/attribution cutter.
-#define MC2_CULL_TAN_READ_A ((uintptr_t)0x0047e35au)
-#define MC2_CULL_TAN_READ_B ((uintptr_t)0x0047ed44u)
 
-// End of the fov-triple write in ViewEntry_MatrixFromGlobalCam's fallback
-// (kindA4==0 — the LIVE path; S5 watch-proven writer). 0x0048a966/6e/75 store
-// {fovH*k, 0, fovV*k} at EDI = entry+0x2ec (k = gcamScale*100, near dist;
-// {fovH,fovV} unit, v/h = tanV/tanH); 0x0048a97a re-reads [EDI] for the
-// length sqrt. MidHook there = cull_fov_widen: scale the just-written [EDI]
-// by tanHmdHalfH/fovH and [EDI+8] by tanHmdHalfV/fovV (frustum_cull_plan.md
-// D0) — widens the culling cross-section to the HMD FOV before the cull
-// task (0x00876a90) consumes it via Vector_Scale.
-#define MC2_VIEWENTRY_FOV_WRITE_END ((uintptr_t)0x0048a97au)
 
 // g_RenderShell (object, holds live base LtiRenderer_vtbl at frame time) and
 // its pointer global. VmtHook claim target for slots 4 (EndOfFrameHook) /
@@ -246,129 +207,12 @@
 #define MC2_VIEWCONTEXT_RECORDS ((uintptr_t)0x20u)   // per buffer
 #define MC2_VIEWCONTEXT_BUFFERSZ ((uintptr_t)0xe00u) // 32 * 0x70
 
-// Record-fill epilogue in ViewContext_BuildCameraConstants (2026-10-08,
-// frustum_cull_plan.md I3): the function writes the finished VP INLINE into
-// the current g_ViewContextTable record — record = 0x018c45e0 + (bufsel*0x20
-// + recidx)*0x70, VP rows at record+0x00..0x3c — then bumps recidx
-// (0x00ed9d42) BEFORE the copies, so at the epilogue the just-filled record
-// index is recidx-1. 0x00859912 = `MOV [0x01163734],EDI` (6 bytes, last
-// store before the pops + RET 4 at 0x0085991e): a MidHook there runs after
-// every record write — record_fov_widen rewrites the just-filled record's
-// VP projection rows to the HMD FOV union (view_rewrite.cpp; matched against
-// the latest main-pass decomposed camera so shadow/offscreen records skip).
-#define MC2_VIEWCTX_ARRAY_BASE  ((uintptr_t)0x018c45e0u) // both-buffer array base
-#define MC2_VIEWCTX_BUFSEL      ((uintptr_t)0x00ff364cu) // u32 0/1 buffer select
-#define MC2_VIEWCTX_RECIDX      ((uintptr_t)0x00ed9d42u)  // u32 next record idx
-#define MC2_VIEWCTX_BUILD_EPILOG ((uintptr_t)0x00859912u)
 
-// Site B — the REAL full-VP record fill in the mutated 0x004671xx fill block
-// (raw-decoded 2026-10-08; E1's live watch saw a main-record row0 fill here at
-// 0x004673bf): inline fld/fstp copy of the COMPLETE 16-dword VP
-// (record+0x00..0x3c) with EAX = record, idx byte bumped before. The last
-// store FSTP [EAX+0x3C] ends at 0x0046742a — the carrier's PRIMARY record-fov
-// hook point (site A, the Matrix_Copy3x4 call at 0x0046718c, copies only 12
-// dwords = rows 0-2 and never writes row 3 — aux records; the gate's 4-row
-// decompose only succeeds on site-B records).
-#define MC2_VIEWCTX_FILLB_COMPLETE ((uintptr_t)0x0046742au)
 
-// THE CULL FRUSTUM TERMS (round-15 watch, 2026-10-08): the frame-ctx
-// (0x017CF980) holds the projection's tan extents at +0x30 (tanHalfH) and
-// +0x34 (tanHalfV) — written by the builder at 0x00859425/0x00859436
-// (traps fire at 0x0085942A/0x0085943B), then consumed by:
-//   - THE CULL TESTS: 0x0047E35F (DIVSS XMM2,[ctx+0x30]) / 0x0047E36A
-//     (DIVSS [ctx+0x34]) and 0x0047ED49 / 0x0047ED63 — per-object loops
-//     (object structs in ESI/EDI) dividing bounds by the frustum extents;
-//   - 0x0061B973/0x0061B97A (FLD ctx+0x30/0x34 -> copies into ctx+0x56/0x5A
-//     — a downstream derivation).
-// CRITICAL DETAIL: at 0x0085943B the builder's next instruction is
-// `LEA EAX,[EBX+0xB20]` — the projection matrix is built from REGISTER
-// copies, NOT the ctx slots. SUPERSEDED (round 16 clean negative): this ctx
-// is the STATIC frame-ctx 0x017CF980 — the operative cull reads the
-// per-view render-SLOT ctx (see MC2_VIEW_SNAPSHOT_TAN_SITE below), so a
-// write here is a no-op for the cull. Define kept for the decoded history;
-// no carrier hook installs here anymore.
-#define MC2_VCTX_TAN_STORES_DONE ((uintptr_t)0x0085943bu)
-#define MC2_FRAMECTX_TANH_OFF   ((uintptr_t)0x30u)
-#define MC2_FRAMECTX_TANV_OFF   ((uintptr_t)0x34u)
 
-// THE PER-VIEW SNAPSHOT (round-17/18, 2026-10-08): ViewCtx_BuildSnapshot
-// 0x0061b930 (called by FUN_0061b7e0 ~5.5/frame, once per view — single
-// caller) clones the view's render-slot ctx (param_2) into a per-view state
-// object (param_1, in EBX) — tans +0x30/+0x34, VP rows +0x10..0x1c, matrices
-// +0x8C0/+0x900, the +0xa70 block, more. Round 19 proved the operative cull
-// reads the SOURCE slot ctx's tans (the copy-write of round 18 moved
-// nothing).
-// RAW DECODE of the mutated convention (round 21, 2026-10-08 — the "one
-// decode away", settled):
-//   0061b930  PUSH EBX; MOV EBX,[ESP+8]        ; EBX = param_1 (snapshot)
-//   0061b935  MOV [EBX],vtable
-//   0061b93c  PUSH EBP
-//   0061b93d  MOV EBP,[ESP+0x10]               ; EBP = param_2 (SOURCE ctx)!
-//   ...body reads every param_2 field as [EBP+<exact field offset>]...
-//   0061bb3f  POP EDI
-//   0061bb40  FLD  [EBP+0xE70]                 ; <- HOOK HERE (6 bytes)
-//   0061bb46  POP ESI
-//   0061bb47  FSTP [EBX+0xE70]; MOV EAX,EBX
-//   0061bb4f  FLD [EBP+0xE74]
-//   0061bb55  POP EBP                          ; EBP dies HERE
-//   0061bb56  FSTP [EBX+0xE74]; POP EBX; RET 8
-// At 0x0061BB40: EBX = the snapshot (its tan copy was made at
-// 0x0061b970/0x0061b977) and EBP = the SOURCE render-slot ctx, both live;
-// the x87 stack is EMPTY (the FLD below the hook has not executed —
-// hooking at 0x0061BB47 instead would straddle a pending x87 load under
-// the C handler). ESI/EDI are dead MOVSD temps (always LEA'd from EBP —
-// the round-19 register sightings were EBP-derived addresses, not the
-// base). Round-20's [EBP+0xC] crash explained: EBP is NOT a frame pointer
-// — [EBP+0xC] is param_2+0xC, a header field.
-// THE CLEAN FIX: hook 0x0061BB40, discriminate the main view via the
-// snapshot's tan copy (tanH vs 1/g_game_cam.a, 30% — tracks ADS), then
-// write tan(hmdHalfH+margin)/tan(hmdHalfV+margin) into the SOURCE ctx
-// [EBP+0x30]/[EBP+0x34] — the cull's operative input. The snapshot copy and
-// everything rendering-side stay stock.
-#define MC2_VIEW_SNAPSHOT_TAN_SITE ((uintptr_t)0x0061bb40u)
 
-// Site C — the WATCH-PROVEN main-record VP fill completion (2026-10-08, I3 round 3:
-// DR watchpoints on the main records' row0/row3 dwords hit 0x00859774 [FSTP [EAX],
-// row0] and 0x00859807 [after FSTP [EAX+0x30], row3] ~1100x/window with
-// EAX = MAIN records 018c4730/018c5530): the full 16-dword VP copy in
-// ViewContext_BuildCameraConstants continues D9 58 34/38/3C, the last store
-// FSTP [EAX+0x3C] at 0x0085982C ends at 0x0085982F — EAX = the record, VP
-// complete, +0x40 PS writes not yet done. NOTE: the mutated function exits
-// this path without reaching the 0x00859912 epilogue (the epi hook never saw
-// a main record — identity/aux calls only), which is why the earlier hook
-// never fired. This is the PRIMARY record-fov hook point.
-#define MC2_VIEWCTX_FILLC_COMPLETE ((uintptr_t)0x0085982fu)
 
-// Camera-entry template fill epilogue (raw-decoded 2026-10-08): the fill
-// (CamPose_CopyGlobal_To_Entry 0x004665b0 — clear-from-zero-template +
-// constants) writes via ESI = entry: near +0x50 (=[0x00B92B58]), far +0x54
-// (=[0x00BEAC28]=100), fov +0x58 (=[0x00BEAB5C]=300.0 — the game's fov in
-// engine units, feeds the projection tan-table AND the 0x0048067E cull-reader
-// +0x44/+0x48/+0x4c/+0x5c/+0x60/+0x64 misc. Hook point
-// 0x0046662F = the MOVSS [ESI+0x64] store (exactly 5 bytes; ESI = entry;
-// +0x58 already written) — the carrier's entry_fov diagnostic + scale point
-// (frustum_cull_plan.md: the ADS-narrowing clue implicates the entry fov
-// chain as the operative cull input). CAREFUL: 0x0046662e is the LAST BYTE
-// of the previous MOVSS [ESI+0x60] — hooking there decodes garbage and
-// crashes the game at boot (live-proven 2026-10-08, round-5 staging).
-#define MC2_CAMENTRY_FILL_EPILOG ((uintptr_t)0x0046662fu)
 
-// THE game fov constant (decoded 2026-10-08, frustum_cull_plan.md I3 round 5):
-// 300.0 in engine units (NOT a cos — the old "fovCos" names are wrong). Read
-// by EIGHT sites — the whole game fov chain derives from this one dword:
-// CamPose_CopyGlobal_To_Entry 0x004665b0 (+0x58 store) and FUN_004660a6
-// (camera-entry fillers — the latter likely the STACK-LOCAL gameplay entry
-// the fill hook missed), plus FUN_0070aa60 / FUN_0070a910 / FUN_0070aff6
-// (the 0x0070axx camera/view fov derivations — the gcam cull-fov sources).
-// Baseline (live 2026-10-08): value 300 -> rendered projection a=1.3440
-// b=2.3894 (halfH=36.65° halfV=22.71°, aspect-locked 16:9; CONSTANT under
-// ADS). Scale relation ≈ angle-linear (feeds a tan-table index ∝ value).
-// The carrier's entry_fov_scale PATCHES THIS CONSTANT at init — every
-// consumer (projection, cull derivations, entries) widens in the game's own
-// parametrization. NOTE: one value can't shape the HMD's ~1:1 tan aspect —
-// the widened frustum stays 16:9-shaped, over-covering horizontally
-// (conservative for culling: halfV 60° ⇒ halfH ~97°).
-#define MC2_CAMENTRY_FOV_CONST ((uintptr_t)0x00beab5cu)  // float 300.0
 
 // ViewContext_BuildCameraConstants (E1b watch-proven 2026-10-06, plate there):
 // the plaintext draw-camera VP builder, called ONLY from the VM via thunk
@@ -401,11 +245,11 @@
 //                (qx,-qy,+qz,qw) for the desired local rotation
 //                L = (-qx,-qy,+qz,qw)).
 //   +0x40 position (x,y,z) + w=1.0 — world position, positive
-//   +0x50 near, +0x54 far, +0x58 fovCos (the game's widescreen projection
-//                source — LEFT-HANDED pipeline, clip.w = +z_view; per-eye
-//                OpenXR FOV is applied at the record level,
+//   +0x50 near, +0x54 far (2400), +0x58 fov (0.9597 stock: the builder
+//                takes halfH = fov * 0.375 * aspect (radians, 4:3-normalized)
+//                and tanV = tanH / aspect — LEFT-HANDED pipeline, clip.w =
+//                +z_view; per-eye OpenXR FOV is applied at the record level,
 //                view_row_rewrite=hmd_delta)
-//   +0x50 near, +0x54 far (2400), +0x58 fovCos (0.9597)
 //   +0x60.. LOD-ish params (0.1, 100, 300, 0.3)
 // The array base is a self-index (active idx = *(u32*)base). GAMEPLAY
 // instances are STACK-LOCAL (arr ~0x072e9xxx/0x072eadd0, ctx 0x072e9d20/
@@ -417,6 +261,18 @@
 #define MC2_VCCAM_ENTRY_NEAR_OFF ((uintptr_t)0x50u)
 #define MC2_VCCAM_ENTRY_FAR_OFF ((uintptr_t)0x54u)
 #define MC2_VCCAM_ENTRY_FOVCOS_OFF ((uintptr_t)0x58u)
+
+// Frustum extents in ViewContext_BuildCameraConstants (raw-decoded 2026-10-08,
+// docs/frustum_cull_plan.md): 0x0085943B = `LEA EAX,[EBX+0xB20]` (6 bytes, no
+// relative operand), right after tanH/tanV are stored to ctx+0x30/+0x34
+// (0x00859425/0x00859436). At this instruction EBX = the view render-ctx,
+// XMM2 = tanH, XMM0 = tanV, XMM1 = 1.0; everything after (projection at
+// ctx+0xb20, the four frustum-corner vectors at [esp+0x10/0x3c/0x48/0x54] fed
+// to FUN_00857140/FUN_0085a3f0) is derived from XMM2/XMM0 only — the single
+// cull-frustum input. mc2vr cull_hmd_fov rewrites them (cull_frustum.cpp).
+#define MC2_VCCAM_TANS_READY ((uintptr_t)0x0085943bu)
+#define MC2_VCCAM_CTX_TANH_OFF ((uintptr_t)0x30u)
+#define MC2_VCCAM_CTX_TANV_OFF ((uintptr_t)0x34u)
 
 // g_CameraPoseClearBlock (E2b step-3 CORRECTED 2026-10-06, plate there): a
 // STATIC zero template (never written at runtime) — NOT a live pose source

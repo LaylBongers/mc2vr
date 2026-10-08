@@ -50,8 +50,6 @@ struct TargetSpec {
     uint32_t entry_off;  // ViewEntry offset (or offset in the staged 0x30 block
                           // when is_staging); UINT32_MAX = fixed_addr below
     bool is_staging;      // resolve against this+0xc2110+idx*0x30 instead of the entry
-    bool is_gcam;        // resolve the global-cam deref chain (gcamtan/gcamtanv)
-    uint32_t gcam_off;   // offset within gcam (gcam+0x30 tanH / +0x34 tanV)
     uint32_t fixed_addr;
     uint32_t addr;       // resolved at arm time
     bool valid;           // aligned + committed
@@ -420,22 +418,6 @@ void arm_sweep()
             s.addr = (uint32_t)(g_frame_ctx + MC2_VIEW_STAGING_OFF +
                                 (uintptr_t)g_view_idx * MC2_VIEW_STAGING_STRIDE +
                                 s.entry_off);
-        } else if (s.is_gcam) {
-            const uintptr_t owner = *(const uintptr_t *)MC2_G_GLOBALCAM_OWNER;
-            uintptr_t gcam = 0;
-            if (owner > 0x10000 && owner < 0x7fff0000) {
-                gcam = *(const uintptr_t *)(owner + MC2_GLOBALCAM_OBJ_OFF);
-            }
-            if (gcam == 0 || gcam <= 0x10000 || gcam >= 0x7fff0000) {
-                MC2VR_LOG("watch: target %s — gcam chain unresolved (owner=%08X) — "
-                          "skipped", s.name, (uint32_t)owner);
-                s.valid = false;
-                continue;
-            }
-            s.addr = (uint32_t)(gcam + s.gcam_off);
-            MC2VR_LOG("watch: %s resolved: owner=%08X gcam=%08X addr=%08X%s",
-                      s.name, (uint32_t)owner, (uint32_t)gcam, s.addr,
-                      gcam == 0x017cf980u ? " (gcam == the round-15 'static ctx')" : "");
         } else if (s.entry_off != UINT32_MAX) {
             s.addr = (uint32_t)(g_view_entry + s.entry_off);
         } else {
@@ -584,22 +566,6 @@ bool set_targets(const char *value)
                 found = true;
                 break;
             }
-        }
-        if (!found && (strcmp(tok, "gcamtan") == 0 || strcmp(tok, "gcamtanv") == 0)) {
-            // The global camera object's +0x30/+0x34 fields. NOTE (round
-            // 23): these are NOT the cull's tan extents (that round-22 claim
-            // was a mis-attribution — the cull's DIVSS reads a local [ESP+
-            // 0x30]-derived object; gcam+0x30/34 are STATIC, write-mode DR
-            // watch caught zero traps across full gameplay windows). Kept as
-            // a generic gcam-field probe (deref-resolved at arm time).
-            snprintf(s.name, sizeof(s.name), "%s", tok);
-            s.entry_off = UINT32_MAX;
-            s.is_staging = false;
-            s.is_gcam = true;
-            s.gcam_off = (tok[7] == 'v') ? (uint32_t)MC2_FRAMECTX_TANV_OFF
-                                         : (uint32_t)MC2_FRAMECTX_TANH_OFF;
-            s.fixed_addr = 0;
-            found = true;
         }
         if (!found && strncmp(tok, "addr:", 5) == 0) {
             const char *hex = tok + 5;

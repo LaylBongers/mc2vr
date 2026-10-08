@@ -20,8 +20,9 @@
 // rewrite is applied.
 //
 // The write lands after every fill and before every consumer by construction:
-// the draw-camera builder path AND the culling/fov readers (0x0048067E family)
-// both read the table, so culling/LOD follow the head (S6's original goal).
+// the draw-camera builder reads the table, and the culling volume is derived
+// from the builder's frustum, so culling/LOD follow the head (S6). The cull
+// FOV (as opposed to its rotation) is cull_frustum.cpp's job.
 //
 // Pose source: the OpenXR host IPC state, sampled once per game frame. Without
 // a tracked HMD the rewrite is a no-op.
@@ -56,59 +57,19 @@ bool set_probe_enabled(const char *value);
 bool get_union(math::Quat *rot, math::Vec3 *pos);
 
 // True + fills *half_h/*half_v with the HMD FOV-union half-angles (radians,
-// BOTH eyes' outermost bounds) + cull_fov_margin degrees — the cull-fov
-// widening inputs (frustum_cull_plan.md). Valid when the pose was sampled
-// this game frame (requires view_table_inject=on). view_rewrite's
-// record_fov_widen builds its projection from these.
+// outermost bound over BOTH eyes, no margin) from a pose sampled within the
+// last second. Input of the cull frustum (cull_frustum.hpp).
 bool get_fov_union(float *half_h, float *half_v);
 
-// mc2vr.conf cull_fov_widen=on|off (frustum_cull_plan.md D0): MidHook at the
-// ViewEntry fov-triple write scales the just-written cull fov to the HMD FOV
-// union (+ margin), so the culling volume covers the whole HMD view. Without
-// a tracked HMD it is a no-op. Returns false on unrecognized input.
-bool set_fov_widen(const char *value);
-
-// mc2vr.conf cull_fov_margin=<degrees> — extra half-angle added to the HMD
-// FOV union before widening (default 5). Returns false on non-numbers.
-bool set_fov_margin(double degrees);
-
-// mc2vr.conf entry_fov_scale=<float> — causal probe on the camera-entry fov
-// value (+0x58, engine units): 1.0 = observe only (census logging); >1
-// scales the value at every entry fill (it feeds the projection tan-table
-// index AND the 0x0048067E cull readers — if culling follows the scale, this
-// is the operative cull channel). Returns false out of range (0,10].
-bool set_entry_fov_scale(double scale);
-
-// mc2vr.conf entry_fov_decouple=on|off: with entry_fov_scale active, repoint
-// the camera-entry fillers' fov-constant loads at 1.0 (stock game
-// projection/camera) while the cull derivations keep reading the wide
-// patched constant. Returns false on unrecognized values.
-bool set_entry_fov_decouple(const char *value);
-
-// mc2vr.conf boom_pin=on|off: pin the camera-controller fov consumer (the
-// per-frame MULSS [0x00BEAB5C] -> [EAX+0x5E8] at 0x0071BBC6) at the stock
-// cos 0.95975 (carrier-allocated page) — the candidate fix that lets
-// entry_fov_scale run wide (full HMD vertical coverage) without the
-// third-person camera pulling in. Returns false on unrecognized values.
-bool set_boom_pin(const char *value);
-
-// mc2vr.conf cull_tan_override=on|off: THE CLEAN CULL FIX (round 24) —
-// rewrite the tan extents IN PLACE at the operative cull's own DIVSS read
-// sites (ordering-free) to the HMD-union frustum; the game renders
-// 100% stock; only the cull tests against the wider (true) frustum.
-// Supersedes entry_fov_scale/boom_pin/cull_fov_widen/record_fov_widen.
-// Needs a tracked HMD (no pose -> skip).
-bool set_cull_tan_override(const char *value);
-
-// mc2vr.conf cull_snap_dump=on|off: log-only mode for the snapshot hook —
-// dumps the per-view snapshot's frustum-candidate fields once per window
-// WITHOUT writing. Paired with a known widen state (boom_pin + scale) the
-// diff vs stock analytics identifies the operative cull fields.
-bool set_cull_snap_dump(const char *value);
+// True when a camera entry (rows = entry+0x10, the 3 rotation rows at a 4-float
+// stride; pos = entry+0x40) equals one this module rewrote in the last few
+// frames — i.e. the entry is an HMD-driven view (the builder works on copies
+// of the table entries). Reflection/shadow/aux cameras never match. Callable
+// from any thread.
+bool is_union_camera(const float *rows, const float *pos);
 
 // Install the fill-site MidHook (plaintext .text, single caller — the fill
-// loop; fires once per filled slot) and, when cull_fov_widen is on, the
-// fov-write MidHook. Handler no-ops unless the conf enabled
+// loop; fires once per filled slot). Handler no-ops unless the conf enabled
 // it. Failure is non-fatal: the union injection stays idle.
 void install();
 

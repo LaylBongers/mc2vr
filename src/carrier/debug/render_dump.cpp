@@ -6,6 +6,7 @@
 
 #include <cstdint>
 
+#include "cull_frustum.hpp"
 #include "game_addresses.h"
 #include "eye_replay.hpp"
 #include "hooks.hpp"
@@ -308,6 +309,7 @@ void report_window()
 
     view::report_window();
     camtable::report_window();
+    cullfov::report_window();
     trace::report_window();
     s2c::report_window();
     eye::report_window();
@@ -403,6 +405,10 @@ void install_early()
     // Union HMD injection at g_CameraTable (mc2vr.conf view_table_inject=on;
     // handler no-ops unless armed).
     camtable::install();
+
+    // HMD cull frustum in the view-context builder (mc2vr.conf
+    // cull_hmd_fov=on; handler no-ops unless armed).
+    cullfov::install();
 
     // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();

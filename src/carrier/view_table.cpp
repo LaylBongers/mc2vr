@@ -7,6 +7,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -37,198 +38,47 @@ uint32_t g_pose_id = 0;
 Quat g_pose_rot;
 Vec3 g_pose_pos;
 uint64_t g_pose_ms = 0;  // last successful pose/fov sample (staleness window)
+// HMD FOV union (radians, outermost bound over both eyes) — the cull frustum
+// input (cull_frustum.cpp via get_fov_union).
+float g_fov_half_h = 0.0f, g_fov_half_v = 0.0f;
 
-// ---- camera-entry fov channel (frustum_cull_plan.md, ADS clue) ----------
-// The camera entry's fov +0x58 (=300.0 from a static constant) feeds the
-// projection (BuildCameraConstants tan-table) AND the 0x0048067E cull-reader
-// family. ADS narrows culling (user report) while the ViewEntry fov sources
-// stay constant — the entry chain is the prime operative-cull suspect. The
-// fill hook logs the census (which entries, what fov) and optionally scales
-// the fov value (entry_fov_scale) as a causal probe.
-// The causal SCALE at the SOURCE: patch the game's fov constant itself —
-// all 8 readers (both camera-entry fillers incl. the stack-local one the
-// fill hook misses, AND the 0x0070axx cull-fov derivations) pick it up
-// in the game's own parametrization. One write at init; the game never
-// rewrites the constant.
-// DECOUPLE (entry_fov_decouple): the constant feeds BOTH the cull (readers
-// FUN_0070aa60/0x0070a910/0x0070aff6 — the operative channel, water-proven)
-// AND the game's own systems via the camera-entry fillers (+0x58 →
-// projection + camera-boom logic — which breaks at wide scales: the camera
-// pulls in and offscreen passes artifact, live 2026-10-08 scale 2.3). Fix:
-// repoint the THREE MOVSS XMM0,[0x00BEAB5C] loads in the fillers (imm32
-// operands at 0x00466105 / 0x0046618C / 0x004665FF — FUN_004660a6 x2 +
-// CamPose_CopyGlobal_To_Entry) at g_ConstPool's 1.0 (0x00B9B694). The
-// fillers then write multiplier 1.0 (game projection/camera stay sane)
-// while the cull derivations keep reading the patched-wide constant.
-// Evidence this splits correctly: round 5 (entries scaled, constant NOT)
-// moved NEITHER gameproj NOR water; round 7 (constant scaled) moved BOTH —
-// the water cull follows the CONSTANT readers, the projection follows the
-// FILLERS.
-float g_entry_fov_scale = 1.0f;  // NOT bool — a bool-typed decl silently
-                                 // collapsed the scale to 1 and no-op'd the
-                                 // whole round-8 run (live lesson 2026-10-08)
-bool g_entry_fov_decouple = false;
-float g_entry_fov_last = 0.0f;
-uint64_t g_entry_fills = 0, g_entry_fov_scaled = 0;
-constexpr uint32_t FOV_CONST = 0x00beab5cu;
-constexpr uint32_t CONST_STOCK_FOV = 0x00bad260u;  // .rdata 300.0f — the stock
-// ROUND-10 CORRECTION: [0x00BEAB5C] at gameplay = 0.95975 (COS-form runtime
-// fov; the 300s were the separate scale constant [0x00BAD260]). The file's
-// initial content there = 0x3F75B22C (0.95975) but the loader/early-init
-// resets it to 1.0 before carrier-init (all patch rounds read 1.0).
-constexpr float STOCK_FOV_COS = 0.95975f;
-constexpr uint32_t BOOM_READER_IMM32 = 0x0071bbcau;  // MULSS XMM0,[0x00BEAB5C]
-// at 0x0071BBC6 (imm32 @ +4): computes [EAX+0x5E8] = [EAX+0x9F8] (ZOOM/ADS
-// factor) x [BEAB5C] (base fov cos) — THE OPERATIVE CULL FOV CHANNEL
-// (round-12 live proof: pinning it at stock made the cull revert while the
-// camera stayed normal; the ADS cull-narrowing = the [EAX+0x9F8] factor).
-// The pin therefore plants the SCALED cos here (stock x entry_fov_scale)
-// while the game's own [BEAB5C] stays stock — full decouple: cull wide,
-// projection/camera/boom untouched.
-bool g_boom_pin = false;
-
-bool patch_imm32s(const uintptr_t *addrs, uint32_t n, uint32_t from, uint32_t to,
-                  const char *what)
-{
-    bool ok = true;
-    uint32_t patched = 0;
-    for (uint32_t k = 0; k < n; k++) {
-        uint32_t cur;
-        memcpy(&cur, (const void *)addrs[k], 4);
-        if (cur != from) {
-            ok = false;
-            MC2VR_LOG("camtable: %s site %p = %08X (expected %08X) — SKIPPED",
-                      what, (void *)addrs[k], cur, from);
-            continue;
-        }
-        DWORD oldp = 0;
-        if (!VirtualProtect((void *)addrs[k], 4, PAGE_READWRITE, &oldp)) {
-            ok = false;
-            MC2VR_LOG("camtable: %s site %p VirtualProtect FAILED (gle %u) — SKIPPED",
-                      what, (void *)addrs[k], (unsigned)GetLastError());
-            continue;
-        }
-        memcpy((void *)addrs[k], &to, 4);
-        VirtualProtect((void *)addrs[k], 4, oldp, &oldp);
-        patched++;
-    }
-    MC2VR_LOG("camtable: %s %s (%u/%u sites)", what,
-              ok ? "PATCHED" : "PARTIAL", patched, n);
-    return ok;
-}
-
-void install_decouple()
-{
-    if (g_boom_pin) {
-        // THE CULL-FOV PIN (round 12/13): repoint the cull channel's
-        // base-fov load at a carrier page holding the SCALED cos
-        // (stock x entry_fov_scale). The game's own [0x00BEAB5C] stays
-        // stock — entries, projection, camera boom all read stock — while
-        // [EAX+0x5E8] = zoom x wide_cos widens the operative cull. The zoom
-        // factor composition (ADS narrowing) is preserved by design.
-        float *slot = (float *)VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE,
-                                            PAGE_READWRITE);
-        if (slot == nullptr) {
-            MC2VR_LOG("camtable: cull-fov-pin VirtualAlloc FAILED (gle %u)",
-                      (unsigned)GetLastError());
-            return;
-        }
-        *slot = STOCK_FOV_COS * g_entry_fov_scale;
-        static const uintptr_t site = BOOM_READER_IMM32;
-        char what[96];
-        snprintf(what, sizeof(what),
-                 "cull-fov pin: consumer load -> %.5f (stock x %.2f)",
-                 (double)*slot, (double)g_entry_fov_scale);
-        patch_imm32s(&site, 1, FOV_CONST, (uint32_t)(uintptr_t)slot, what);
-        return;
-    }
-    // ROUND 9 MODE ("statics wide", after the v5 dead end): ALL 8 constant
-    // readers turned out to be FILLERS (no separate cull-derivation readers
-    // exist) — FUN_0070aff6 templates THREE STACK camera entries (the ones
-    // the projection's active entry comes from — proven v5: leaving it wide
-    // kept gameproj at 84.33deg with 5/5 other sites patched). So the cull
-    // and the projection read the same ENTRY fields, and the only remaining
-    // split is WHICH ENTRY: the cull may read the STATIC g_CameraTable
-    // entries (E2b: "the culling/fov readers 0x0048067E read the same
-    // [g_CameraTable]"), while the projection reads the STACK entries.
-    // This mode: patch every NON-CamPose filler load -> stock 300 (stack/aux
-    // entries + the projection stay stock), while CamPose_CopyGlobal_To_Entry
-    // (load imm32 @ 0x004665FF) keeps reading the wide-patched constant —
-    // the STATIC entries go wide. If the cull follows the statics, culling
-    // widens while the game renders stock.
-    //   CamPose: NOT patched (statics wide). Others (raw-verified 2026-10-08,
-    //   all `F3 0F 10 05 5C AB BE 00`, imm32 = opcode+4):
-    //   0x00466101/@05, 0x00466188/@8C (FUN_004660a6, two entries)
-    //   0x0070aa86/@8A (FUN_0070aa60), 0x0070a94b/@4F (FUN_0070a910 — v4's
-    //   six-byte miscount live-caught by the value guard)
-    //   0x0070b039/@3D, 0x0070b0bd/@C1, 0x0070b144/@48 (FUN_0070aff6's three
-    //   STACK-entry templates)
-    static const uintptr_t loads[7] = {0x00466105u, 0x0046618cu, 0x0070aa8au,
-                                       0x0070a94fu, 0x0070b03du, 0x0070b0c1u,
-                                       0x0070b148u};
-    patch_imm32s(loads, 7, FOV_CONST, CONST_STOCK_FOV,
-                 "fov DECOUPLE v2: non-CamPose fillers -> 300.0 stock (statics stay WIDE)");
-}
-struct EntrySeen {
-    uintptr_t va;
-    float near_v, far_v, fov;
-    uint64_t count;
+// ---- rewritten-entry history (union-camera identification) ---------------
+// The view-context builder (cull_frustum.cpp) works on camera entries that are
+// copies of the g_CameraTable entries rewritten here. A builder entry whose
+// rotation rows + position equal a recent rewrite IS an HMD-driven view;
+// reflection/shadow/aux cameras never match. Single writer (the fill loop);
+// readers may be on another thread, so each slot carries a seqlock counter
+// (odd while being written).
+constexpr uint32_t HISTORY = 8;
+struct Rewritten {
+    std::atomic<uint32_t> seq{0};
+    uint64_t frame = 0;
+    float rows[9] = {};  // entry+0x10 rows (3 floats each, w skipped)
+    float pos[3] = {};
 };
-constexpr uint32_t ENTRIES_FOV_MAX = 8;
-EntrySeen g_entry_fov_seen[ENTRIES_FOV_MAX];
-uint32_t g_entry_fov_seen_n = 0;
-SafetyHookMid g_entry_mid;
+Rewritten g_history[HISTORY];
+uint32_t g_history_next = 0;
 
-void entry_midhook(safetyhook::Context &ctx)
+void remember_rewrite(const float *e)
 {
-    const uintptr_t entry = ctx.esi;
-    float fov, near_v, far_v;
-    memcpy(&fov, (const void *)(entry + MC2_VCCAM_ENTRY_FOVCOS_OFF), 4);
-    memcpy(&near_v, (const void *)(entry + MC2_VCCAM_ENTRY_NEAR_OFF), 4);
-    memcpy(&far_v, (const void *)(entry + MC2_VCCAM_ENTRY_FAR_OFF), 4);
-
-    // Census: log each distinct entry once and any fov change (bounded).
-    // (The causal SCALE moved to the SOURCE constant — see install(): this
-    // hook is census-only now.)
-    g_entry_fills++;
-    EntrySeen *slot = nullptr;
-    for (uint32_t k = 0; k < g_entry_fov_seen_n; k++) {
-        if (g_entry_fov_seen[k].va == entry) {
-            slot = &g_entry_fov_seen[k];
-            break;
-        }
+    Rewritten &h = g_history[g_history_next];
+    g_history_next = (g_history_next + 1) % HISTORY;
+    const uint32_t s = h.seq.load(std::memory_order_relaxed);
+    h.seq.store(s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    h.frame = hooks::frame_count();
+    for (int i = 0; i < 3; i++) {
+        h.rows[i * 3 + 0] = e[i * 4 + 0];
+        h.rows[i * 3 + 1] = e[i * 4 + 1];
+        h.rows[i * 3 + 2] = e[i * 4 + 2];
+        h.pos[i] = e[12 + i];
     }
-    if (slot == nullptr && g_entry_fov_seen_n < ENTRIES_FOV_MAX) {
-        slot = &g_entry_fov_seen[g_entry_fov_seen_n++];
-        *slot = {entry, near_v, far_v, fov, 0};
-        MC2VR_LOG("camtable: entry %p first seen: near=%.3f far=%.1f fov=%.1f",
-                  (void *)entry, (double)near_v, (double)far_v, (double)fov);
-    }
-    if (slot) {
-        slot->count++;
-        if (fov != slot->fov) {
-            MC2VR_LOG("camtable: entry %p FOV CHANGE %.1f -> %.1f (near=%.3f far=%.1f)",
-                      (void *)entry, (double)slot->fov, (double)fov,
-                      (double)near_v, (double)far_v);
-            slot->fov = fov;
-            slot->near_v = near_v;
-            slot->far_v = far_v;
-        }
-    }
-    if (g_entry_fov_last == 0.0f && fov != 0.0f) {
-        g_entry_fov_last = fov;
-    }
+    std::atomic_thread_fence(std::memory_order_release);
+    h.seq.store(s + 2, std::memory_order_relaxed);
 }
+
 uint64_t g_fills = 0, g_rewrites = 0;
 uint64_t g_no_pose = 0, g_bad_entry = 0, g_bad_rows = 0;
-
-// ---- cull fov widening (frustum_cull_plan.md D0) ---------------------------
-bool g_fov_widen = false;
-float g_fov_margin_deg = 5.0f;
-float g_fov_half_h = 0.0f, g_fov_half_v = 0.0f; // HMD FOV-union half-angles (rad)
-uint64_t g_fov_widens = 0, g_fov_skips = 0, g_fov_bad_gcam = 0;
-float g_fov_last_wh = 0.0f, g_fov_last_wv = 0.0f;
-SafetyHookMid g_fov_mid;
 
 // Distinct filled entries (EAX values). 5 slots x a handful of self-indexed
 // sub-entries each — 8 covers it with margin; overflow only stops the census.
@@ -287,7 +137,7 @@ void sample_pose()
     g_pose_valid = true;
     g_pose_ms = GetTickCount64();
 
-    // Cull-fov widening input: the FOV UNION over both eyes — half-angles in
+    // Cull frustum input: the FOV UNION over both eyes — half-angles in
     // radians (the IPC fov fields are angles; vp_camera tans them directly).
     // Union = outermost bound on each side: max(|left|,|right|) horizontally,
     // max(|up|,|down|) vertically, across BOTH eyes. Sanity-bounded so a
@@ -420,285 +270,6 @@ void try_measure_frame(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2)
     }
 }
 
-// Cull-fov widening hook (frustum_cull_plan.md D0). Site 0x0048a97a: the
-// fallback (kindA4==0 — the LIVE path) just wrote {fovH*k, 0, fovV*k} at
-// EDI = entry+0x2ec, where {fovH,fovV} is the game's unit frustum-corner
-// direction (fovV/fovH = tanV/tanH, fovH^2+fovV^2 = 1; live 2026-10-08:
-// 0.957826 / 0.287348 — 3:1 tan shape) and k = gcamScale*100 (near dist).
-// Dividing by the game's own corner and multiplying the HMD union's tan
-// half-angles (+ margin) replaces the cull cross-section with the HMD FOV
-// in exactly the game's parametrization — correct whether the consumer
-// treats the triple as tans or a scaled direction (Vector_Scale in the
-// cull task scales it out to the cull bounds either way). The length sqrt
-// right after the hook re-reads the scaled memory, so the derived near
-// distance stays consistent.
-
-// ---- cull tan override (round 21 — THE CLEAN FIX, source-slot form) ----
-// The per-object cull reads the SOURCE render-slot ctx's tans (round 19:
-// the snapshot copy demonstrably carried the widen, yet round 18's
-// copy-write moved nothing). That source is param_2 of
-// ViewCtx_BuildSnapshot 0x0061b930 — which the mutated convention keeps
-// in EBP for the whole body (raw-decoded prologue: MOV EBP,[ESP+0x10];
-// every body read is [EBP+<exact field offset>]). EBP is still live at
-// the tail (POP EBP is at 0x0061bb55). Hook at 0x0061BB40
-// (MC2_VIEW_SNAPSHOT_TAN_SITE — the 6-byte `FLD [EBP+0xE70]`, x87 stack
-// empty there; EBX = param_1 = the snapshot also live): discriminate the
-// main view via the snapshot's tan copy (tanH vs 1/g_game_cam.a — tracks
-// ADS), then write tan(hmdHalf+margin) into the SOURCE's +0x30/+0x34.
-// Rendering, monitor, offscreen passes, camera all stock; only the cull's
-// input sees the HMD frustum.
-bool g_cull_tan_override = false;
-bool g_cull_snap_dump = false;  // log-only mode: dump snapshot fields, NO writes
-uint32_t g_snap_dump_logged = 0;
-SafetyHookMid g_tan_mid;
-uint64_t g_tan_overrides = 0, g_tan_skips = 0, g_tan_mismatches = 0;
-// The last pair we wrote into a source slot ctx (exact bits). If the game
-// does NOT rewrite the slot tans every frame (per-frame rewriting is
-// unproven — round 19 only proved rewriting on chain/fov changes), our own
-// previous write leaks into the next snapshot copy and would fail the
-// main-view discrimination below. Accept a copy that bit-matches our last
-// write as still-the-main-view.
-uint32_t g_tan_last_th_bits = 0, g_tan_last_tv_bits = 0;
-bool g_tan_written = false;
-
-void tan_midhook(safetyhook::Context &ctx)
-{
-    // Round 24: OBSERVER ONLY. The snapshot is NOT the cull's input — the
-    // round-18 copy write and the round-21 source write were both live
-    // no-ops; the round-24 probe proved the operative cull reads the slot
-    // ctx tans IN PLACE at its own DIVSS sites (obj=0x017cf980 at both,
-    // every window) — cullsite_probe below does the writing now, directly at
-    // the read site (ordering-free by construction). This hook just gates
-    // the once-per-window snapshot field dump (cull_snap_dump=on).
-    if (!g_cull_snap_dump) {
-        return;
-    }
-    const uintptr_t snap = ctx.ebx;
-    float tan_h, tan_v;
-    memcpy(&tan_h, (const void *)(snap + MC2_FRAMECTX_TANH_OFF), 4);
-    memcpy(&tan_v, (const void *)(snap + MC2_FRAMECTX_TANV_OFF), 4);
-
-    // Main-view discrimination: the snapshot's tanH must match the live
-    // main projection (1/a from the gate's decomposed camera — tracks ADS
-    // zoom). Shadow/offscreen view snapshots pass through untouched.
-    vpcam::Camera cam;
-    if (!(tan_h > 0.0f) || !std::isfinite(tan_h) || !view::get_game_camera(&cam) ||
-        !(cam.a > 0.0f)) {
-        return;
-    }
-    const float expected = 1.0f / cam.a;
-    bool main_view = (std::fabs(tan_h - expected) <= 0.3f * expected);
-    if (!main_view && g_tan_written) {
-        // Our previous write may have leaked into the copy — an exact bit
-        // match is still the main view.
-        uint32_t hb;
-        memcpy(&hb, &tan_h, 4);
-        main_view = (hb == g_tan_last_th_bits);
-    }
-    if (!main_view) {
-        return;
-    }
-
-    if (g_cull_snap_dump) {
-        if (g_snap_dump_logged == 0) {
-            g_snap_dump_logged = 1;
-            auto rdf = [](uintptr_t a) {
-                float f;
-                memcpy(&f, (const void *)a, 4);
-                return f;
-            };
-            MC2VR_LOG("camtable: snapdump tans: tanH=%.4f tanV=%.4f",
-                      (double)tan_h, (double)tan_v);
-            MC2VR_LOG("camtable: snapdump matA: m00=%.4f m11=%.4f r1=%.4f r2=%.4f",
-                      (double)rdf(snap + 0x8c0), (double)rdf(snap + 0x8c0 + 0x14),
-                      (double)rdf(snap + 0x8c0 + 0x10), (double)rdf(snap + 0x8c0 + 0x18));
-            MC2VR_LOG("camtable: snapdump matB: m00=%.4f m11=%.4f r1=%.4f r2=%.4f",
-                      (double)rdf(snap + 0x900), (double)rdf(snap + 0x900 + 0x14),
-                      (double)rdf(snap + 0x900 + 0x10), (double)rdf(snap + 0x900 + 0x18));
-            MC2VR_LOG("camtable: snapdump hdr10: %.4f %.4f %.4f %.4f",
-                      (double)rdf(snap + 0x10), (double)rdf(snap + 0x14),
-                      (double)rdf(snap + 0x18), (double)rdf(snap + 0x1c));
-            MC2VR_LOG("camtable: snapdump a70: %.4f %.4f %.4f %.4f",
-                      (double)rdf(snap + 0xa70), (double)rdf(snap + 0xa74),
-                      (double)rdf(snap + 0xa78), (double)rdf(snap + 0xa7c));
-            // Round 21: the SOURCE slot ctx (EBP at the site — the game
-            // dereferenced it all through the body, so +0x30 is safe).
-            const uintptr_t srcp = ctx.ebp;
-            if (srcp > 0x10000 && srcp < 0x7fff0000 && srcp != snap) {
-                MC2VR_LOG("camtable: snapdump src: ctx=%p tanH=%.4f tanV=%.4f",
-                          (void *)srcp, (double)rdf(srcp + 0x30),
-                          (double)rdf(srcp + 0x34));
-            }
-            // Round 22: the operative per-object cull (FUN_0047ded0) reads
-            // its frustum tan extents from the GLOBAL CAMERA OBJECT —
-            // gcam = [[0x00e79dfc]+0x104], tans at +0x30/+0x34 (EAX at the
-            // 0x0047E35C/0x0047E367 DIVSS pair, raw-decoded). Log its
-            // identity/values vs the snapshot copy — one run answers
-            // whether gcam carries the projection tans and whether it is
-            // the round-15 "static ctx" 0x017CF980.
-            const uintptr_t g_owner = *(const uintptr_t *)MC2_G_GLOBALCAM_OWNER;
-            if (g_owner > 0x10000 && g_owner < 0x7fff0000) {
-                const uintptr_t gcam =
-                    *(const uintptr_t *)(g_owner + MC2_GLOBALCAM_OBJ_OFF);
-                if (gcam > 0x10000 && gcam < 0x7fff0000) {
-                    MC2VR_LOG("camtable: snapdump gcam: owner=%p gcam=%p "
-                              "tanH=%.4f tanV=%.4f%s",
-                              (void *)g_owner, (void *)gcam,
-                              (double)rdf(gcam + MC2_FRAMECTX_TANH_OFF),
-                              (double)rdf(gcam + MC2_FRAMECTX_TANV_OFF),
-                              gcam == 0x017cf980u
-                                  ? " (== round-15 static ctx)" : "");
-                } else {
-                    MC2VR_LOG("camtable: snapdump gcam: owner=%p gcam=%p (unresolved)",
-                              (void *)g_owner, (void *)gcam);
-                }
-            }
-        }
-        g_tan_overrides++;
-        return;
-    }
-
-    // Round 24: no write path here anymore — see the header comment. The
-    // operative mechanism is cullsite_probe() at the cull's own read sites.
-}
-
-// ---- cull-site tan override (round 24 — THE ordering-free clean fix) ---
-// The operative cull's tan-extent reads, RAW-DECODED: site A = 0x0047E35A
-// (`DIVSS XMM2,[EAX+0x30]`, 5 bytes; site B = 0x0047ED44 the same read in
-// the sibling second pass). The round-24 probe run proved live that EAX =
-// 0x017CF980 (the main slot ctx — the same object rounds 15/17 called
-// "static ctx"/"snapshot source") at BOTH sites, every window. Since the
-// cull reads the tans RIGHT HERE, we write the HMD-union tans in place,
-// immediately before the DIVSS — ordering-free by construction (the
-// round-16/21 writes at other frame times were live no-ops). Main-view
-// discrimination: ctx tanH vs 1/g_game_cam.a (tracks ADS), or an exact
-// bit-match to our own last write (the game's rewrite cadence is unknown;
-// a persisted write must keep being rewritten, not stall). Diagnostics:
-// once-per-window cullsiteA/B log lines trace the mechanism live.
-SafetyHookMid g_cullsiteA_mid, g_cullsiteB_mid;
-uint32_t g_cullsiteA_logged = 0, g_cullsiteB_logged = 0;
-uint64_t g_cullsite_hits = 0;
-
-static void cullsite_probe(safetyhook::Context &ctx, bool site_b)
-{
-    if (!g_cull_tan_override) {
-        return;
-    }
-    const uintptr_t obj = ctx.eax;
-    if (obj <= 0x10000 || obj >= 0x7fff0000) {
-        return;
-    }
-    float tan_h, tan_v;
-    memcpy(&tan_h, (const void *)(obj + MC2_FRAMECTX_TANH_OFF), 4);
-    memcpy(&tan_v, (const void *)(obj + MC2_FRAMECTX_TANV_OFF), 4);
-
-    // Once-per-window diagnostic line (both sites fire per frame; the
-    // verdict line is the live trace of the mechanism working).
-    uint32_t &latch = site_b ? g_cullsiteB_logged : g_cullsiteA_logged;
-    if (latch == 0) {
-        latch = 1;
-        g_cullsite_hits++;
-        uint32_t hb, vb;
-        memcpy(&hb, (const void *)(obj + MC2_FRAMECTX_TANH_OFF), 4);
-        memcpy(&vb, (const void *)(obj + MC2_FRAMECTX_TANV_OFF), 4);
-        bool ours = g_tan_written && hb == g_tan_last_th_bits && vb == g_tan_last_tv_bits;
-        MC2VR_LOG("camtable: cullsite%s: obj=%p [tanH=%.4f tanV=%.4f] %s — "
-                  "writesSoFar=%llu",
-                  site_b ? "B" : "A", (const void *)obj,
-                  (double)tan_h, (double)tan_v,
-                  ours ? "VALUES ARE OURS at cull time"
-                       : "values NOT ours at cull time",
-                  (unsigned long long)g_tan_overrides);
-    }
-
-    // Main-view discrimination (same as the retired snapshot-tail writer):
-    // the ctx tanH must match the live main projection (1/cam.a — tracks
-    // ADS), or bit-match our own last write (leak-robustness: the game
-    // rewrite cadence is unknown; if our write persists into the next
-    // invocation we must keep rewriting, not stall).
-    vpcam::Camera cam;
-    if (!(tan_h > 0.0f) || !std::isfinite(tan_h) || !view::get_game_camera(&cam) ||
-        !(cam.a > 0.0f)) {
-        g_tan_skips++;
-        return;
-    }
-    const float expected = 1.0f / cam.a;
-    bool main_view = (std::fabs(tan_h - expected) <= 0.3f * expected);
-    if (!main_view && g_tan_written) {
-        uint32_t hb;
-        memcpy(&hb, &tan_h, 4);
-        main_view = (hb == g_tan_last_th_bits);
-    }
-    if (!main_view) {
-        g_tan_mismatches++;
-        return;
-    }
-    if (g_cull_snap_dump) {
-        // Log-only mode: observe, don't write.
-        g_tan_overrides++;
-        return;
-    }
-    float half_h, half_v;
-    if (!get_fov_union(&half_h, &half_v)) {
-        // No tracked HMD pose (e.g. desktop run) — leave the game's terms.
-        g_tan_skips++;
-        return;
-    }
-    // THE WRITE — in place, immediately before the DIVSS consumes the
-    // fields. Ordering-free by construction: this IS the cull's read site
-    // (round-24 probe: obj=0x017cf980 at both sites, every window).
-    const float th = std::tan(half_h);
-    const float tv = std::tan(half_v);
-    memcpy((void *)(obj + MC2_FRAMECTX_TANH_OFF), &th, 4);
-    memcpy((void *)(obj + MC2_FRAMECTX_TANV_OFF), &tv, 4);
-    memcpy(&g_tan_last_th_bits, &th, 4);
-    memcpy(&g_tan_last_tv_bits, &tv, 4);
-    g_tan_written = true;
-    g_tan_overrides++;
-}
-
-void cullsite_probe_a(safetyhook::Context &ctx) { cullsite_probe(ctx, false); }
-void cullsite_probe_b(safetyhook::Context &ctx) { cullsite_probe(ctx, true); }
-
-void fov_midhook(safetyhook::Context &ctx)
-{
-    if (!g_fov_widen) {
-        return;
-    }
-    // Once-per-frame pose/fov sample (shared with the fill hook; works with
-    // or without view_table_inject). Without a tracked HMD this bails and the
-    // triple keeps the game's own fov.
-    sample_pose();
-    if (!g_pose_valid || !(g_fov_half_h > 0.0f) || !(g_fov_half_v > 0.0f)) {
-        g_fov_skips++;
-        return;
-    }
-    const uint32_t owner = *(const uint32_t *)MC2_G_GLOBALCAM_OWNER;
-    const uint32_t gcam = owner ? *(const uint32_t *)(uintptr_t)(owner + MC2_GLOBALCAM_OBJ_OFF) : 0;
-    if (gcam == 0) {
-        g_fov_bad_gcam++;
-        return;
-    }
-    float h, v;
-    memcpy(&h, (const void *)(uintptr_t)(gcam + MC2_GLOBALCAM_FOV_H_OFF), 4);
-    memcpy(&v, (const void *)(uintptr_t)(gcam + MC2_GLOBALCAM_FOV_V_OFF), 4);
-    // h,v > 0 also rejects NaN; zero/negative = transient garbage — skip
-    // (the triple keeps the game value, which is always safe).
-    if (!(h > 0.0f) || !(v > 0.0f)) {
-        g_fov_bad_gcam++;
-        return;
-    }
-    const float margin = g_fov_margin_deg * 0.017453293f;
-    const float wh = std::tan(g_fov_half_h + margin) / h;
-    const float wv = std::tan(g_fov_half_v + margin) / v;
-    float *triple = (float *)(uintptr_t)(uint32_t)ctx.edi;
-    triple[0] *= wh;
-    triple[2] *= wv;
-    g_fov_widens++;
-    g_fov_last_wh = wh;
-    g_fov_last_wv = wv;
-}
-
 void fill_midhook(safetyhook::Context &ctx)
 {
     if (!g_enabled && !g_probe) {
@@ -823,6 +394,7 @@ void fill_midhook(safetyhook::Context &ctx)
     const Vec3 dpos = (s0 * g_pose_pos.x) * r0 + (s1 * g_pose_pos.y) * r1 +
                       (s2 * -g_pose_pos.z) * r2;
     math::store3(e + 12, cpos + dpos * view::world_scale());
+    remember_rewrite(e);
 
     g_rewrites++;
     g_rewrite_frame = hooks::frame_count();
@@ -848,23 +420,56 @@ bool get_union(math::Quat *rot, math::Vec3 *pos)
     return true;
 }
 
-// Cull-fov inputs for other modules (record_fov_widen): the HMD FOV-union
-// half-angles + cull_fov_margin. STALENESS WINDOW, NOT same-frame: the
-// record builds run BEFORE the camtable fill's pose sample in the frame
-// order (live evidence 2026-10-08: the same-frame gate zeroed every widen
-// attempt — recfov widens=0 across a whole run), and the FOV is quasi-static
-// (a property of the HMD optics). Only the POSE needs same-frame pairing,
-// and hmd_delta handles that via get_union.
+// Staleness window, NOT same-frame: the HMD FOV is a property of the optics
+// (quasi-static), and the view-context builder may run on another thread or
+// before this frame's first fill.
 bool get_fov_union(float *half_h, float *half_v)
 {
-    if (!(g_fov_half_h > 0.0f) || !(g_fov_half_v > 0.0f) ||
-        g_pose_ms == 0 || GetTickCount64() - g_pose_ms > 1000) {
+    if (!(g_fov_half_h > 0.0f) || !(g_fov_half_v > 0.0f) || g_pose_ms == 0 ||
+        GetTickCount64() - g_pose_ms > 1000) {
         return false;
     }
-    const float margin = g_fov_margin_deg * 0.017453293f;
-    *half_h = g_fov_half_h + margin;
-    *half_v = g_fov_half_v + margin;
+    *half_h = g_fov_half_h;
+    *half_v = g_fov_half_v;
     return true;
+}
+
+bool is_union_camera(const float *rows, const float *pos)
+{
+    // Exact copies in practice; the tolerance only absorbs float re-encoding
+    // (rows are unit vectors; positions are world metres).
+    constexpr float ROW_EPS = 1e-3f, POS_EPS = 1e-2f;
+    const uint64_t now = hooks::frame_count();
+    for (Rewritten &h : g_history) {
+        const uint32_t s0 = h.seq.load(std::memory_order_acquire);
+        if (s0 == 0 || (s0 & 1u) != 0) {
+            continue;  // never written / being written
+        }
+        const uint64_t frame = h.frame;
+        float r[9], p[3];
+        memcpy(r, h.rows, sizeof(r));
+        memcpy(p, h.pos, sizeof(p));
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (h.seq.load(std::memory_order_relaxed) != s0 || now - frame > 3) {
+            continue;  // torn read or stale (> 3 frames old)
+        }
+        bool match = true;
+        for (int i = 0; i < 3 && match; i++) {
+            for (int j = 0; j < 3; j++) {
+                if (std::fabs(rows[i * 4 + j] - r[i * 3 + j]) > ROW_EPS) {
+                    match = false;
+                    break;
+                }
+            }
+            if (std::fabs(pos[i] - p[i]) > POS_EPS) {
+                match = false;
+            }
+        }
+        if (match) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool set_inject_enabled(const char *value)
@@ -905,140 +510,6 @@ bool set_probe_enabled(const char *value)
     return true;
 }
 
-bool set_fov_widen(const char *value)
-{
-    bool on;
-    if (strcmp(value, "on") == 0) {
-        on = true;
-    } else if (strcmp(value, "off") == 0) {
-        on = false;
-    } else {
-        return false;
-    }
-    if (on == g_fov_widen) {
-        return true; // idempotent
-    }
-    g_fov_widen = on;
-    MC2VR_LOG("camtable: cull fov widening %s (HMD FOV union + %.1f° margin at "
-              "the entry fov triple)",
-              on ? "ARMED" : "disabled", (double)g_fov_margin_deg);
-    return true;
-}
-
-bool set_fov_margin(double degrees)
-{
-    if (!(degrees >= 0.0) || degrees >= 45.0) {
-        MC2VR_LOG("camtable: cull_fov_margin=%.3f out of range [0,45) — kept %.1f",
-                  degrees, (double)g_fov_margin_deg);
-        return false;
-    }
-    g_fov_margin_deg = (float)degrees;
-    MC2VR_LOG("camtable: cull fov margin = %.1f°", degrees);
-    return true;
-}
-
-// entry_fov_scale: causal probe on the camera-entry fov value (+0x58).
-// 1.0 = observe only; >1 widens (value feeds the projection tan-table index
-// AND the 0x0048067E cull readers — units unknown, index ∝ value ≈ angle).
-bool set_entry_fov_scale(double scale)
-{
-    if (!(scale > 0.0) || scale > 10.0) {
-        MC2VR_LOG("camtable: entry_fov_scale=%.3f out of range (0,10] — kept %.3f",
-                  scale, (double)g_entry_fov_scale);
-        return false;
-    }
-    g_entry_fov_scale = (float)scale;
-    MC2VR_LOG("camtable: entry fov scale = %.3f (%s)", scale,
-              scale == 1.0f ? "observe only" : "SCALING the fov constant");
-    return true;
-}
-
-// entry_fov_decouple: with entry_fov_scale active, repoint the camera-entry
-// fillers' fov-constant loads at 1.0 so the game's own projection/camera
-// stay at the stock fov while the cull derivations read the wide constant.
-bool set_entry_fov_decouple(const char *value)
-{
-    bool on;
-    if (strcmp(value, "on") == 0) {
-        on = true;
-    } else if (strcmp(value, "off") == 0) {
-        on = false;
-    } else {
-        return false;
-    }
-    if (on == g_entry_fov_decouple) {
-        return true;
-    }
-    g_entry_fov_decouple = on;
-    MC2VR_LOG("camtable: entry fov decouple %s (RETIRED — see round-10 decode; "
-              "boom_pin supersedes it)",
-              on ? "ON" : "off");
-    return true;
-}
-
-// boom_pin: pin the camera-controller fov consumer (0x0071BBC6's
-// MULSS XMM0,[0x00BEAB5C] -> [EAX+0x5E8]) at the stock cos 0.95975 via a
-// carrier-allocated page, so wide entry_fov_scale values don't pull the
-// third-person camera in. The candidate test for full vertical coverage.
-bool set_boom_pin(const char *value)
-{
-    bool on;
-    if (strcmp(value, "on") == 0) {
-        on = true;
-    } else if (strcmp(value, "off") == 0) {
-        on = false;
-    } else {
-        return false;
-    }
-    if (on == g_boom_pin) {
-        return true;
-    }
-    g_boom_pin = on;
-    MC2VR_LOG("camtable: boom pin %s (camera-reader fov -> stock cos; allows "
-              "wide entry_fov_scale without the camera pull-in)",
-              on ? "ON" : "off");
-    return true;
-}
-
-// cull_tan_override: the CLEAN cull fix — overwrite the frame-ctx tan
-// extents (the cull test's divisors) with the HMD-union frustum after the
-// main view's builder writes them. The game renders 100% stock.
-bool set_cull_tan_override(const char *value)
-{
-    bool on;
-    if (strcmp(value, "on") == 0) {
-        on = true;
-    } else if (strcmp(value, "off") == 0) {
-        on = false;
-    } else {
-        return false;
-    }
-    if (on == g_cull_tan_override) {
-        return true;
-    }
-    g_cull_tan_override = on;
-    MC2VR_LOG("camtable: cull ctx-tan override %s (the cull tests against the "
-              "HMD-union frustum; the game renders stock)",
-              on ? "ON" : "off");
-    return true;
-}
-
-bool set_cull_snap_dump(const char *value)
-{
-    bool on;
-    if (strcmp(value, "on") == 0) {
-        on = true;
-    } else if (strcmp(value, "off") == 0) {
-        on = false;
-    } else {
-        return false;
-    }
-    g_cull_snap_dump = on;
-    MC2VR_LOG("camtable: snapshot dump %s (log-only; NO writes to the snapshot)",
-              on ? "ON" : "off");
-    return true;
-}
-
 void install()
 {
     auto mid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_CAMTABLE_FILL_COPY_END),
@@ -1052,127 +523,11 @@ void install()
     g_mid = std::move(*mid);
     MC2VR_LOG("camtable: installed fill-site MidHook @ %p (g_CameraTable union injection%s)",
               (void *)MC2_CAMTABLE_FILL_COPY_END, g_enabled ? ", ARMED" : ", idle");
-
-    // Fov-write MidHook (cull_fov_widen): installed always, the handler gates
-    // on the conf — so a conf flip in a future conf-reload path would just
-    // start working, and the hook is inert otherwise.
-    auto fmid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_VIEWENTRY_FOV_WRITE_END),
-                                     fov_midhook);
-    if (!fmid) {
-        MC2VR_LOG("camtable: fov-write MidHook install FAILED @ %p (error %u) — "
-                  "cull fov widening stays idle",
-                  (void *)MC2_VIEWENTRY_FOV_WRITE_END, (unsigned)fmid.error().type);
-        return;
-    }
-    g_fov_mid = std::move(*fmid);
-    MC2VR_LOG("camtable: installed fov-write MidHook @ %p (cull fov widening%s)",
-              (void *)MC2_VIEWENTRY_FOV_WRITE_END, g_fov_widen ? ", ARMED" : ", idle");
-
-    // Camera-entry fill epilogue: entry fov census + causal scale probe
-    // (frustum_cull_plan.md — the ADS-narrowing clue implicates this chain).
-    auto emid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_CAMENTRY_FILL_EPILOG),
-                                      entry_midhook);
-    if (!emid) {
-        MC2VR_LOG("camtable: entry-fill MidHook install FAILED @ %p (error %u) — "
-                  "entry fov census stays idle",
-                  (void *)MC2_CAMENTRY_FILL_EPILOG, (unsigned)emid.error().type);
-        return;
-    }
-    g_entry_mid = std::move(*emid);
-    MC2VR_LOG("camtable: installed entry-fill MidHook @ %p (entry fov census%s)",
-              (void *)MC2_CAMENTRY_FILL_EPILOG,
-              g_entry_fov_scale != 1.0f ? ", SCALING" : ", observe");
-
-    // THE CLEAN FIX (round 21): the snapshot-tail MidHook — after the
-    // per-view snapshot copy completes, rewrite the SOURCE render-slot
-    // ctx's tan extents (the cull's operative input, in EBP at the site)
-    // to the HMD-union frustum; the snapshot copy and the projection
-    // (built from register copies) stay stock.
-    auto tmid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_VIEW_SNAPSHOT_TAN_SITE),
-                                      tan_midhook);
-    if (!tmid) {
-        MC2VR_LOG("camtable: cull-tan MidHook install FAILED @ %p (error %u) — "
-                  "the clean cull fix stays idle",
-                  (void *)MC2_VIEW_SNAPSHOT_TAN_SITE, (unsigned)tmid.error().type);
-        return;
-    }
-    g_tan_mid = std::move(*tmid);
-    MC2VR_LOG("camtable: installed snapshot-tail MidHook @ %p (source-ctx tan override%s)",
-              (void *)MC2_VIEW_SNAPSHOT_TAN_SITE,
-              g_cull_tan_override ? ", ARMED" : ", idle");
-
-    // Round-24 clean fix: the cull's own tan-extent read sites — the write
-    // lands immediately before the DIVSS consumes it (ordering-free).
-    auto probeA = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_CULL_TAN_READ_A),
-                                        cullsite_probe_a);
-    if (!probeA) {
-        MC2VR_LOG("camtable: cullsite-A hook install FAILED @ %p (error %u)",
-                  (void *)MC2_CULL_TAN_READ_A, (unsigned)probeA.error().type);
-    } else {
-        g_cullsiteA_mid = std::move(*probeA);
-        MC2VR_LOG("camtable: installed cullsite-A hook @ %p (in-place cull tan override%s)",
-                  (void *)MC2_CULL_TAN_READ_A,
-                  g_cull_tan_override ? ", ARMED" : ", idle");
-    }
-    auto probeB = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_CULL_TAN_READ_B),
-                                        cullsite_probe_b);
-    if (!probeB) {
-        MC2VR_LOG("camtable: cullsite-B hook install FAILED @ %p (error %u)",
-                  (void *)MC2_CULL_TAN_READ_B, (unsigned)probeB.error().type);
-    } else {
-        g_cullsiteB_mid = std::move(*probeB);
-        MC2VR_LOG("camtable: installed cullsite-B hook @ %p (in-place cull tan override%s)",
-                  (void *)MC2_CULL_TAN_READ_B,
-                  g_cull_tan_override ? ", ARMED" : ", idle");
-    }
-
-    // The causal SCALE at the SOURCE: patch the game's fov constant itself —
-    // all 8 readers (both camera-entry fillers incl. the stack-local one the
-    // fill hook misses, AND the 0x0070axx cull-fov derivations) pick it up
-    // in the game's own parametrization. One write at init; the game never
-    // rewrites the constant.
-    // The constant patch is the WHOLE-GAME widen (rounds 7-11): it couples
-    // cull + projection + boom via the shared constant. With the cull-fov
-    // pin active, skip it — the game stays stock everywhere except the one
-    // pinned consumer.
-    if (g_boom_pin) {
-        // Cull-fov pin mode: the game stays stock everywhere; only the
-        // pinned cull consumer reads the scaled cos (install_decouple).
-        install_decouple();
-    } else if (g_entry_fov_scale != 1.0f) {
-        // The constant lives in .rdata (0x00b05000-0x00bf4fff — READ-ONLY:
-        // writing it unguarded crashed the game at startup, live-proven
-        // 2026-10-08 round 6). Flip the page writable for the one write.
-        DWORD oldProtect = 0;
-        float orig;
-        memcpy(&orig, (const void *)MC2_CAMENTRY_FOV_CONST, 4);
-        if (orig > 0.0f && std::isfinite(orig) && orig < 10000.0f &&
-            VirtualProtect((void *)MC2_CAMENTRY_FOV_CONST, 4, PAGE_READWRITE,
-                           &oldProtect)) {
-            const float scaled = orig * g_entry_fov_scale;
-            memcpy((void *)MC2_CAMENTRY_FOV_CONST, &scaled, 4);
-            VirtualProtect((void *)MC2_CAMENTRY_FOV_CONST, 4, oldProtect, &oldProtect);
-            MC2VR_LOG("camtable: fov CONSTANT PATCHED @ %p: %.1f -> %.1f "
-                      "(x%.3f — the whole fov chain: entries, cull derivations)",
-                      (void *)MC2_CAMENTRY_FOV_CONST,
-                      (double)orig, (double)scaled, (double)g_entry_fov_scale);
-        } else {
-            MC2VR_LOG("camtable: fov constant @ %p = %.1f — unexpected value or "
-                      "VirtualProtect failed, NOT patched",
-                      (void *)MC2_CAMENTRY_FOV_CONST, (double)orig);
-        }
-        if (g_entry_fov_decouple) {
-            MC2VR_LOG("camtable: entry_fov_decouple is RETIRED (round-10 decode: "
-                      "its 300.0 'stock' value was the separate scale constant — "
-                      "in cos-form slots it produces garbage projections; use "
-                      "boom_pin)");
-        }
-    }
 }
 
 void report_window()
 {
-    if (!g_enabled && !g_probe && !g_fov_widen && g_entry_fills == 0) {
+    if (!g_enabled && !g_probe) {
         return;
     }
     MC2VR_LOG("camtable: window: fills=%llu rewritten=%llu noPose=%llu badEntry=%llu "
@@ -1183,32 +538,6 @@ void report_window()
               g_pose_id,
               g_s0 == 0 ? " | FRAME UNLOCKED — rewrite waiting for calibration"
                         : "");
-    // Fov probe (frustum_cull_plan.md open item): log the global-cam fov
-    // SOURCES next to the entry triple they produce, once per window — a
-    // live run that zooms/changes the game FOV option then shows whether
-    // fovH/fovV/scale track tan(half-angle) (expected per the static decode)
-    // and which angle is which. Reads run on the poller thread, like the
-    // watch value snapshot — pointers guarded, best-effort.
-    const uint32_t owner = *(const uint32_t *)MC2_G_GLOBALCAM_OWNER;
-    if (owner != 0) {
-        const uint32_t gcam = *(const uint32_t *)(owner + MC2_GLOBALCAM_OBJ_OFF);
-        if (gcam != 0) {
-            auto rdf = [](uintptr_t a) {
-                float f;
-                memcpy(&f, (const void *)a, 4);
-                return f;
-            };
-            const float h = rdf(gcam + MC2_GLOBALCAM_FOV_H_OFF);
-            const float v = rdf(gcam + MC2_GLOBALCAM_FOV_V_OFF);
-            const float s = rdf(gcam + MC2_GLOBALCAM_FOV_SCALE_OFF);
-            MC2VR_LOG("camtable: fovsrc: gcam=%08X h=%.6g v=%.6g scale=%.6g"
-                      " -> entry triple {%.6g, 0, %.6g} (half-angle if tan:"
-                      " h=%.2fdeg v=%.2fdeg)",
-                      gcam, h, v, s, h * s * 100.0f, v * s * 100.0f,
-                      std::atan(h * s * 100.0f) * 180.0f / 3.14159265f,
-                      std::atan(v * s * 100.0f) * 180.0f / 3.14159265f);
-        }
-    }
     for (uint32_t k = 0; k < g_entries_n; k++) {
         MC2VR_LOG("camtable:   entry slot=%u.%u rot=%p fills=%llu rewrites=%llu",
                   g_entries[k].slot, g_entries[k].sub, (void *)g_entries[k].rot,
@@ -1223,28 +552,6 @@ void report_window()
     g_bad_entry = 0;
     g_bad_rows = 0;
     g_frame_waits = 0;
-
-    if (g_fov_widen || g_fov_widens != 0) {
-        MC2VR_LOG("camtable: fovwiden: widens=%llu skips=%llu badGcam=%llu "
-                  "lastWh=%.3f lastWv=%.3f",
-                  (unsigned long long)g_fov_widens, (unsigned long long)g_fov_skips,
-                  (unsigned long long)g_fov_bad_gcam,
-                  (double)g_fov_last_wh, (double)g_fov_last_wv);
-        g_fov_widens = 0;
-        g_fov_skips = 0;
-        g_fov_bad_gcam = 0;
-    }
-
-    // The clean cull fix: ctx-tan overrides per window.
-    if (g_cull_tan_override || g_tan_overrides != 0) {
-        MC2VR_LOG("camtable: tantest: overrides=%llu skips=%llu mismatches=%llu",
-                  (unsigned long long)g_tan_overrides,
-                  (unsigned long long)g_tan_skips,
-                  (unsigned long long)g_tan_mismatches);
-        g_tan_overrides = g_tan_skips = g_tan_mismatches = 0;
-        g_snap_dump_logged = 0;
-        g_cullsiteA_logged = g_cullsiteB_logged = 0;
-    }
 }
 
 } // namespace mc2vr::camtable

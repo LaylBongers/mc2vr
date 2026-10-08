@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "build_lock.h"
+#include "cull_frustum.hpp"
 #include "device.hpp"
 #include "eye_replay.hpp"
 #include "eye_share.hpp"
@@ -127,64 +128,18 @@ static void load_conf()
             if (!camtable::set_inject_enabled(value)) {
                 MC2VR_LOG("conf: view_table_inject=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "cull_fov_widen") == 0) {
-            // Frustum-cull FOV widening (frustum_cull_plan.md D0): MidHook at
-            // the ViewEntry fov-triple write rescales the culling fov to the
-            // HMD FOV union (+ cull_fov_margin) so the cull volume covers the
-            // whole HMD view (rotation-following is view_table_inject's job).
-            if (!camtable::set_fov_widen(value)) {
-                MC2VR_LOG("conf: cull_fov_widen=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "record_fov_widen") == 0) {
-            // Frustum-cull FOV widening, record channel (frustum_cull_plan.md
-            // I3): rewrite the CPU-side g_ViewContextTable record VP's
-            // projection rows to the HMD FOV union at the build epilogue —
-            // covers record-based culling the entry-fov hook can't reach.
-            // Shares cull_fov_margin with cull_fov_widen.
-            if (!view::set_record_fov_widen(value)) {
-                MC2VR_LOG("conf: record_fov_widen=%s not recognized (use on|off)", value);
+        } else if (strcmp(key, "cull_hmd_fov") == 0) {
+            // HMD cull frustum (docs/frustum_cull_plan.md): the engine's
+            // culling/LOD frustum covers the HMD FOV union instead of the
+            // game's widescreen fov. Needs view_table_inject=on.
+            if (!cullfov::set_enabled(value)) {
+                MC2VR_LOG("conf: cull_hmd_fov=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "cull_fov_margin") == 0) {
-            // Extra degrees added to the HMD FOV-union half-angles before
-            // widening (default 5; 0 = exactly the HMD FOV).
+            // Degrees added to each HMD half-angle (default 5).
             double v;
             if (parse_double(key, value, &v)) {
-                camtable::set_fov_margin(v);
-            }
-        } else if (strcmp(key, "entry_fov_scale") == 0) {
-            // Camera-entry fov causal probe (frustum_cull_plan.md): scales the
-            // entry's +0x58 fov value at every fill. 1.0 = observe only.
-            double v;
-            if (parse_double(key, value, &v)) {
-                camtable::set_entry_fov_scale(v);
-            }
-        } else if (strcmp(key, "entry_fov_decouple") == 0) {
-            // Fov decouple (frustum_cull_plan.md I3 round 8) — RETIRED by the
-            // round-10 decode (wrong value semantics); kept for conf compat.
-            if (!camtable::set_entry_fov_decouple(value)) {
-                MC2VR_LOG("conf: entry_fov_decouple=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "boom_pin") == 0) {
-            // Boom pin (frustum_cull_plan.md I3 round 12): pin the camera-
-            // controller fov consumer at the stock cos so entry_fov_scale
-            // can run wide without the third-person camera pulling in.
-            if (!camtable::set_boom_pin(value)) {
-                MC2VR_LOG("conf: boom_pin=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "cull_tan_override") == 0) {
-            // THE CLEAN CULL FIX (frustum_cull_plan.md round 24): rewrite the
-            // tan extents IN PLACE at the operative cull's own DIVSS read
-            // sites (ordering-free) with the HMD-union frustum; the game
-            // renders 100% stock. Supersedes entry_fov_scale/boom_pin/
-            // cull_fov_widen/record_fov_widen.
-            if (!camtable::set_cull_tan_override(value)) {
-                MC2VR_LOG("conf: cull_tan_override=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "cull_snap_dump") == 0) {
-            // Snapshot field dump (frustum_cull_plan.md round 19): log-only
-            // diagnostic — dump the per-view snapshot's frustum candidates.
-            if (!camtable::set_cull_snap_dump(value)) {
-                MC2VR_LOG("conf: cull_snap_dump=%s not recognized (use on|off)", value);
+                cullfov::set_margin(v);
             }
         } else if (strcmp(key, "debug_camtable_probe") == 0) {
             // Transfer-function probe: injects fixed local-axis test

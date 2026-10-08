@@ -4,6 +4,7 @@
 add_library(mc2vr_carrier SHARED
     dllmain.cpp
     init.cpp
+    cull_frustum.cpp
     hooks.cpp
     device.cpp
     view_rewrite.cpp
