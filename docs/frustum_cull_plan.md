@@ -3,12 +3,13 @@
 Goal: the engine's frustum culling (and the LOD/shadow work tied to it) covers what the HMD sees,
 instead of the game's 16:9 widescreen frustum — no pop-in when turning or looking up/down in VR.
 
-Two halves:
+**Status: DONE (2026-10-08, live-verified).** Both halves work in the HMD, and the third-person
+camera behaves as stock.
 
 | Half | Mechanism | Status |
 |---|---|---|
-| Rotation (cull follows the head) | `view_table_inject=on` — union HMD pose written into `g_CameraTable` (`view_table.cpp`) | **Done**, live-verified |
-| FOV (cull covers the HMD's angles) | `cull_hmd_fov=on` — HMD frustum extents written into the view-context builder (`cull_frustum.cpp`) | **Implemented 2026-10-08, awaiting live test** |
+| Rotation (cull follows the head) | `view_table_inject=on` — union HMD pose written into `g_CameraTable` (`view_table.cpp`) | Done, live-verified 2026-10-07 |
+| FOV (cull covers the HMD's angles) | `cull_hmd_fov=on` — HMD frustum extents written into the view-context builder, camera clearance kept stock (`cull_frustum.cpp`) | Done, live-verified 2026-10-08 (cull 62.0°/59.7° vs game 36.7°/22.7°) |
 
 ## The mechanism (cull_hmd_fov)
 
@@ -24,13 +25,13 @@ tanV  = tanH / aspect                 -> XMM0, stored to ctx+0x34 @ 0x00859436  
 
 At `0x0085943B` (`LEA EAX,[EBX+0xB20]`, `MC2_VCCAM_TANS_READY`), everything the rest of the build
 produces derives from XMM2/XMM0 only (raw-decoded):
-
 - the projection at ctx+0xb20 → VP → `g_ViewContextTable` records;
-- the four frustum-corner vectors (±tanH, ±tanV) handed to `FUN_00857140` and `FUN_0085a3f0`
-  (whole-view frustum → ctx+0x954/0xa70/0xa80; four shadow cascades → ctx+0x46c/0x8c0/0x900);
-- the ctx tans read by the per-object cull (`FUN_0047ded0`) and copied by `ViewCtx_BuildSnapshot`.
+- the four frustum-corner vectors (±tanH, ±tanV) handed to `FUN_00857140` (frustum structs at
+  ctx+0x38 and ctx+0x250) and `FUN_0085a3f0` (whole view → ctx+0x954/0xa70/0xa80; four shadow
+  cascades → ctx+0x46c/0x8c0/0x900);
+- the ctx tans themselves (read by `FUN_0047ded0`'s render constants and the snapshot).
 
-The carrier MidHooks that instruction and, for HMD-driven views only, sets
+The carrier MidHooks that instruction. For HMD-driven views only, it sets
 `tanH = max(|tanH|, tan(hmdHalfH + margin))` (same for V; signs kept), in XMM2/XMM0 and in
 ctx+0x30/+0x34. `hmdHalf*` is the outermost half-angle across both eyes (`camtable::get_fov_union`),
 and the margin is `cull_fov_margin` (default 5°). Each extent is shaped on its own axis, so the
@@ -38,42 +39,77 @@ vertical is no longer tied to 16:9. The result is never narrower than the game's
 
 **View discrimination**: the builder works on copies of the `g_CameraTable` entries. The fill hook
 records every entry it rewrites (rows + position, seqlocked 8-slot history).
-`camtable::is_union_camera` matches the builder's active camera entry (`[ctx+0x28]`,
-self-indexed 0x70 stride) against that history. Shadow, reflection and aux views never match, so
-they keep the game's frustum.
+`camtable::is_union_camera` matches the builder's active camera entry (`[ctx+0x28]`, self-indexed
+0x70 stride) against that history. Shadow, reflection and aux views never match, so they keep the
+game's frustum. Live: about one widened build per frame (the main view); `otherView`/`noCam` are the
+remaining views.
 
 **Why the game's projection may change**: for the main view the HMD never sees the game's
 projection. `view_row_rewrite=hmd_delta` decomposes every main-pass VP upload and rebuilds it with
-the per-eye OpenXR FOV, which is independent of the game's a/b terms. The monitor shows the left eye
-(`eye_monitor_pin`).
+the per-eye OpenXR FOV, which is independent of the game's a/b terms. The monitor shows the left
+eye (`eye_monitor_pin`).
 
-Expected side effects:
-- `view: gameproj` reports the HMD angles instead of 36.65°/22.71°.
+Side effects (accepted):
+- `view: gameproj` reports the HMD angles.
 - Shadow cascades are fitted to the wider frustum, so shadow texels get coarser.
 - Screen-size LOD metrics see the wider projection.
 - ADS zoom no longer narrows culling, because the max() keeps the HMD extents.
 
-## Verification (next live run)
+## The one consumer that must stay stock: camera clearance
+
+`FUN_00857140` writes the frustum struct at ctx+0x38: `{+0x00 near, +0x04 far, +0x0c 8 world-space
+corners — near 0..3 = (+H,+V)(+H,−V)(−H,−V)(−H,+V), then far 0..3; +0x6c side-plane normals, ...}`
+(0x218 bytes; `MC2_FRUSTUM_*`). The third-person camera reads it through
+**`CamCtrl_NearPlaneClearance` (`0x007107d0`)**. That function block-copies the main slot's struct
+and keeps running maxima of the near-plane diagonal |c2−c0| and vertical edge |c1−c0| in the
+controller (+0x4d0/+0x4d4). These are the camera's obstacle clearance. The HMD quad's diagonal is
+~3x the stock one, so the camera backed off from obstacles behind the player far too early.
+
+Fix: a second MidHook at `0x007107F9` (`MC2_CAMCLEAR_FRUSTUM_COPIED`), the first instruction after
+the copy; the copy is at [ESP+0x18]. If the copied near quad carries the extents the builder hook
+wrote (1% match, measured from the corners), its four near corners are scaled about their center
+back to the game's own extents. The builder hook publishes both extent pairs through atomics; the
+camera runs on the game thread. Only that function's private copy changes.
+
+How it was found (2026-10-08):
+1. A/B: no pull-in with `cull_hmd_fov=off`.
+2. A `debug_watch` on the slot-ctx tans and near box found only render readers.
+3. A `debug_watch` on the frustum struct caught these `rep movsd` copies:
+   - `0x00472E2F` (render thread, 0x86 dwords) and `0x005314C7` (0x45 dwords): cull-side readers,
+     which should see the HMD frustum;
+   - `0x005046C3`: per-player focus;
+   - `0x007107F7`: the camera function above.
+
+The old fov-scale experiments' camera pull-in above ~1.75x was this same clearance, not
+`Fov_TanIndexHelper`.
+
+## Regression checks
 
 Conf: `view_table_inject=on`, `view_row_rewrite=hmd_delta`, `cull_hmd_fov=on`, HMD tracked, gameplay.
 
-1. `cullfov: installed builder MidHook @ 0085943B (ARMED)` at boot, and no crash entering gameplay.
-2. `cullfov: window:`: `widened > 0` every window, `game 36.7°/22.7° -> cull ~60°/~58°`.
-   - `widened=0, otherView>0` means the union-camera match failed. Check whether the builder entry
-     is a transformed copy rather than a raw one; the tolerances are in `view_table.cpp`
-     `is_union_camera`.
-   - `noFov>0` means there was no tracked pose in the last second.
-3. `view: gameproj` shows the HMD angles, and the HMD image is unchanged in framing and stereo
-   (hmd_delta owns it).
-4. **Acceptance**: no pop-in at the HMD edges while turning or nodding, in either axis, including
-   water at the top and bottom of the view.
-5. A/B: `cull_hmd_fov=off` should bring back edge pop-in. That confirms this is the operative input.
+1. Boot log: `cullfov: installed builder MidHook @ 0085943b (ARMED)` and
+   `cullfov: installed camera-clearance MidHook @ 007107f9`.
+2. `cullfov: window:` per 10 s:
+   - `widened` ≈ one per frame;
+   - `game 36.7°/22.7° -> cull 62.0°/59.7°` (Quest-class FOV + 5°);
+   - `camClear restored` ≈ `widened`/2 (one per camera update) with `stock≈0`.
 
-If step 4 fails while steps 2–3 hold, the cull consumes something not derived from this build.
-The remaining known candidate is the per-view box from `ViewEntry_DeriveCullTask` (`0x00876a90`),
-fed by the fov-independent gcam corner triple (plates on `ViewEntry_MatrixFromGlobalCam` and
-`ViewEntry_DeriveCullTask`). Investigate there next, and widen at the task's own read site
-(`0x00877162`–`0x0087718b`) rather than at the writer.
+   Failure signatures:
+   - `widened=0, otherView>0`: the union-camera match failed (tolerances in `view_table.cpp`
+     `is_union_camera`).
+   - `camClear stock>0` while widened: the copy match failed, and the pull-in returns.
+   - `noFov>0`: no tracked pose in the last second.
+3. In the HMD: no pop-in at the edges when turning or nodding, including water top and bottom, and
+   no camera pull-in near obstacles.
+
+## Open items
+
+- **Crash once in run 3**: about 20 s after the OpenXR session dropped VISIBLE→SYNCHRONIZED, with
+  4-target full-mode watchpoints trapping ~50k/10 s. The carrier log has no fault record. It did
+  not recur in the verification run, which had no watch and no session drop. If it reappears
+  without `debug_watch`, test a session drop (headset off) deliberately.
+- The cull-side copiers `0x00472E2F` / `0x005314C7` were not named. Which one is the operative
+  per-object cull does not matter while the builder hook covers both.
 
 ## History: what was tried and why it is gone (2026-10-08, ~26 rounds)
 
@@ -82,10 +118,10 @@ code). The Ghidra plates on the named functions keep the RE facts.
 
 | Approach | Verdict |
 |---|---|
-| `entry_fov_scale` (patch `[0x00BEAB5C]`) / `boom_pin` (repoint the `0x0071BBC6` MULSS at a scaled value) | The only thing that ever moved the visible cull, because it scales the fov *before* the builder's tan conversion, which is upstream of the hook above. But the scale is 16:9-locked (vertical stayed ~39° at 1.5x), and the camera controller's boom math (`Fov_TanIndexHelper`, which reads the same fov) pulls the third-person camera in above ~1.75x. Superseded by the builder hook. |
-| `cull_tan_override` (write HMD tans at `FUN_0047ded0`'s DIVSS reads) and the snapshot/source-ctx writes (rounds 16/18/21) | The writes were consumed (data-verified) but did not remove pop-in. ctx+0x30/0x34 are only one of several frustum products of the build; the corner rays and cascade frusta stayed stock. |
+| `entry_fov_scale` (patch `[0x00BEAB5C]`) / `boom_pin` (repoint the `0x0071BBC6` MULSS at a scaled value) | The only thing that ever moved the visible cull, because it scales the fov *before* the builder's tan conversion. But the scale is 16:9-locked (vertical stayed ~39° at 1.5x), and the camera pulled in above ~1.75x (camera clearance, above). Superseded by the builder hook. |
+| `cull_tan_override` (write HMD tans at `FUN_0047ded0`'s DIVSS reads) and the snapshot/source-ctx writes (rounds 16/18/21) | The writes were consumed but did not remove pop-in. ctx+0x30/0x34 are just one frustum product of the build, read only by render constants and the snapshot. The frustum structs and corner rays stayed stock. |
 | `cull_fov_widen` (ViewEntry fov triple at `0x0048a97a`) | Moved nothing visible. The triple comes from the fixed gcam corner (v/h = 0.3), not the projection. |
-| `record_fov_widen` (rewrite record VP projection rows, 3 sites) | Inconclusive: the hooks never matched a main record. Records are downstream of the builder anyway, so the builder hook covers them. |
+| `record_fov_widen` (rewrite record VP projection rows, 3 sites) | Inconclusive: the hooks never matched a main record. Records are downstream of the builder anyway. |
 | `entry_fov_decouple` | Wrong value semantics (wrote the 300.0 scale constant into fov slots), which produced garbage projections. |
 | Entry-fov census, `cull_snap_dump`, `gcamtan` watch target | Diagnostics for the above. Removed. |
 
@@ -93,15 +129,24 @@ Earlier-round misreadings worth not repeating:
 - `[0x00BEAB5C]` is the base fov in radians, 4:3-normalized (0.95975). It is not a cosine and not
   "300 engine units": `[0x00BAD260]` = 300.0 is a separate constant.
 - `Fov_TanIndexHelper` is not the projection's fov reader. It is camera-controller boom math.
+- `FUN_0047ded0` (reads the slot-ctx tans) builds render constants (fog/atmosphere-style terms),
+  not a per-object cull.
+- `ViewCtx_BuildSnapshot`'s snapshot is a stack temporary used only for a viewport rect
+  (`FUN_0061b7e0`), not a cull input.
 
 ## Hard-won gotchas
 
+- Replace a derived value where it is derived, not at one consumer's copy. The builder recomputes
+  every frame and consumers read sibling products. Then exempt the consumers that must stay stock
+  at their own private copy (the camera clearance).
+- `debug_watch` on a struct's first fields catches block copies (`rep movsd`, ESI just past the
+  watched dword). That is how the camera consumer was found after static xref hunting came up
+  empty.
 - Raw byte decode beats decompiler output in SecuROM-mutated regions. The decompiler
   constant-folds memory loads and shifts stack offsets (BuildCameraConstants: decompiler
   `stack0x24` = raw `[esp+0x30]`). Verify hook sites against raw bytes, and hook only exact
   instruction boundaries; one byte off crashes at boot.
-- Multi-DR watchpoint attribution under Wine is unreliable. Reason from single targets.
+- Multi-DR watchpoint attribution under Wine is unreliable (`field=?`). EIPs and registers are
+  still exact, which is enough to identify readers.
 - When a run "does nothing", first check that the conf took effect in the log (the round-8 `bool`
   vs `float` no-op).
-- Writing one consumer's copy of a derived value is fragile: the builder recomputes every frame,
-  and other consumers read sibling products. Replace the value where it is derived.

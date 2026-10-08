@@ -14,7 +14,7 @@ Mechanism rules and hook list: `launcher_plan.md`. Overview diagram: `render_dia
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`) |
 | S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (the S4-4-era full VP replacement; superseded 2026-10-07 by the g_CameraTable union injection + hmd_delta — §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below; improvement plan: `stereo_improvements_plan.md` |
 | S5 motion controls | not started — NEXT |
-| S6 frustum-culling alignment | **INJECTION IMPLEMENTED + LIVE-VERIFIED 2026-10-07**: union HMD pose injected at `g_CameraTable` post-fill (`view_table_inject=on`) — culling/LOD follow the head, rotation correct through aim changes (`stereo_improvements_plan.md` rounds 1-8; `frustum_cull_plan.md` resolution note). FOV half: `cull_hmd_fov=on` (HMD frustum extents at the view-context builder, 2026-10-08) implemented, awaiting live acceptance — `frustum_cull_plan.md` |
+| S6 frustum-culling alignment | **COMPLETE + LIVE-VERIFIED 2026-10-08**: rotation via the `g_CameraTable` union injection (`view_table_inject=on`, 2026-10-07); FOV via `cull_hmd_fov=on`, which writes the HMD frustum extents at the view-context builder (0x0085943B) and keeps the third-person camera clearance stock (0x007107F9). Details: `frustum_cull_plan.md` |
 
 > **KNOWN ISSUE — reprojection staleness (MUST BE FIXED EVENTUALLY, do not lose track of it).**
 > During head motion there is visible apparent stutter/micro-judder that vanishes when the head is held
@@ -343,13 +343,15 @@ Follows the logic-mod track in `launcher_plan.md` (XInput stubs
 `0x00a64d56/0x00a64d5c`, idle-reset buffer pair `0x017d30e8`/`0x00f7fb90`
 first). Pose/input marshal point is the slot-5 hook (S4); controller poses and button/axis state arrive from the host's OpenXR actions over the same IPC.
 
-### S6 — Frustum culling alignment
+### S6 — Frustum culling alignment (COMPLETE 2026-10-08)
 
-Align engine frustum culling + LOD with the HMD (head rotation, widened FOV). Details and status in
+Align engine frustum culling + LOD with the HMD (head rotation, widened FOV). Details in
 **`frustum_cull_plan.md`**. Rotation: the `g_CameraTable` union injection (`view_table_inject`,
 live-verified). FOV: `cull_hmd_fov` replaces the frustum half-extents in
 `ViewContext_BuildCameraConstants` (`0x0085943B`) for HMD-driven views. Every frustum product
-(projection, cull corner rays, shadow cascades) derives from those two values. The earlier
+(projection, cull corner rays, shadow cascades) derives from those two values. The third-person
+camera's obstacle clearance (`CamCtrl_NearPlaneClearance`, which reads the main near plane) gets
+the stock extents back at its private copy. The earlier
 ViewEntry/`DeriveCullTask` injection design is superseded (the ViewEntry pose fields are output
 channels, E2).
 

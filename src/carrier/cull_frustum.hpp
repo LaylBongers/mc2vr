@@ -17,6 +17,12 @@
 // touched (camtable::is_union_camera) — shadow/reflection/aux views keep the
 // game's frustum. Never narrows: each extent is max(game, HMD).
 //
+// One consumer must NOT see the HMD frustum: the third-person camera sizes its
+// obstacle clearance from the main view's near-plane quad (FUN_007107d0 copies
+// the frustum struct and keeps the near diagonal/edge maxima). A second MidHook
+// right after that copy (0x007107F9) scales the copy's near corners back to the
+// game's own extents — without it the ~3x larger quad pulls the camera in.
+//
 // Side effects (all in the game's own projection, which the HMD never shows —
 // view_row_rewrite=hmd_delta re-projects every main-pass upload with the
 // per-eye OpenXR FOV): the decomposed `view: gameproj` line reports the HMD

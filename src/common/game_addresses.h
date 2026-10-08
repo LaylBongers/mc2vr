@@ -274,6 +274,26 @@
 #define MC2_VCCAM_CTX_TANH_OFF ((uintptr_t)0x30u)
 #define MC2_VCCAM_CTX_TANV_OFF ((uintptr_t)0x34u)
 
+// The builder's view frustum struct at ctx+0x38 (FUN_00857140 output, 0x218 bytes):
+// +0x00 near, +0x04 far, +0x0c 8 world-space corners (vec3): near-plane corners
+// 0..3 = (+H,+V) (+H,-V) (-H,-V) (-H,+V) at distance `near`, then the 4 far-plane
+// corners; +0x6c side-plane normals.
+#define MC2_FRUSTUM_NEAR_OFF ((uintptr_t)0x0u)
+#define MC2_FRUSTUM_CORNERS_OFF ((uintptr_t)0xcu)
+
+// Third-person camera clearance from the main view's near plane (raw-decoded
+// 2026-10-08, watch-found): FUN_007107d0 (callers FUN_00715ad0 / FUN_00713b60,
+// camera controller) block-copies the MAIN slot's frustum struct
+// ([g_RenderShellPtr]+0xec8 = slot-1 ctx+0x38, `rep movsd` 0x86 dwords to
+// [esp+0x18]) and keeps running maxima of the near-plane diagonal |c2-c0| and
+// vertical edge |c1-c0| in the controller ([ebx+0x4d0]/[ebx+0x4d4]) — the
+// camera's obstacle clearance. 0x007107F9 = `MOVSS XMM2,[ESP+0x44]` (6 bytes),
+// the first instruction after the copy: the copy is at [ESP+0x18] there.
+// mc2vr cull_hmd_fov rescales that private copy's near corners back to the
+// game's own extents (the HMD-wide quad made the camera pull in).
+#define MC2_CAMCLEAR_FRUSTUM_COPIED ((uintptr_t)0x007107f9u)
+#define MC2_CAMCLEAR_COPY_ESP_OFF ((uintptr_t)0x18u)
+
 // g_CameraPoseClearBlock (E2b step-3 CORRECTED 2026-10-06, plate there): a
 // STATIC zero template (never written at runtime) — NOT a live pose source
 // (the step-2 "canonical pose global" interpretation is retracted).
@@ -303,8 +323,8 @@
 // 0x0070aef8, `fld [ebp+8]`). At this instruction EAX = the just-filled
 // entry+0x10 (single caller = the fill loop; ESI = slot base, live across the
 // call). The carrier rewrites EAX's rotation rows + position in place —
-// after every fill, before every consumer (draw-camera builder path AND the
-// culling/fov readers 0x0048067E family read this table).
+// after every fill, before every consumer (the view-context builder works on
+// copies of these entries, so draw camera, culling and LOD all follow).
 #define MC2_CAMTABLE_FILL_COPY_END ((uintptr_t)0x0070aef8u)
 
 // Probe (a) target: the OTHER per-frame counter (.data, bumped in
