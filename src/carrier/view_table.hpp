@@ -85,6 +85,26 @@ bool set_entry_fov_scale(double scale);
 // patched constant. Returns false on unrecognized values.
 bool set_entry_fov_decouple(const char *value);
 
+// mc2vr.conf boom_pin=on|off: pin the camera-controller fov consumer (the
+// per-frame MULSS [0x00BEAB5C] -> [EAX+0x5E8] at 0x0071BBC6) at the stock
+// cos 0.95975 (carrier-allocated page) — the candidate fix that lets
+// entry_fov_scale run wide (full HMD vertical coverage) without the
+// third-person camera pulling in. Returns false on unrecognized values.
+bool set_boom_pin(const char *value);
+
+// mc2vr.conf cull_tan_override=on|off: THE CLEAN CULL FIX — overwrite the
+// frame-ctx tan extents (the cull tests' divisors) with the HMD-union
+// frustum after the main view's builder writes them. The game renders
+// 100% stock; only the cull tests against the wider (true) frustum.
+// Supersedes entry_fov_scale/boom_pin/cull_fov_widen/record_fov_widen.
+bool set_cull_tan_override(const char *value);
+
+// mc2vr.conf cull_snap_dump=on|off: log-only mode for the snapshot hook —
+// dumps the per-view snapshot's frustum-candidate fields once per window
+// WITHOUT writing. Paired with a known widen state (boom_pin + scale) the
+// diff vs stock analytics identifies the operative cull fields.
+bool set_cull_snap_dump(const char *value);
+
 // Install the fill-site MidHook (plaintext .text, single caller — the fill
 // loop; fires once per filled slot) and, when cull_fov_widen is on, the
 // fov-write MidHook. Handler no-ops unless the conf enabled

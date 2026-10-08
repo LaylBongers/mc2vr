@@ -159,11 +159,31 @@ static void load_conf()
                 camtable::set_entry_fov_scale(v);
             }
         } else if (strcmp(key, "entry_fov_decouple") == 0) {
-            // Fov decouple (frustum_cull_plan.md I3 round 8): with the scale
-            // active, keep the game's own projection/camera at stock fov
-            // (filler loads -> 1.0) while the cull reads the wide constant.
+            // Fov decouple (frustum_cull_plan.md I3 round 8) — RETIRED by the
+            // round-10 decode (wrong value semantics); kept for conf compat.
             if (!camtable::set_entry_fov_decouple(value)) {
                 MC2VR_LOG("conf: entry_fov_decouple=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "boom_pin") == 0) {
+            // Boom pin (frustum_cull_plan.md I3 round 12): pin the camera-
+            // controller fov consumer at the stock cos so entry_fov_scale
+            // can run wide without the third-person camera pulling in.
+            if (!camtable::set_boom_pin(value)) {
+                MC2VR_LOG("conf: boom_pin=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "cull_tan_override") == 0) {
+            // THE CLEAN CULL FIX (frustum_cull_plan.md round 16): overwrite
+            // the frame-ctx tan extents (the cull test divisors) with the
+            // HMD-union frustum; the game renders 100% stock. Supersedes
+            // entry_fov_scale/boom_pin/cull_fov_widen/record_fov_widen.
+            if (!camtable::set_cull_tan_override(value)) {
+                MC2VR_LOG("conf: cull_tan_override=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "cull_snap_dump") == 0) {
+            // Snapshot field dump (frustum_cull_plan.md round 19): log-only
+            // diagnostic — dump the per-view snapshot's frustum candidates.
+            if (!camtable::set_cull_snap_dump(value)) {
+                MC2VR_LOG("conf: cull_snap_dump=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_camtable_probe") == 0) {
             // Transfer-function probe: injects fixed local-axis test

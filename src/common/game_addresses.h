@@ -254,6 +254,42 @@
 // decompose only succeeds on site-B records).
 #define MC2_VIEWCTX_FILLB_COMPLETE ((uintptr_t)0x0046742au)
 
+// THE CULL FRUSTUM TERMS (round-15 watch, 2026-10-08): the frame-ctx
+// (0x017CF980) holds the projection's tan extents at +0x30 (tanHalfH) and
+// +0x34 (tanHalfV) — written by the builder at 0x00859425/0x00859436
+// (traps fire at 0x0085942A/0x0085943B), then consumed by:
+//   - THE CULL TESTS: 0x0047E35F (DIVSS XMM2,[ctx+0x30]) / 0x0047E36A
+//     (DIVSS [ctx+0x34]) and 0x0047ED49 / 0x0047ED63 — per-object loops
+//     (object structs in ESI/EDI) dividing bounds by the frustum extents;
+//   - 0x0061B973/0x0061B97A (FLD ctx+0x30/0x34 -> copies into ctx+0x56/0x5A
+//     — a downstream derivation).
+// CRITICAL DETAIL: at 0x0085943B the builder's next instruction is
+// `LEA EAX,[EBX+0xB20]` — the projection matrix is built from REGISTER
+// copies, NOT the ctx slots — so overwriting the slots at 0x0085943B
+// widens ONLY the slot consumers (the cull), leaving the projection stock.
+// THE CLEAN FIX: hook 0x0085943B, verify the just-written terms are the
+// MAIN view's (match 1/g_game_cam.a within tolerance — shadow builds write
+// their own terms), then write tan(hmdHalfH+margin)/tan(hmdHalfV+margin).
+#define MC2_VCTX_TAN_STORES_DONE ((uintptr_t)0x0085943bu)
+#define MC2_FRAMECTX_TANH_OFF   ((uintptr_t)0x30u)
+#define MC2_FRAMECTX_TANV_OFF   ((uintptr_t)0x34u)
+
+// THE PER-VIEW SNAPSHOT (round-17/18, 2026-10-08): FUN_0061b930
+// (called by FUN_0061b7e0 ~5.5/frame, once per view) clones the view's
+// render-slot ctx into a per-view state object (param_1, in EBX) —
+// INCLUDING the tan extents (param_1[0xc]/[0xd] = +0x30/+0x34), the VP
+// rows (+0x10..0x1c), and the ctx+0x8c0/0x900 matrices (+0x230/+0x240).
+// THIS snapshot is what the per-object cull reads (no static address —
+// why every static-slot watch missed it). Round 16's static-ctx override
+// (0x0085943b) wrote a DIFFERENT ctx object than the snapshot's source —
+// hence the clean negative. THE FIX: hook the snapshot tail — 0x0061BB4E
+// = `FSTP [EBX+0xE70]` (6 bytes, EBX = param_1 = the snapshot, still live;
+// the function then does MOV EAX,EBX + more [EBX+0xE74] stores + RET 8) —
+// and rewrite the snapshot's tan fields to the HMD-union values. The
+// snapshot's source ctx/records stay stock (rendering stock); only the
+// per-view cull state sees the HMD frustum.
+#define MC2_VIEW_SNAPSHOT_TAN_SITE ((uintptr_t)0x0061bb4eu)
+
 // Site C — the WATCH-PROVEN main-record VP fill completion (2026-10-08, I3 round 3:
 // DR watchpoints on the main records' row0/row3 dwords hit 0x00859774 [FSTP [EAX],
 // row0] and 0x00859807 [after FSTP [EAX+0x30], row3] ~1100x/window with

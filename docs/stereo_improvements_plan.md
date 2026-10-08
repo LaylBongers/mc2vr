@@ -167,15 +167,15 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
 4. ~~A/B `hmd_delta` vs the `hmd` upload-level fallback~~ — RETIRED 2026-10-07: the
    `hmd` mode was removed (superseded); `hmd_delta` + the union injection is the
    live-verified system.
-5. **Culling-fov widening** — MOVED to `frustum_cull_plan.md` (live there 2026-10-08): rotation half done
-   via the table injection; fov half = `cull_fov_widen` (entry fov triple) + `record_fov_widen` (CPU record
-   VP, I3 — first-run bugs fixed, verification pending). The projection fov SOURCE is the camera entry's
-   `fovCos +0x58`, filled from a `g_ConstPool` static at `0x00466615` — the next lever if the record
-   channel is insufficient. (The old "+0x50/+0x54/+0x58 widen" note was right about the lever, wrong
-   about it being trivial: the projection math runs it through aspect + tan-table corrections —
-   semantics decode still open.) Also kept from the old note: the record-path apply_eye R-flip is
-   empirically validated by correct 3D but theory-pending under the rows model — ground or retire
-   that note if 3D ever looks off.
+5. **Culling-fov widening** — OWNED BY `frustum_cull_plan.md` (2026-10-08 wrap-up): rotation half
+   done (table injection); fov half INTERIM-SHIPPED (`boom_pin=on` + `entry_fov_scale=1.5` —
+   horizontal clipped-cull corrected, vertical still short) and the full architecture decoded
+   (effective fov = zoom x base cos at 0x71BBC6 -> Fov_TanIndexHelper -> slot-ctx tans ->
+   per-view snapshot -> the per-object cull; ADS narrowing = the zoom factor). The clean fix
+   (cull tests the HMD frustum, game renders stock) is one register-decode away — see the
+   plan's "Next session". Also kept from the old note: the record-path apply_eye R-flip is
+   empirically validated by correct 3D but theory-pending under the rows model — ground or
+   retire that note if 3D ever looks off.
 6. **E3 classification run** (`debug_watch=addr:0x014A2EF0` full-mode) → decide I4's fate
    (the I4 "stays hard" texgen/matViewMat derivations — if they read the table, the union
    injection already fixed them).
