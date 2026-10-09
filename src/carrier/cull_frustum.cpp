@@ -1,5 +1,5 @@
 // HMD cull frustum — see cull_frustum.hpp for the design and
-// docs/frustum_cull_plan.md for the evidence.
+// docs/plans/frustum_cull.md for the evidence.
 
 #include "cull_frustum.hpp"
 

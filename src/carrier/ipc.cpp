@@ -131,7 +131,7 @@ void connect()
     MC2VR_LOG("ipc: connected to host (pid %u, block %u bytes)",
               g.blk->hostPid, g.blk->blockSize);
 
-    // Leaked by design like every carrier thread (see launcher_plan.md).
+    // Leaked by design like every carrier thread (see docs/plans/launcher.md).
     HANDLE t = CreateThread(nullptr, 0, monitor_thread, nullptr, 0, nullptr);
     if (t != nullptr) CloseHandle(t);
 }

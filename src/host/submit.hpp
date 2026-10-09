@@ -1,5 +1,5 @@
 // S4-3: copy the carrier's shared-eye images into the OpenXR swapchains
-// (docs/stereo_design.md §S4). One fullscreen
+// (docs/plans/stereo_design.md §S4). One fullscreen
 // triangle with a tiny sample-and-write shader: the source SRV and the
 // swapchain RTV are both PLAIN-UNORM-cast views, so the sRGB-encoded LDR
 // finals pass through byte-exact — the runtime's compositor then decodes

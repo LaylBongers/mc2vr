@@ -1,5 +1,5 @@
 // DLL injection: CreateRemoteThread + LoadLibraryW. This is the chosen
-// mechanism (docs/launcher_plan.md step 4); fallbacks (manual mapping,
+// mechanism (docs/plans/launcher.md step 4); fallbacks (manual mapping,
 // boot-time import stub) only if this proves flaky under Proton.
 #pragma once
 

@@ -1,4 +1,4 @@
-// Pure math for the S4-4 camera replacement (docs/stereo_design.md §S4-4): the
+// Pure math for the S4-4 camera replacement (docs/plans/stereo_design.md §S4-4): the
 // four VP rows of a D3D view-projection decompose exactly into a camera pose,
 // projection terms and depth terms, and can be rebuilt from replacements.
 // No game or D3D dependencies — unit-tested natively by tools/test/test_vp_camera.cpp.

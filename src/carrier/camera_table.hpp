@@ -1,6 +1,6 @@
 // Union HMD camera injection at g_CameraTable — the single upstream point
 // that steers the draw camera, culling and LOD together
-// (docs/stereo_improvements_plan.md; plates on CameraTable_FillFromPose /
+// (docs/plans/stereo_improvements.md; plates on CameraTable_FillFromPose /
 // CameraTable_FillLoop).
 //
 // g_CameraTable (0x014a2ee0) is 5 camera-entity slots x 0x620, filled once per

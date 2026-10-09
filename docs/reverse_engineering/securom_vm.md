@@ -1,7 +1,7 @@
 # SecuROM v7 / VM Boundary
 
 What the SecuROM layer does in the game binary and how to classify code near it. On-disk layout and PE
-facts: `target_binary.md`. Mod-side rules for hooking around it: `../launcher_plan.md` § Mechanism.
+facts: `target_binary.md`. Mod-side rules for hooking around it: `../plans/launcher.md` § Mechanism.
 
 ## SecuROM/VM boundary — two mechanisms, do not conflate
 

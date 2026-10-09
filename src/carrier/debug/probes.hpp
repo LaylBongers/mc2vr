@@ -1,4 +1,4 @@
-// SecuROM pre-probes (docs/launcher_plan.md, M1): prove the two things the
+// SecuROM pre-probes (docs/plans/launcher.md, M1): prove the two things the
 // motion-control/logic-mod track depends on, using the carrier itself (the
 // only sanctioned probe — no debugger, no ptrace):
 //   (a) the carrier can write+restore game .data in-process — logic modding

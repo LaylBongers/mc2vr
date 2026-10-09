@@ -74,20 +74,20 @@ Navigate from the named symbols (all plate-commented). Only the non-obvious rule
 - Dx9 state wrapper: every D3D call in the render path goes through `g_LtiRenderer->dx9State` (`+0x5bc`; global `0x01175288` typed `LtiRenderer *`). Slot map = `Dx9StateWrapper_vtbl` struct members + `g_LtiRenderer` plate. Rules: the vtable is plain IDirect3DDevice9 order — wrapper slot n == device slot n for every slot (an earlier "omits one method / n+1" claim was wrong), and `dx9State` is the raw device object (the carrier's device VmtHook sees these calls); dirty-tracking caches are caller-side in the `Dx9_*` functions, updated after each device call — observing/forwarding at the device vtable is safe, ALTERING values there would desync `g_RenderStateCache` and the texture/sampler/RT caches.
 - Precache: plates on `RenderShell_PrecacheLoadStep`/`RenderShell_PrecacheFinish`; `g_SuppressPresent` suppresses Present during precache frames.
 - `Lti_LazyNameHash` (`0x008244a0`, 139 callers): per-site FNV-1a "Class::Method" IDs cached in `.bss`, read only by VM'd code — inert telemetry, NOT feature/device checks.
-- `LtiRenderer_EndSubmit` StretchRects RT0 → backbuffer (`LtiRenderer+0x3ea4`) whenever they differ — existing RT→backbuffer seam for the S4 eye-image capture (also noted in `../stereo_design.md`).
+- `LtiRenderer_EndSubmit` StretchRects RT0 → backbuffer (`LtiRenderer+0x3ea4`) whenever they differ — existing RT→backbuffer seam for the S4 eye-image capture (also noted in `../plans/stereo_design.md`).
 
 ## View staging, frame-level slots and state caches
 
-- View staging: `RenderQueue_SubmitWorldPackets` walks the ACTIVE views — an intrusive linked list (S0: head = `DAT_00d29e60`, an INDEX; link = `ViewEntry+0x4`; negative terminates) — and stages one 96-byte element per type-2/4 view: three `{byte-size, ptr}` pairs — {`0x30` camera staging `this+0xc2110+idx*0x30` (inline pos/serial/rot copy, site `0x0048ec3e`)}, {`0x810` live `ViewEntry*`}, {`0x680` frame-ctx block `this+0xd2950`}. Deref is at CONSUME time, post-walk, inside SecuROM-VM'd code (staging site `0x0048ef71`, count `[ESP+0x19a00]`, array `[ESP+0x79a0]`, cap 768). ~~The consumer never reads view camera data~~ (2026-10-06: re-interpreted — the walk-tail copy-back `0x0048F72D` proves the VM WRITES the staged block; whether it also READS it as draw-camera input is exactly what E2 tests — `view_and_camera.md` § camera-data accessors, `../stereo_improvements_plan.md` E2).
-- Frame-level slots: `g_RenderShell` vtable slots 4/5 (`EndOfFrameHook`/`PostUpdateHook`, +0x10/+0x14) are `VirtHook_NoOp` on the live base vtable — claimable via cloned-vtable swap on `g_RenderShell` (proven 1:1 with frames; see `../launcher_plan.md`).
-- Camera data: per-view RenderShell sub-objects hang off `g_RenderShellPtr` at `idx*0x3a0`; they are copied once per FRAME into the frame-ctx 0x680 block (`this+0xd2950+0xEC`, S0) — not per view, not eye slots. The per-view camera handed to the consumer is `{0x810, ViewEntry*}` by POINTER (derefed post-walk) plus the inline `0x30` staging copy — patching these never moved the draw camera in M3-era tests (done WITHOUT serial bumps and without the round-trip knowledge — re-interpreted 2026-10-06, and under re-test as E2 with the correct write+bump protocol; `view_and_camera.md`, `../stereo_improvements_plan.md` I2/E2).
+- View staging: `RenderQueue_SubmitWorldPackets` walks the ACTIVE views — an intrusive linked list (S0: head = `DAT_00d29e60`, an INDEX; link = `ViewEntry+0x4`; negative terminates) — and stages one 96-byte element per type-2/4 view: three `{byte-size, ptr}` pairs — {`0x30` camera staging `this+0xc2110+idx*0x30` (inline pos/serial/rot copy, site `0x0048ec3e`)}, {`0x810` live `ViewEntry*`}, {`0x680` frame-ctx block `this+0xd2950`}. Deref is at CONSUME time, post-walk, inside SecuROM-VM'd code (staging site `0x0048ef71`, count `[ESP+0x19a00]`, array `[ESP+0x79a0]`, cap 768). ~~The consumer never reads view camera data~~ (2026-10-06: re-interpreted — the walk-tail copy-back `0x0048F72D` proves the VM WRITES the staged block; whether it also READS it as draw-camera input is exactly what E2 tests — `view_and_camera.md` § camera-data accessors, `../plans/stereo_improvements.md` E2).
+- Frame-level slots: `g_RenderShell` vtable slots 4/5 (`EndOfFrameHook`/`PostUpdateHook`, +0x10/+0x14) are `VirtHook_NoOp` on the live base vtable — claimable via cloned-vtable swap on `g_RenderShell` (proven 1:1 with frames; see `../plans/launcher.md`).
+- Camera data: per-view RenderShell sub-objects hang off `g_RenderShellPtr` at `idx*0x3a0`; they are copied once per FRAME into the frame-ctx 0x680 block (`this+0xd2950+0xEC`, S0) — not per view, not eye slots. The per-view camera handed to the consumer is `{0x810, ViewEntry*}` by POINTER (derefed post-walk) plus the inline `0x30` staging copy — patching these never moved the draw camera in M3-era tests (done WITHOUT serial bumps and without the round-trip knowledge — re-interpreted 2026-10-06, and under re-test as E2 with the correct write+bump protocol; `view_and_camera.md`, `../plans/stereo_improvements.md` I2/E2).
 - All draw state is cached by the Dx9 wrapper layer — caller-side caches in the `Dx9_*` functions (`g_RenderStateCache`, `0x105` entries, cleared by the invalidate slot; plus texture/sampler/RT caches). Device-vtable hooks that only observe/forward calls are safe (the caches are caller-side); altering values at the device level would desync them — alter at the `Dx9_*` function level instead.
 
 ## Draw-camera constant chain (E1/E1b, hardware-watch-proven 2026-10-06)
 
 The `viewContextData`/VP production chain, mapped end-to-end — **all PLAINTEXT after the VM's
 orchestration thunk** (plates on the named symbols in Ghidra; interpretation in
-`view_and_camera.md` § Where the draw camera lives; plan context in `../stereo_improvements_plan.md`):
+`view_and_camera.md` § Where the draw camera lives; plan context in `../plans/stereo_improvements.md`):
 
 ```
 camera entity pose (quat + pos, heap record; values originate in game logic/VM)
@@ -133,7 +133,7 @@ These could NOT be settled by static analysis (sign-blind probe evidence, runtim
 projection coefficients) — a runtime transfer-function probe (carrier
 `debug_camtable_probe`) measured them; six live rounds of "sign convention" fixes were all
 consistent with the facts below being unknown. Details + the full derivation:
-`../stereo_improvements_plan.md` § The entry convention; plates on
+`../plans/stereo_improvements.md` § The entry convention; plates on
 CameraTable_FillFromPose / ViewContext_BuildCameraConstants.
 
 - **LEFT-HANDED pipeline** (classic D3D LH): the projection's clip.w z-coefficient is
@@ -187,7 +187,7 @@ CameraTable_FillFromPose / ViewContext_BuildCameraConstants.
   fully consumed BEFORE pass 1 begins drawing (inside pass-1 SubmitToGPU, pre-BeginSubmit) — this also
   refines the frame chain: the VM interpreter's consume effect lands inside the pass-1 submit window, and
   HUD/2D records therefore exist in the record table both passes walk (S4-5 HUD conclusion: one-eye HUD
-  impossible; see docs/stereo_design.md §S4-5).
+  impossible; see docs/plans/stereo_design.md §S4-5).
 - `g_RenderQueue2` (`0x00ff3650`) consumer — **narrowed (S0)**: its pointers sit inside the same 0x680 frame-ctx block handed per element; the VM interpreter at `0x0050f660` (call site `0x004c99f9`) is the prime suspect for consuming BOTH queues.
 - View/portal table walk — **RESOLVED (S0)**: intrusive linked list; `DAT_00d29e60` = head INDEX (M3 "registered-view count" label wrong; also stored to frame-ctx `+0xd2a10`), link `ViewEntry+0x4`, negative terminates. Per-view element format, camera staging sites, and the 768-element staging cap are on the `SubmitWorldPackets` plate comment.
 - **Camera-object pose writer — RESOLVED (E2b complete, 2026-10-06)**: the draw-camera chain
@@ -198,7 +198,7 @@ CameraTable_FillFromPose / ViewContext_BuildCameraConstants.
   point is g_CameraTable post-fill — IMPLEMENTED (2026-10-07): carrier MidHook at 0x0070AEF8,
   the instruction after the fill's Matrix_Copy3x4 call; the E2-disproven
   ViewEntry entry-injection protocol is retired. Verdicts + implementation notes:
-  `../stereo_improvements_plan.md`.
+  `../plans/stereo_improvements.md`.
 - `GameState3_Update` / `GameState2_Frontend_Update` internals — named by position, semantics unexplored.
 - `0x0117527c` adapter remap table / multi-adapter handling in `RenderSystem_Init` — not explored (single-GPU assumption).
 - `vt[4]`/`vt[5]`: ~~confirm anything actually CALLS them~~ **RESOLVED (M3)**: both slots called exactly once per frame by `GameShell_FrameTick` (claimable, mechanism proven via cloned vtable; survived alt-tabs/cutscene/mission load).

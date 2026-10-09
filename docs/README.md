@@ -10,15 +10,15 @@ Two kinds of documentation:
 
 | Doc | Read it for |
 |---|---|
-| `launcher_plan.md` | Launcher/carrier/host architecture, build/test/live-run workflow + healthy-run log signatures, proven mechanism rules, hook inventory, milestone history (M0–M4) |
-| `stereo_design.md` | Stereo design + status (S0–S6), the view-rewrite channel, S2c second pass, OpenXR host/IPC (§S4), HMD camera (§S4-4), the S4-5 record (events/pacing/HUD) incl. the **known reprojection-staleness issue (must fix eventually)**, frame-level hook strategy. §S4-4 follow-ups record the CLOSED world-scale/IPD verdict (2026-10-07) |
-| `stereo_improvements_plan.md` | Improving the S4-4 injection with the 2026-10-06 RE: record-level per-eye rewrite (PS camera data per-eye, less per-upload math), the upstream-ViewEntry decisive experiment (E2), ViewEntry-direct camera (no VP decomposition), what stays hard; experiments E1–E3 + rollout order |
-| `frustum_cull_plan.md` | S6 culling alignment, **COMPLETE 2026-10-08**: the `cull_hmd_fov` mechanism (HMD frustum extents at the view-context builder 0x0085943B), the camera-clearance exemption (0x007107F9), regression checks, open items, and the history of the ~26 failed rounds |
-| `hud_plan.md` | **OPEN track (2026-10-07)**: HUD/crosshair depth fix — root cause (screen-space HUD ignores the per-eye asymmetric-frustum centers ⇒ ~0.47 tangent units CROSSED disparity ⇒ perceived ~14 cm from the face; plus ~1.9× horizontal aspect distortion from the un-squeeze), fix directions (per-eye HUD shift at the upload gate), verification plan incl. the per-eye dump-pair measurement recipe, open items |
+| `plans/launcher.md` | Launcher/carrier/host architecture, build/test/live-run workflow + healthy-run log signatures, proven mechanism rules, hook inventory, milestone history (M0–M4) |
+| `plans/stereo_design.md` | Stereo design + status (S0–S6), the view-rewrite channel, S2c second pass, OpenXR host/IPC (§S4), HMD camera (§S4-4), the S4-5 record (events/pacing/HUD) incl. the **known reprojection-staleness issue (must fix eventually)**, frame-level hook strategy. §S4-4 follow-ups record the CLOSED world-scale/IPD verdict (2026-10-07) |
+| `plans/stereo_improvements.md` | Improving the S4-4 injection with the 2026-10-06 RE: record-level per-eye rewrite (PS camera data per-eye, less per-upload math), the upstream-ViewEntry decisive experiment (E2), ViewEntry-direct camera (no VP decomposition), what stays hard; experiments E1–E3 + rollout order |
+| `plans/frustum_cull.md` | S6 culling alignment, **COMPLETE 2026-10-08**: the `cull_hmd_fov` mechanism (HMD frustum extents at the view-context builder 0x0085943B), the camera-clearance exemption (0x007107F9), regression checks, open items, and the history of the ~26 failed rounds |
+| `plans/hud.md` | **OPEN track (2026-10-07)**: HUD/crosshair depth fix — root cause (screen-space HUD ignores the per-eye asymmetric-frustum centers ⇒ ~0.47 tangent units CROSSED disparity ⇒ perceived ~14 cm from the face; plus ~1.9× horizontal aspect distortion from the un-squeeze), fix directions (per-eye HUD shift at the upload gate), verification plan incl. the per-eye dump-pair measurement recipe, open items |
 | `render_diagram.svg` | Camera-matrix path (g_CameraTable → builder → VP record → GPU constants) with both MC2VR overwrite points, the two eye passes and the HMD host (keep in sync when hooks change) |
 
 Closed tracks are dissolved into the long-lived docs once their verdict is recorded (world-scale:
-`reverse_engineering/pandemic_engine.md` § World units + `stereo_design.md` §S4-4 follow-ups;
+`reverse_engineering/pandemic_engine.md` § World units + `plans/stereo_design.md` §S4-4 follow-ups;
 history in `git log --follow -- docs/`).
 
 Per-address facts live in the Ghidra project (plates, labels, structs). Config keys are documented in

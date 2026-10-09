@@ -22,7 +22,7 @@
 # open, hanging piped callers).
 #
 # With the real game, the same flow is the M0 milestone test
-# (docs/launcher_plan.md) — use ./launch.sh for that.
+# (docs/plans/launcher.md) — use ./launch.sh for that.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

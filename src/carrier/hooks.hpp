@@ -1,5 +1,5 @@
 // Hook installation — one entry point so the init thread stays simple and
-// the mechanism discipline (docs/launcher_plan.md) has a single choke point:
+// the mechanism discipline (docs/plans/launcher.md) has a single choke point:
 //   - inline/Mid hooks via SafetyHook, plaintext .text only
 //   - never patch inside 0x01a48000+ (SecuROM) or VM-stub thunks
 //   - the one exception: VmtHook on the captured IDirect3DDevice9 (M2+)

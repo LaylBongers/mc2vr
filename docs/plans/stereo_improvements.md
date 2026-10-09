@@ -96,7 +96,7 @@ camera entity pose (quat + pos, heap record; VALUES originate in game logic / VM
 Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillFromPose`,
 `CamPose_ClearEntryPose`, `CamPose_FillEntryFov`, `ViewContext_BuildCameraConstants`,
 `g_CameraPoseClearBlock`, `ViewContextRecord_Fill_*`); the chain narrative also lives in
-`reverse_engineering/render_path.md` § Draw-camera constant chain.
+`../reverse_engineering/render_path.md` § Draw-camera constant chain.
 
 ## Verdicts
 
@@ -108,7 +108,7 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
 2. **Upstream ViewEntry pose injection does NOT steer the draw camera** (E2). The ViewEntry
    `pos7c4`/`quat7d4` fields are OUTPUT channels of the staged round-trip: every serial bump is
    answered by the copy-back re-asserting the VM's pose within one frame (write+bump, into all 16
-   camera-adjacent views, measured regression SLOPE 0.00). This also kills `frustum_cull_plan.md`'s
+   camera-adjacent views, measured regression SLOPE 0.00). This also kills `frustum_cull.md`'s
    original D1/D2 entry-injection design.
 3. **`g_CameraTable` (0x014A2EE0) is the single injection point** (E1b + E2b). Static VA, runtime-live,
    plaintext-filled ~1.7/frame from the camera entity's quat+pos (via D3DX), and read by BOTH the
@@ -158,16 +158,16 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
    (const `0x00b58ff0`), and 21 stored `(0,−9.8,0)` hkClass default member vectors sit in
    .rdata; ZERO feet-convention constants (32.174/32.2/0.3048/3.28084) in the whole
    51.4 MB initialized image; plate + labels on hkpWorld_ctor, evidence in
-   `reverse_engineering/pandemic_engine.md` § World units). **LIVE IPD VERIFIED
+   `../reverse_engineering/pandemic_engine.md` § World units). **LIVE IPD VERIFIED
    2026-10-07** (eye-dump pair analysis): applied parallax = ipd_runtime·s/z
    end-to-end — asymmetric-frustum offset −451 px (predicted −460), per-eye FOV span
    scale 1.7%, door z agrees between width and parallax (3.5–3.9 m). s = 1.0 CLOSED
    (static + live). The near-field focus discomfort is therefore NOT scale/IPD/stereo —
-   root-caused to the HUD/crosshair's crossed disparity (see docs/hud_plan.md);
+   root-caused to the HUD/crosshair's crossed disparity (see hud.md);
 4. ~~A/B `hmd_delta` vs the `hmd` upload-level fallback~~ — RETIRED 2026-10-07: the
    `hmd` mode was removed (superseded); `hmd_delta` + the union injection is the
    live-verified system.
-5. ~~**Culling-fov widening**~~ — DONE 2026-10-08 (`frustum_cull_plan.md`): `cull_hmd_fov=on`
+5. ~~**Culling-fov widening**~~ — DONE 2026-10-08 (`frustum_cull.md`): `cull_hmd_fov=on`
    writes the HMD frustum extents at the view-context builder's tan site 0x0085943B, from which
    the projection, cull corners and shadow cascades all derive. The third-person camera
    clearance is kept stock at 0x007107F9. Live-verified. The record-path apply_eye R-flip was REMOVED 2026-10-09: it put each eye on the wrong side (pseudoscopic, near-field discomfort); decomposed R is screen-right, so no flip is needed. The per-eye delta is also now expressed in the head frame (conj(union rot) applied) — live-verified.
@@ -183,7 +183,7 @@ which also culls from the wrong view). The `camtable: window` line ends with
 `poseMiss read=… untracked=… insane=… held=…`: why samples failed (seqlock read gave up / host
 reports untracked / eye failed sanity) and how many misses the hold bridged. A run showed ~17-20%
 of fills with `noPose` before the hold; the cause of those misses was never separated (smearing
-turned out to be unrelated — see `frustum_cull_plan.md` § VR smearing).
+turned out to be unrelated — see `frustum_cull.md` § VR smearing).
 
 ### Phase oracles (reading a run's log — learned 2026-10-06)
 
@@ -248,5 +248,5 @@ turned out to be unrelated — see `frustum_cull_plan.md` § VR smearing).
 - "The producer side cannot work / ViewEntry injection steers anything" — the ViewEntry path
   specifically is dead (E2), but the producer side WORKS at `g_CameraTable` (E2b); the M3-era
   negative was an address error, not a category error.
-- `frustum_cull_plan.md` D1/D2 (ViewEntry injection) — superseded by the table injection; the
+- `frustum_cull.md` D1/D2 (ViewEntry injection) — superseded by the table injection; the
   plan doc carries the resolution note.

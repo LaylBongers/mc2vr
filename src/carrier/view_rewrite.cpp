@@ -1,4 +1,4 @@
-// Per-eye camera injection — see view_rewrite.hpp and docs/stereo_design.md §S2.
+// Per-eye camera injection — see view_rewrite.hpp and docs/plans/stereo_design.md §S2.
 
 #include "view_rewrite.hpp"
 
@@ -26,7 +26,7 @@ using math::Vec3;
 
 constexpr uint32_t VS_ROWS = 256;  // vs_3_0 float constant registers (plus headroom)
 
-// HmdDelta = I1 (stereo_improvements_plan.md): the per-eye complement to the
+// HmdDelta = I1 (docs/plans/stereo_improvements.md): the per-eye complement to the
 // camtable union injection — the raw VP already carries the union pose, so
 // this applies ONLY the per-eye projection (OpenXR FOV) + per-eye position
 // delta (eye pose relative to the table's union pose).
@@ -55,7 +55,7 @@ volatile uint32_t g_vp_reg = REG_INVALID;
 volatile uint32_t g_vp_count = 0;
 uintptr_t g_tech_seen[32];  // distinct technique objects (log once each)
 uint32_t g_tech_seen_n = 0;
-// E1 prep (docs/stereo_improvements_plan.md): viewContext RECORD stats from
+// E1 prep (docs/plans/stereo_improvements.md): viewContext RECORD stats from
 // the gate ([esp+0x18] = the pass's record pointer). Each distinct record VA
 // is logged once with the table base + computed index; per-window main/off
 // upload counts then identify the world view's record by dominance. 32 slots
@@ -133,7 +133,7 @@ void vcd_midhook(safetyhook::Context &ctx)
         MC2VR_LOG("view: technique %p: viewContextData c%u (count %u), ViewProj c%u (count %u)",
                   (void *)tech, vcd_reg, vcd_count, vp_reg, vp_count);
     }
-    // Record discovery (E1 prep, docs/stereo_improvements_plan.md): [esp+0x18]
+    // Record discovery (E1 prep, docs/plans/stereo_improvements.md): [esp+0x18]
     // at the gate is this pass's viewContext record pointer (game_addresses.h).
     // Each distinct record logs once with the live table base + index; every
     // hit also counts toward the per-window main/offscreen tally so the world
@@ -439,7 +439,7 @@ void report_window()
               (unsigned long long)g_vs_calls, (unsigned long long)g_vs_vec4s,
               (unsigned long long)g_rows_rewritten, mode);
     // The rendered game projection, decomposed from the latest main-pass
-    // upload (frustum_cull_plan.md): centered projection a = 1/tan(halfH),
+    // upload (docs/plans/frustum_cull.md): centered projection a = 1/tan(halfH),
     // b = 1/tan(halfV) — ADS/zoom fov changes show up here directly.
     if (g_game_cam_ms != 0 && g_game_cam.a > 0.0f && g_game_cam.b > 0.0f) {
         MC2VR_LOG("view: gameproj: a=%.4f b=%.4f -> halfH=%.2fdeg halfV=%.2fdeg",

@@ -3,7 +3,7 @@
 // with ID3D11Device::OpenSharedResource, verifies the pixel pattern, then
 // re-reads after a delay to verify live redraws are observable across the
 // process boundary with only the producer-side event-query ordering (no
-// fence/keyed mutex on legacy handles — stereo_design.md §S4 risk 2).
+// fence/keyed mutex on legacy handles — docs/plans/stereo_design.md §S4 risk 2).
 //
 // Success criteria (exit 0): OpenSharedResource succeeds, dims match, RGB
 // pattern exact (alpha ignored), blue counter uniform per read, and the

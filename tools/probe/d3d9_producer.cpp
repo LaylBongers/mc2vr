@@ -1,6 +1,6 @@
 // S4-2 probe producer (win32, runs in the game's Proton prefix => D3D9 = DXVK).
 //
-// Question this answers (stereo_design.md §S4 risk 1): does a D3D9 texture
+// Question this answers (docs/plans/stereo_design.md §S4 risk 1): does a D3D9 texture
 // created with a legacy pSharedHandle open in DXVK's D3D11 via
 // OpenSharedResource in ANOTHER process?
 //

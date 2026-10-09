@@ -1,7 +1,7 @@
 # View, Camera and Shader Constants
 
 What the game does with cameras and views, as found by reverse engineering. How the mod uses this
-(per-eye injection, HMD camera replacement) is in `../stereo_design.md`. Per-address facts live in Ghidra
+(per-eye injection, HMD camera replacement) is in `../plans/stereo_design.md`. Per-address facts live in Ghidra
 plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_ViewContextTable`,
 `g_PrimitiveBase`, `RenderQueue_SubmitWorldPackets`). Frame chain: `render_path.md`.
 
@@ -15,7 +15,7 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
   ROUND-TRIP (§ Camera-data accessors below) — the VM'd consumer demonstrably reads AND writes the
   staged camera block (copy-back at 0x0048F72D), so "the consumer never reads view camera data" was
   wrong as an absolute. Whether the VM's draw-camera DERIVATION consumes the staged pose as input is
-  still open — decisive experiment E2 in `docs/stereo_improvements_plan.md`. Until then the GPU
+  still open — decisive experiment E2 in `docs/plans/stereo_improvements.md`. Until then the GPU
   boundary (or the record itself, I1 there) remains the proven draw-camera channel. (Culling, too,
   turned out to follow `g_CameraTable` → `ViewContext_BuildCameraConstants`, not the ViewEntry
   fields — see § View frustum below.)
@@ -29,7 +29,7 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
   `ViewContext_BuildCameraConstants` (`0x008591ac`, ctx+0x28 — E1b; render_path.md § Draw-camera
   constant chain). Writing ViewEntry under the write+bump protocol is therefore ineffective for the
   draw camera, and doubtful for culling (the revert applies before the derive can consume the values).
-  The camera object is the remaining injection candidate (E2b, stereo_improvements_plan.md).
+  The camera object is the remaining injection candidate (E2b, ../plans/stereo_improvements.md).
   **E2b RESOLVED (2026-10-06, complete)**: the draw camera + culling input is `g_CameraTable`
   (`0x014A2EE0`) — static, live, plaintext-filled ~1.7/frame by `CameraTable_FillFromPose`
   (`0x0070ae50`, camera-entity quat+pos via D3DX) and read by both the VP builder path and the
@@ -52,7 +52,7 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
   re-reads unchanged records). Gameplay's world-scale records are idx 6 and idx 12 (same VP row0 —
   same camera); shadow-atlas records idx 7/8; census via the carrier's per-record upload tally
   (`view: rec ...` lines). Camera VALUES enter at the camera object — its writer is the open
-  E1b/E2 question and the I2 injection candidate (see `docs/stereo_improvements_plan.md`).
+  E1b/E2 question and the I2 injection candidate (see `docs/plans/stereo_improvements.md`).
   - **Table layout resolved (2026-10-06, E1 prep)**: `0x01169774` holds a POINTER, not the array — sole
     plaintext xref is the initializer (`FUN_00854da8`, write `0x00854e6d`):
     `g_ViewContextTable = 0x018c45e0 + DAT_00ff364c * 0xe00` — a double-buffered array of 32 records ×
@@ -63,7 +63,7 @@ plates (`PgPrimitive_SubmitToGPU`, `Technique_ResolveConstantRegisters`, `g_View
     pointer (the wrapper's data arg; the PS gate just below re-reads the same slot) — no `prim+0x49`
     computation needed. The carrier MidHook logs each distinct record VA + index + pass-gate context
     (E1 run 1); `debug_watch=addr:` then targets the main pass's record directly
-    (`docs/stereo_improvements_plan.md` E1).
+    (`docs/plans/stereo_improvements.md` E1).
 - **Constant-name → technique-field map** (plate on `Technique_ResolveConstantRegisters` `0x0085b260`): reg
   at technique+X, count/gate at +X+4 — objectData +0x94, LocalToWorld +0x9c, PrevLocalToWorld +0xa4,
   BoneMatrixArray +0xac (N bones × 3 rows of 3x4 skinning matrices; no view content), InvViewport +0xb4,
@@ -230,7 +230,7 @@ views are t3=01 ones like idx14). Findings:
 
 ## View frustum: builder products and consumers (2026-10-08)
 
-Raw-decoded and watch-proven during S6 (`../frustum_cull_plan.md`; plates on
+Raw-decoded and watch-proven during S6 (`../plans/frustum_cull.md`; plates on
 `ViewContext_BuildCameraConstants`, `CamCtrl_NearPlaneClearance`, `Fov_TanIndexHelper`).
 
 - **One source.** `ViewContext_BuildCameraConstants` (`0x008591ac`; EBX = the view render-ctx,

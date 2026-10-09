@@ -1,5 +1,5 @@
 // M2: D3D9 device capture + VmtHook pinning of Present/BeginScene/EndScene/
-// Reset (docs/launcher_plan.md hook list; docs/reverse_engineering/render_path.md open items:
+// Reset (docs/plans/launcher.md hook list; docs/reverse_engineering/render_path.md open items:
 // Present/EndScene call-site pinning, thunk_FUN_0256b6f0 confirmation).
 //
 // Discipline notes:

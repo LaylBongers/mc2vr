@@ -18,7 +18,7 @@ Copy "launch.conf.example" to "launch.conf", and fill in the missing details.
 The launcher (`mc2vr_launcher.exe`) starts the game suspended, injects
 `mc2vr_carrier.dll`, waits for it to install its early SafetyHook hooks
 in-process, then resumes the game. Plan and hook list:
-`docs/launcher_plan.md`.
+`docs/plans/launcher.md`.
 
 Build (32-bit MinGW cross toolchain, outputs to `build/win32/bin/`):
 

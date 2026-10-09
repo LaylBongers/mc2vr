@@ -43,7 +43,7 @@ Bypassed and inert. Details:
 ### Tamper-check capability (static scan, 2026-10-02)
 
 - Anti-tamper/anti-debug machinery is present in the SecuROM regions: name strings for `IsDebuggerPresent`, `NtQuerySystemInformation`, `ReadProcessMemory`, `FindWindow`, `CreateToolhelp32Snapshot`; CRC32 tables (reflected poly `0xEDB88320`) in `Sdata`/`Sidata` around `0x02455560`. `.securom`'s first 4 KB is high-entropy (VM payload).
-- Capability ≠ activity, but the question is settled empirically: post-boot re-verification is **DISCHARGED (M1, passed)** — multi-minute live runs with inline `.text` patches, in-process `.data` write/restores, and direct VM-stub calls produced zero reaction; the enforcement layer is inert (`../launcher_plan.md` § Mechanism).
+- Capability ≠ activity, but the question is settled empirically: post-boot re-verification is **DISCHARGED (M1, passed)** — multi-minute live runs with inline `.text` patches, in-process `.data` write/restores, and direct VM-stub calls produced zero reaction; the enforcement layer is inert (`../plans/launcher.md` § Mechanism).
 
 ## Symbols
 

@@ -1,4 +1,4 @@
-// S4-2: host side of the shared-handle image path (docs/stereo_design.md §S4). The carrier blits the per-eye LDR finals into
+// S4-2: host side of the shared-handle image path (docs/plans/stereo_design.md §S4). The carrier blits the per-eye LDR finals into
 // D3D9 shared-handle textures at the pass boundaries and publishes
 // FRAME_READY; this module opens them with ID3D11Device::OpenSharedResource
 // (the mechanism PROVEN cross-process by tools/probe/run_shared_handle.sh,

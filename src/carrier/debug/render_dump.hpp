@@ -1,4 +1,4 @@
-// M3: view-table dump + command histogram (docs/launcher_plan.md hook
+// M3: view-table dump + command histogram (docs/plans/launcher.md hook
 // table). Feeds the stereo submission design. Three instrumentations plus a
 // queue poller:
 //   - MidHook at RenderCmd_ExecuteStream's opcode dispatch -> per-opcode

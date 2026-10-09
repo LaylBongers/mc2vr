@@ -1,20 +1,20 @@
 # Stereo Submission Design
 
 Design for dual-eye world rendering + HMD presentation (via a separate 64-bit OpenXR host process). This doc is
-about OUR implementation; what the game itself does is in `reverse_engineering/` (camera/view/shader constants:
-`reverse_engineering/view_and_camera.md`; frame chain: `reverse_engineering/render_path.md`).
-Mechanism rules and hook list: `launcher_plan.md`. Overview diagram: `render_diagram.svg`. Code: `src/carrier/view_rewrite.cpp`.
+about OUR implementation; what the game itself does is in `../reverse_engineering/` (camera/view/shader constants:
+`../reverse_engineering/view_and_camera.md`; frame chain: `../reverse_engineering/render_path.md`).
+Mechanism rules and hook list: `launcher.md`. Overview diagram: `../render_diagram.svg`. Code: `src/carrier/view_rewrite.cpp`.
 
 ## Status
 
 | Phase | State |
 |---|---|
 | S0 loop-body RE | complete |
-| S1 draw-camera hunt | complete — GPU-boundary channel proven; 2026-10-06 correction: the record itself + (pending E2) the upstream ViewEntry pose are additional candidate channels (`stereo_improvements_plan.md`) |
+| S1 draw-camera hunt | complete — GPU-boundary channel proven; 2026-10-06 correction: the record itself + (pending E2) the upstream ViewEntry pose are additional candidate channels (`stereo_improvements.md`) |
 | S2 per-eye injection (incl. S2c second draw pass) | **COMPLETE + LIVE-VERIFIED 2026-10-04**: `stereo` camera channel, deterministic per-frame L/R pair, parallax-proven (−7px, SAD 2.16 vs 3.28), stable monitor pin. Milestone record in git history (`git log --follow -- docs/s2c_handover.md`) |
-| S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (the S4-4-era full VP replacement; superseded 2026-10-07 by the g_CameraTable union injection + hmd_delta — §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below; improvement plan: `stereo_improvements_plan.md` |
+| S4 HMD presentation | **S4-0..S4-5 COMPLETE + LIVE-VERIFIED 2026-10-06**: separate 64-bit OpenXR/D3D11 host, shared-handle images, IPC, head-tracked 3D in the HMD (the S4-4-era full VP replacement; superseded 2026-10-07 by the g_CameraTable union injection + hmd_delta — §S4-4); events + pacing (vsync unlock 30→~135 Hz, free-run) + HUD (both eyes, no quad layer) — record in §S4-5. Backlog: §S4-4 follow-ups + the staleness issue below; improvement plan: `stereo_improvements.md` |
 | S5 motion controls | not started — NEXT |
-| S6 frustum-culling alignment | **COMPLETE + LIVE-VERIFIED 2026-10-08**: rotation via the `g_CameraTable` union injection (`view_table_inject=on`, 2026-10-07); FOV via `cull_hmd_fov=on`, which writes the HMD frustum extents at the view-context builder (0x0085943B) and keeps the third-person camera clearance stock (0x007107F9). Details: `frustum_cull_plan.md` |
+| S6 frustum-culling alignment | **COMPLETE + LIVE-VERIFIED 2026-10-08**: rotation via the `g_CameraTable` union injection (`view_table_inject=on`, 2026-10-07); FOV via `cull_hmd_fov=on`, which writes the HMD frustum extents at the view-context builder (0x0085943B) and keeps the third-person camera clearance stock (0x007107F9). Details: `frustum_cull.md` |
 
 > **KNOWN ISSUE — reprojection staleness (MUST BE FIXED EVENTUALLY, do not lose track of it).**
 > During head motion there is visible apparent stutter/micro-judder that vanishes when the head is held
@@ -31,11 +31,11 @@ Mechanism rules and hook list: `launcher_plan.md`. Overview diagram: `render_dia
   ([1,0,0] → [-1,0,0] through a 180° turn), 100k+ rows rewritten per gameplay window; menu flips show
   right=[0,0,0] (cache unseeded until the first main-pass camera upload — expected).
 - Open RE questions behind this design (camera-matrix writer hunt, stub callbacks) are tracked in
-  `reverse_engineering/view_and_camera.md` § Open RE items.
+  `../reverse_engineering/view_and_camera.md` § Open RE items.
 
 ## Premises (from reverse engineering)
 
-Details and evidence in `reverse_engineering/view_and_camera.md` and `reverse_engineering/render_path.md`.
+Details and evidence in `../reverse_engineering/view_and_camera.md` and `../reverse_engineering/render_path.md`.
 
 - Producer side is plaintext and main-thread only; between the ring and the draw records sits the SecuROM-VM'd
   packet interpreter (stub `0x0050f660` at `0x004c99f9`); `PgPrimitive_SubmitToGPU` (`0x00855690`) →
@@ -50,7 +50,7 @@ Details and evidence in `reverse_engineering/view_and_camera.md` and `reverse_en
 
 ## The view channel (implemented)
 
-The visible view lives in the VS constant `viewContextData` (layout: `reverse_engineering/view_and_camera.md`
+The visible view lives in the VS constant `viewContextData` (layout: `../reverse_engineering/view_and_camera.md`
 § `viewContextData` layout: VP rows 0..3, optional camPos, optional world-fixed extra row, row-major,
 `clip_i = dot(VP_row_i, worldpos)`). The count-6 extra row is left alone.
 
@@ -97,7 +97,7 @@ space (the VS passes world position to the PS), so they are eye-invariant.
 > `view_asym` NDC shift and the `view_row_amp`/`view_ipd`/`view_stereo_hold`
 > keys) — plus the `hmd` full-VP-replacement mode were REMOVED from the
 > carrier after the g_CameraTable union injection + `hmd_delta` went
-> live-verified (docs/stereo_improvements_plan.md). This section stays as the
+> live-verified (stereo_improvements.md). This section stays as the
 > S2 record: the row-shift math, the pass gate and the register-map MidHook are
 > still the machinery `hmd_delta` runs on; only the pan/hold/asym modes are
 > gone. The rewrite above now happens via `vp_camera::decompose` + `apply_eye` on
@@ -123,13 +123,13 @@ the consumer never reads view camera data.)
    quads before implementing): explicit `g_ViewProjMtx` (same per-row `w` shift);
    `LocalToProj` (view folded in per object — needs the view-space eye offset,
    `clip.x -= P00*e.x`, with P00 derivable from cached VP rows); `Mvp`/`TexGen`; rain.
-   Shader addresses: `reverse_engineering/view_and_camera.md`.
+   Shader addresses: `../reverse_engineering/view_and_camera.md`.
 3. PS-side camera data (`cameraPos` c92, texgen matrices are mono) — hook slot 109 if
    reflections/shadows skew at IPD scale (see Open questions).
 
 ### S2c — second draw pass (COMPLETE 2026-10-04, live-verified)
 
-Streams carry no draws (`view_and_camera.md`), so the per-eye pass re-invokes
+Streams carry no draws (`../reverse_engineering/view_and_camera.md`), so the per-eye pass re-invokes
 `PgPrimitive_SubmitToGPU` wholesale (`frame_replay`, InlineHook at entry — the record walk
 re-runs state + draws; VCD uploads re-issue through the slot-94 rewrite, which `eye_pass` keys on).
 Code: `src/carrier/debug/stream_capture.cpp` (stream tap + replay hook), `src/carrier/eye_replay.cpp`.
@@ -253,14 +253,14 @@ Open: unit scale (`view_world_scale`, unverified), engine culling against the ga
 frustum, non-`viewContextData` shaders / PS camera data (rotation exposes these), split VP uploads
 (counted: `view/hmd: split=`), handedness/sign validation live. **Draw-camera RE COMPLETE
 (2026-10-06, experiments E1/E1b/E2/E2b — verdicts and the decided architecture in
-`stereo_improvements_plan.md`)**: the `viewContextData` records are PLAINTEXT-filled once per
-frame (full chain in `docs/reverse_engineering/render_path.md` § Draw-camera constant chain);
+`stereo_improvements.md`)**: the `viewContextData` records are PLAINTEXT-filled once per
+frame (full chain in `../reverse_engineering/render_path.md` § Draw-camera constant chain);
 upstream ViewEntry injection is disproven (output-only channel), and the SINGLE upstream
 injection point is `g_CameraTable` (0x014A2EE0) — hook after `CameraTable_FillFromPose`
 (0x0070ae50)'s fill, rewrite rotation+position with the HMD-union pose: steers draw camera
-(union) + culling + LOD together, and supersedes `frustum_cull_plan.md`'s original D1/D2
+(union) + culling + LOD together, and supersedes `frustum_cull.md`'s original D1/D2
 design. Per-eye stays at the record level (I1, shrunk to the per-eye delta).
-**IMPLEMENTED + LIVE-VERIFIED 2026-10-07** (`stereo_improvements_plan.md` rounds 1-8):
+**IMPLEMENTED + LIVE-VERIFIED 2026-10-07** (`stereo_improvements.md` rounds 1-8):
 union injection live (`view_table_inject=on`, probe-derived composition — the entry's ROWS are
 the rendered camera's axes and writes pass through the builder's matrix inverse, closed form
 E' = S_r·L⁻¹·S_r·E; plate on CameraTable_FillFromPose) + per-eye projection/IPD at the record
@@ -268,7 +268,7 @@ level (`view_row_rewrite=hmd_delta`). Head rotation verified correct through aim
 FOV/aspect and stereo 3D confirmed. The composition convention was settled by the
 debug_camtable_probe transfer-function instrument, not by static RE — six rounds of
 symptom-triangulation were provably unsolvable analytically (state-dependent error).
-See `stereo_improvements_plan.md` § Remaining work for what is left.
+See `stereo_improvements.md` § Remaining work for what is left.
 
 ### S4-5 — Session events, pacing, HUD (COMPLETE, live-verified 2026-10-06)
 
@@ -318,13 +318,13 @@ menu and gameplay. The interpreter therefore builds the 2D/HUD draw records once
 pass 1 draws, and pass 2 re-walks the same record table (S2c-1-proven) — the HUD lands in both eyes'
 composites and both per-eye captures contain it. The one-eye-HUD scenario is structurally impossible;
 the host quad-layer fallback is dead. Side finding: the queue counter protocol was re-derived at
-runtime (`render_path.md` open items; `+0x10` high16 = pending-unconsumed count cleared by the
+runtime (`../reverse_engineering/render_path.md` open items; `+0x10` high16 = pending-unconsumed count cleared by the
 consumer pre-Present, low16 = ring position frozen during passes, `+0x14` unused — the S0 static
 model was wrong).
 
 **S4-4 follow-ups (backlog, can interleave with S5):** ~~measure `view_world_scale` (the
 0.065 IPD was never checked)~~ — **CLOSED 2026-10-07**: units are METRES (Havok world gravity
-9.8–9.81 game units/s² — evidence in `reverse_engineering/pandemic_engine.md` § World units)
+9.8–9.81 game units/s² — evidence in `../reverse_engineering/pandemic_engine.md` § World units)
 and the per-eye pipeline is IPD-correct end-to-end (live eye-dump pair verification).
 **CORRECTION 2026-10-09: the near-field focus discomfort was NOT the HUD** (the HUD is barely
 visible and the discomfort persisted). Root causes, both in `hmd_delta` (`view_rewrite.cpp`) and
@@ -332,24 +332,24 @@ live-verified fixed: (1) the per-eye offset was expressed in XR-local space but 
 head-rotated camera axes — it is now rotated into the head frame (`conj(union rot)`); (2) a
 legacy `R = -R` flip put each eye on the wrong side (pseudoscopic parallax: invisible at
 distance, uncomfortable inside ~2 m) — removed. The HUD crossed-disparity analysis in
-`docs/hud_plan.md` is still a real (minor) defect, now low priority. Engine culling vs the game camera frustum —
+`hud.md` is still a real (minor) defect, now low priority. Engine culling vs the game camera frustum —
 **RESOLVED as a track (2026-10-06)**: the culling-input chain is fully RE'd (plaintext, change-gated,
-culminating in `ViewEntry_DeriveCullTask` `0x00876a90`); design in `frustum_cull_plan.md` (§S6);
+culminating in `ViewEntry_DeriveCullTask` `0x00876a90`); design in `frustum_cull.md` (§S6);
 non-`viewContextData` shaders, PS-side camera data and texgen stay mono/lag with rotation (improvement
-path now drafted: `stereo_improvements_plan.md` - record-level per-eye rewrite + upstream-ViewEntry
+path now drafted: `stereo_improvements.md` - record-level per-eye rewrite + upstream-ViewEntry
 experiment E2); pixel density
 of 2560×1440 over a ~100°+ eye frustum.
 
 ### S5 — Motion controls (separate track)
 
-Follows the logic-mod track in `launcher_plan.md` (XInput stubs
+Follows the logic-mod track in `launcher.md` (XInput stubs
 `0x00a64d56/0x00a64d5c`, idle-reset buffer pair `0x017d30e8`/`0x00f7fb90`
 first). Pose/input marshal point is the slot-5 hook (S4); controller poses and button/axis state arrive from the host's OpenXR actions over the same IPC.
 
 ### S6 — Frustum culling alignment (COMPLETE 2026-10-08)
 
 Align engine frustum culling + LOD with the HMD (head rotation, widened FOV). Details in
-**`frustum_cull_plan.md`**. Rotation: the `g_CameraTable` union injection (`view_table_inject`,
+**`frustum_cull.md`**. Rotation: the `g_CameraTable` union injection (`view_table_inject`,
 live-verified). FOV: `cull_hmd_fov` replaces the frustum half-extents in
 `ViewContext_BuildCameraConstants` (`0x0085943B`) for HMD-driven views. Every frustum product
 (projection, cull corner rays, shadow cascades) derives from those two values. The third-person
@@ -382,7 +382,7 @@ channels, E2).
 | Device `Present` (17) / `Reset` (16) | VmtHook | present params / monitor path (the host, not Present, submits to the HMD) |
 | `g_RenderShell` slots 4/5 | cloned-vtable claim | S4 orchestration: pose read, event drain, FrameReady publish (counting no-op now) |
 | `SubmitWorldPackets` loop head `0x0048e9ea` | MidHook | M3 view aggregation |
-| Stub call `0x004c99f9`/`0x004c99fe` + ~15 plaintext helper entries | MidHook | optional callback tracer (`debug_stub_trace`, see `reverse_engineering/render_path.md`) |
+| Stub call `0x004c99f9`/`0x004c99fe` + ~15 plaintext helper entries | MidHook | optional callback tracer (`debug_stub_trace`, see `../reverse_engineering/render_path.md`) |
 
 Proven mechanisms: trap-based inline/Mid/Vmt installs (no suspension), device
 VmtHook surviving device-lost + `Reset`, slot 4/5 claim 1:1 with frames,
@@ -393,13 +393,13 @@ data. **Never hook**: VM entry stub `0x0050f660`, VM pose-getter thunk
 ## Open questions
 
 - **Material texgen / PS camera data stays mono for eye 2** (water/sky reflections, blob shadows, shadow
-  cascades, PS `cameraPos`, the PS copy of the view record — RE detail in `view_and_camera.md`). The view
+  cascades, PS `cameraPos`, the PS copy of the view record — RE detail in `../reverse_engineering/view_and_camera.md`). The view
   rewrite touches VS camera rows only. No visible issue at 0.05 units; at IPD scale and for the periphery,
   re-check. A later `SetPixelShaderConstantF` hook could shift camera-derived rows by the eye delta (the
   derivation is VM'd, so correctness is not guaranteed).
 - `g_RenderQueue2` consumption timing relative to Present (HUD handling needs
-  the 2D stream's frame timing; RE side in `view_and_camera.md`) — add queue2 counters when S4 starts.
-- GPU sync: every frame begins by waiting for all prior GPU work (event-query spin in `LtiRenderer_BeginSubmit`, see `reverse_engineering/render_path.md`). Per-eye passes inherit it; the pacing design must account for it (S2c replay happens after this point).
+  the 2D stream's frame timing; RE side in `../reverse_engineering/view_and_camera.md`) — add queue2 counters when S4 starts.
+- GPU sync: every frame begins by waiting for all prior GPU work (event-query spin in `LtiRenderer_BeginSubmit`, see `../reverse_engineering/render_path.md`). Per-eye passes inherit it; the pacing design must account for it (S2c replay happens after this point).
 - Frame pacing: game vsync-locked 60 Hz (30 Hz with two passes; live-log-proven
   2026-10-05: ~600 Presents vs ~300 frames per 10s — one present-prev Present per pass at
   `LtiRenderer_BeginSubmit`). HMD typically 90 Hz. The host runs at HMD cadence
