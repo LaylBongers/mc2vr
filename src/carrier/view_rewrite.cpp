@@ -328,23 +328,25 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         }
         const vpcam::EyePose &pose = g_hmd.eye[eye];
         vpcam::EyePose delta;
-        delta.pos = pose.pos - u_pos;
-        delta.rot = pose.rot * math::conj(u_rot);
+        // apply_eye maps the delta through the game camera's R/U/F, which
+        // already carry the union (head) rotation — so the delta must be
+        // expressed in the HEAD frame, not XR local space. Otherwise the eye
+        // baseline only lies along the camera's right axis when the head
+        // faces its initial yaw (wrong vertical/depth disparity elsewhere,
+        // most visible at near range).
+        const math::Quat u_inv = math::conj(u_rot);
+        delta.pos = math::rotate(u_inv, pose.pos - u_pos);
+        delta.rot = u_inv * pose.rot;
         delta.fov_left = pose.fov_left;
         delta.fov_right = pose.fov_right;
         delta.fov_up = pose.fov_up;
         delta.fov_down = pose.fov_down;
-        // R-flip: apply_eye composes XR x along the decomposed R; live runs
-        // 5-8 confirmed correct stereo 3D with R negated here (and swapped-
-        // eye symptoms when it was missing), so the flip is kept as the
-        // empirically-validated convention. Theory note (2026-10-07): under
-        // the camtable rows model the decomposed R's physical handedness is
-        // not fully grounded — if 3D depth ever inverts, this flip is the
-        // first suspect. Flip back after so rebuild emits rows in the game's
-        // own convention.
-        game.R = -game.R;
+        // The decomposed R is the SCREEN-right axis by construction (clip.x =
+        // a·dot(R,p−C)+c·z with a>0), so XR +x (eye right) must map to +R: no
+        // flip. (An earlier R-negation put each eye on the wrong side:
+        // pseudoscopic parallax, invisible at distance but uncomfortable for
+        // near objects. Live-verified fixed 2026-10-09.)
         cam = vpcam::apply_eye(game, delta, g_world_scale);
-        cam.R = -cam.R;
     } else {
         return data;  // unreachable: Off/On/Pulse/Stereo never reach hmd_rewrite
     }

@@ -48,6 +48,7 @@ bool set_view_row_rewrite(const char *value);
 // docs/reverse_engineering/pandemic_engine.md § World units).
 void set_view_world_scale(float units_per_metre);
 
+
 // The world scale the camtable union injection composes with (shared conf key).
 float world_scale();
 

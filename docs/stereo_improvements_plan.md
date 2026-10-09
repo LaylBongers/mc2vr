@@ -170,9 +170,7 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
 5. ~~**Culling-fov widening**~~ — DONE 2026-10-08 (`frustum_cull_plan.md`): `cull_hmd_fov=on`
    writes the HMD frustum extents at the view-context builder's tan site 0x0085943B, from which
    the projection, cull corners and shadow cascades all derive. The third-person camera
-   clearance is kept stock at 0x007107F9. Live-verified. Also kept from the old note: the record-path apply_eye R-flip is
-   empirically validated by correct 3D but theory-pending under the rows model — ground or
-   retire that note if 3D ever looks off.
+   clearance is kept stock at 0x007107F9. Live-verified. The record-path apply_eye R-flip was REMOVED 2026-10-09: it put each eye on the wrong side (pseudoscopic, near-field discomfort); decomposed R is screen-right, so no flip is needed. The per-eye delta is also now expressed in the head frame (conj(union rot) applied) — live-verified.
 6. **E3 classification run** (`debug_watch=addr:0x014A2EF0` full-mode) → decide I4's fate
    (the I4 "stays hard" texgen/matViewMat derivations — if they read the table, the union
    injection already fixed them).
