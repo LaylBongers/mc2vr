@@ -1,5 +1,5 @@
 // Carrier init thread: log, verify the build lock, then (from M1 on)
-// install hooks. See docs/plans/launcher.md milestone list.
+// install hooks. See docs/carrier.md (init stages) and docs/hooks.md (inventory).
 #pragma once
 
 namespace mc2vr {

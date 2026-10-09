@@ -1,5 +1,5 @@
 // HMD cull frustum — make the engine's culling/LOD frustum cover the HMD's
-// field of view instead of the game's widescreen one (docs/plans/frustum_cull.md).
+// field of view instead of the game's widescreen one (docs/culling.md).
 //
 // ViewContext_BuildCameraConstants (0x008591ac) converts the camera entry's
 // fov into the two frustum half-extents tanH/tanV ONCE per view build. At

@@ -3,15 +3,21 @@
 from ghidra.program.model.listing import CodeUnit
 
 REPL = [
-    ("docs/stereo_improvements_plan.md", "docs/plans/stereo_improvements.md"),
-    ("docs/frustum_cull_plan.md", "docs/plans/frustum_cull.md"),
-    ("docs/launcher_plan.md", "docs/plans/launcher.md"),
-    ("docs/hud_plan.md", "docs/plans/hud.md"),
-    ("frustum_cull_plan.md", "docs/plans/frustum_cull.md"),
-    ("stereo_improvements_plan.md", "docs/plans/stereo_improvements.md"),
-    ("launcher_plan.md", "docs/plans/launcher.md"),
-    ("hud_plan.md", "docs/plans/hud.md"),
-    ("docs/stereo_design.md", "docs/plans/stereo_design.md"),
+    # plans/ zettelkasten migration (2026-10-09): docs/plans/* dissolved into atomic docs/ notes.
+    ("docs/plans/stereo_improvements.md", "docs/camera.md"),
+    ("docs/plans/frustum_cull.md", "docs/culling.md"),
+    ("docs/plans/launcher.md", "docs/hooks.md"),
+    ("docs/plans/hud.md", "docs/hud.md"),
+    ("docs/plans/stereo_design.md", "docs/stereo.md"),
+    # earlier migration (pre-plans names), for idempotency:
+    ("docs/stereo_improvements_plan.md", "docs/camera.md"),
+    ("docs/frustum_cull_plan.md", "docs/culling.md"),
+    ("docs/launcher_plan.md", "docs/hooks.md"),
+    ("docs/hud_plan.md", "docs/hud.md"),
+    ("frustum_cull_plan.md", "docs/culling.md"),
+    ("stereo_improvements_plan.md", "docs/camera.md"),
+    ("launcher_plan.md", "docs/hooks.md"),
+    ("hud_plan.md", "docs/hud.md"),
 ]
 
 TYPES = [

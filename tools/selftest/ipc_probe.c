@@ -1,5 +1,5 @@
 // mc2vr self-test IPC probe (S4-1): a stand-in carrier for the host's --mock
-// mode. Plays the carrier role from the IPC contract (docs/plans/stereo_design.md
+// mode. Plays the carrier role from the IPC contract (docs/stereo.md
 // §S4): connects, validates the section, registers its pid, reads seqlocked
 // poses, drains session-state events, sends Shutdown, and verifies the host
 // exits cleanly. Win32 on purpose — it validates the cross-bitness path

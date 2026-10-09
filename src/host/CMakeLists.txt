@@ -1,4 +1,4 @@
-# OpenXR/D3D11 host (x86_64). See docs/plans/stereo_design.md §S4.
+# OpenXR/D3D11 host (x86_64). See docs/stereo.md §S4.
 add_executable(mc2vr_host
     main.cpp
     log.cpp

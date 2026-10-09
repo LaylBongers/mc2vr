@@ -1,5 +1,5 @@
 // mc2vr IPC protocol v1 (S4-1) — the carrier (win32, in-game) <-> host
-// (win64, OpenXR) shared-memory contract. See docs/plans/stereo_design.md §S4.
+// (win64, OpenXR) shared-memory contract. See docs/stereo.md §S4.
 //
 // One fixed-size section created by the HOST (server) via CreateFileMappingA
 // and opened by the carrier/client with OpenFileMappingA. Both ends map it

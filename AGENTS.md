@@ -1,7 +1,7 @@
 # AGENTS.md - MC2VR Project
 
 This is a reverse engineering and modding project for the game "Mercenaries 2".
-The goal is to add full-featured VR support, including motion controls.
+The goal is to add full-featured VR support. (Motion controls were cancelled — facts kept in `docs/input_injection.md`.)
 
 ## Quick Reference
 
@@ -13,9 +13,17 @@ The goal is to add full-featured VR support, including motion controls.
 - `/Mercenaries2.exe.0` in the Ghidra project is just the DOS stub; ignore it.
 - When you encounter a vtable, annotate it pre-emptively (vtable struct + typed object/pointer globals) so virtual calls decompile as `obj->vftable->Method()` instead of raw pointer arithmetic. No MSVC RTTI in this binary — derive class names from symbols/ctors. See `docs/reverse_engineering/vtables.md` for the recipe and tooling gotchas.
 - Before researching anything, check `docs/reverse_engineering/` for prior game findings (and `docs/` for mod implementation notes) — they record methodology, cross-cutting facts, and open items not repeated in the Ghidra project (per-address facts live in Ghidra; docs point to them).
-- Milestone status and handover briefs are deliberately NOT tracked in this file (they churn between milestones) — find them in `docs/` (per-milestone `docs/*_handover.md` briefs; status tables in `docs/plans/stereo_design.md`). Keep this file to stable standing rules; do not edit it as part of routine milestone work.
-- Launcher/carrier (proven, M0–M2 complete): build `cmake -B build/win32 -DCMAKE_TOOLCHAIN_FILE=cmake/i686-w64-mingw32.cmake`; test chain headless via `tools/selftest/run.sh` — run it with the terminal tool's SANDBOX EXIT (wineserver needs Unix sockets, which the sandbox blocks. only necessary if sandboxed); live-run via `./launch.sh`, logs in `<GAME_DIR>/mc2vr/mc2vr_*.log`. Mechanism rules and hook list: `docs/plans/launcher.md`.
+- Milestone status and handover briefs are deliberately NOT tracked in this file (they churn between milestones) — open tracks live in the `docs/` note they concern, closed history in git. Keep this file to stable standing rules; do not edit it as part of routine milestone work.
+- Launcher/carrier (proven, M0–M2 complete): build `cmake -B build/win32 -DCMAKE_TOOLCHAIN_FILE=cmake/i686-w64-mingw32.cmake`; test chain headless via `tools/selftest/run.sh` — run it with the terminal tool's SANDBOX EXIT (wineserver needs Unix sockets, which the sandbox blocks. only necessary if sandboxed); live-run via `./launch.sh`, logs in `<GAME_DIR>/mc2vr/mc2vr_*.log`. Mechanism rules and hook list: `docs/hooks.md`.
 - Iteration loop: the agent implements/logs; the human runs `./launch.sh` (gameplay, not menu, for render instrumentation) and reports; the agent audits the logs. `tools/analyze_dumps.py` parses carrier view-dump blocks and S1 evidence.
+
+## Documentation
+
+`docs/` is a zettelkasten: many small, terse, atomic notes linked with relative markdown links. There is no index — enter through `docs/launcher.md` (the system pipeline) or grep.
+
+- One topic per note; link to related notes instead of repeating their content. When a note grows past one topic, split it.
+- Per-address facts live in the Ghidra project, not docs. Game-side RE lives in `docs/reverse_engineering/` (still monolithic files; refactor pending) — link to it, don't duplicate it.
+- Open tracks / known issues live in the note they concern, marked OPEN (e.g. `docs/hud.md`, the staleness issue in `docs/pacing.md`). When a track closes, record the verdict in the note; history lives in git — no changelogs.
 
 ## Context Budget
 

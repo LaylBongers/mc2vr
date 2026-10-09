@@ -1,5 +1,5 @@
 // Union HMD camera injection at g_CameraTable — see camera_table.hpp for the
-// design and docs/plans/stereo_improvements.md for the evidence.
+// design and docs/camera.md for the evidence.
 
 #include "camera_table.hpp"
 

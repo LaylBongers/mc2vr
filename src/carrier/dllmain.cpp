@@ -1,7 +1,7 @@
 // Carrier DLL entry point. DllMain only spawns the init thread — nothing
 // that can touch loader lock happens here (no LoadLibrary, no CreateProcess,
 // no COM, no CRT atexit tricks). All work, including hook installation, runs
-// on the init thread (docs/plans/launcher.md step 5).
+// on the init thread (docs/launcher.md step 5).
 #include <windows.h>
 
 #include "init.hpp"

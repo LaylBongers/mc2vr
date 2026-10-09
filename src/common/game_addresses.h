@@ -12,7 +12,7 @@
 #define MC2_GAME_BASE_EXPECTED ((uintptr_t)0x00400000u)
 
 // ---- M1 hook/probe sites (all plaintext .text/.data, well below the ----
-// ---- SecuROM region at 0x01a48000; see docs/plans/launcher.md hook list) --
+// ---- SecuROM region at 0x01a48000; see docs/hooks.md hook list) --
 
 // GameShell_FrameTick — void (void), called once per main-loop iteration from
 // GameShell_Run (single call site). The main M1 inline hook: frame counting,
@@ -184,7 +184,7 @@
 // uploaded (the wrapper's data arg: `mov edx,[esp+0x18]; push edx`; the PS
 // upload gate just below re-reads the same slot). The MidHook logs each
 // distinct record VA + computed index so an E1 `debug_watch=addr:` run can
-// target the main pass's record directly (docs/plans/stereo_improvements.md).
+// target the main pass's record directly (docs/camera.md).
 #define MC2_VCD_UPLOAD_CMP ((uintptr_t)0x00855a78u)
 #define MC2_VCD_GATE_REC_SLOT ((uintptr_t)0x18u)  // [esp+0x18] = record ptr
 #define MC2_TECH_VCD_REG_OFF ((uintptr_t)0xd4u)
@@ -263,7 +263,7 @@
 #define MC2_VCCAM_ENTRY_FOVCOS_OFF ((uintptr_t)0x58u)
 
 // Frustum extents in ViewContext_BuildCameraConstants (raw-decoded 2026-10-08,
-// docs/plans/frustum_cull.md): 0x0085943B = `LEA EAX,[EBX+0xB20]` (6 bytes, no
+// docs/culling.md): 0x0085943B = `LEA EAX,[EBX+0xB20]` (6 bytes, no
 // relative operand), right after tanH/tanV are stored to ctx+0x30/+0x34
 // (0x00859425/0x00859436). At this instruction EBX = the view render-ctx,
 // XMM2 = tanH, XMM0 = tanV, XMM1 = 1.0; everything after (projection at
@@ -305,7 +305,7 @@
 #define MC2_CAMPOSE_CLEAR_ENTRY ((uintptr_t)0x004665b0u)
 
 // ---- g_CameraTable: union HMD injection site (2026-10-07, docs/ ----
-// ---- docs/plans/stereo_improvements.md "Decided architecture")           ----
+// ---- docs/camera.md "Decided architecture")           ----
 // g_CameraTable = 5 camera-entity slots x 0x620 (constructed by FUN_0070f020:
 // FUN_00401890(&g_CameraTable,0x620,5,ctor)); camera-object ptr at slot+0x1e0,
 // fov source at slot+0x614. Once per frame the CameraTable_FillFromPose loop

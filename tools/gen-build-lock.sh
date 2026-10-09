@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate src/carrier/build_lock.h from a Mercenaries2.exe.
 # The carrier compares this hash/size against the host exe on disk at
-# startup and refuses to patch on mismatch (docs/plans/launcher.md: "VAs are
+# startup and refuses to patch on mismatch (docs/launcher.md: "VAs are
 # build-locked").
 set -euo pipefail
 

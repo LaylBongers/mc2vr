@@ -13,7 +13,7 @@
 // query (IDirect3DQuery9::GetData) and the object is drawn only while it was
 // seen within the last 3 frames. An object with no query id counts as visible,
 // so skipping the boxes simply disables occlusion culling (costs draw calls
-// only). See docs/plans/frustum_cull.md "VR smearing: occluder boxes".
+// only). See docs/culling.md "VR smearing: occluder boxes".
 #pragma once
 
 namespace mc2vr::occluder_boxes {

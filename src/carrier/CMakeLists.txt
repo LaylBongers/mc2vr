@@ -1,5 +1,5 @@
 # Carrier: the DLL the launcher injects. Hosts SafetyHook and (later) the
-# hot-swappable gameplay-mod module — keep it thin (docs/plans/launcher.md,
+# hot-swappable gameplay-mod module — keep it thin (docs/carrier.md,
 # motion-control track).
 add_library(mc2vr_carrier SHARED
     dllmain.cpp

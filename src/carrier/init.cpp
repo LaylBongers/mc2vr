@@ -120,7 +120,7 @@ static void load_conf()
                 view_rewrite::set_view_row_rewrite("off");
             }
         } else if (strcmp(key, "view_table_inject") == 0) {
-            // Union HMD injection at g_CameraTable (docs/plans/stereo_improvements.md
+            // Union HMD injection at g_CameraTable (docs/camera.md
             // "Decided architecture"): rewrites each just-filled table entry's
             // camera entry with the game pose composed with the mid-eye HMD
             // pose — the single upstream point feeding BOTH the draw-camera
@@ -130,7 +130,7 @@ static void load_conf()
                 MC2VR_LOG("conf: view_table_inject=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "cull_hmd_fov") == 0) {
-            // HMD cull frustum (docs/plans/frustum_cull.md): the engine's
+            // HMD cull frustum (docs/culling.md): the engine's
             // culling/LOD frustum covers the HMD FOV union instead of the
             // game's widescreen fov. Needs view_table_inject=on.
             if (!cull_frustum::set_enabled(value)) {
@@ -164,7 +164,7 @@ static void load_conf()
             }
         } else if (strcmp(key, "debug_stream_capture") == 0) {
             // S2c-0: render-command-stream capture + opcode census (read-only;
-            // docs/plans/stereo_design.md §S2). Requires the opcode MidHook (M3).
+            // docs/stereo.md §S2). Requires the opcode MidHook (M3).
             if (!s2c::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_stream_capture=%s not recognized (use on|off)", value);
             }
@@ -204,7 +204,7 @@ static void load_conf()
             }
         } else if (strcmp(key, "frame_replay") == 0) {
             // S2c-1: second draw pass — re-invoke PgPrimitive_SubmitToGPU after
-            // the original (same eye/RTs; state-safety test, docs/plans/stereo_design.md §S2).
+            // the original (same eye/RTs; state-safety test, docs/stereo.md §S2).
             if (!s2c::set_replay_enabled(value)) {
                 MC2VR_LOG("conf: frame_replay=%s not recognized (use on|off)", value);
             }

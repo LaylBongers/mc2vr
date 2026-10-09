@@ -1,5 +1,5 @@
 # Launcher: starts the game, waits for the main loop to come alive, then
-# injects the carrier DLL. See docs/plans/launcher.md.
+# injects the carrier DLL. See docs/launcher.md.
 add_executable(mc2vr_launcher
     main.c
     inject.c

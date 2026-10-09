@@ -1,5 +1,5 @@
-// Per-eye camera channel at the GPU boundary (docs/plans/stereo_design.md §S4-4,
-// docs/plans/stereo_improvements.md): the camtable union injection puts the
+// Per-eye camera channel at the GPU boundary (docs/stereo.md §S4-4,
+// docs/camera.md): the camtable union injection puts the
 // HMD-union pose into the game's camera table upstream; this module taps the
 // SetVertexShaderConstantF uploads of the technique's viewContextData and
 // applies the per-eye complement (hmd_delta) or the decompose/rebuild
