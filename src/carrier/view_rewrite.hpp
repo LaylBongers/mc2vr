@@ -16,7 +16,7 @@
 
 #include "vp_camera.hpp"
 
-namespace mc2vr::view {
+namespace mc2vr::view_rewrite {
 
 // Install the upload-gate MidHook. Failure is non-fatal (rewrite stays idle).
 void install();
@@ -71,4 +71,4 @@ void set_pass_eye(int sign);
 // 10s window report (called from render_dump.cpp's poller); resets counters.
 void report_window();
 
-} // namespace mc2vr::view
+} // namespace mc2vr::view_rewrite

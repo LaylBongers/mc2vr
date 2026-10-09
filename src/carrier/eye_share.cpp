@@ -222,7 +222,7 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
     gpu_sync();
 
     if (ipc::send_frame_ready(g_frame_id, (uint64_t)(uintptr_t)slot.handle, g_ring,
-                              eye, g_w, g_h, view::current_pose_id())) {
+                              eye, g_w, g_h, view_rewrite::current_pose_id())) {
         // Publish only on a successful push — a dropped message would leave
         // the host pairing a stale right eye against a new left (the host
         // pairs by frameId and shows the newest complete pair).

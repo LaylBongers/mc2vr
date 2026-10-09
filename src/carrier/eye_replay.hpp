@@ -3,7 +3,7 @@
 // With frame_replay=on (S2c-1) the frame is submitted twice. This module makes
 // the two passes a real stereo pair:
 //   - eye_pass=on:  pass 1 renders LEFT, pass 2 renders RIGHT — deterministic
-//     per-frame eye selection via view::set_pass_eye() (replaces the
+//     per-frame eye selection via view_rewrite::set_pass_eye() (replaces the
 //     deterministic eye while a pass override is active).
 //   - eye_rt=on:    during pass 2 every device SetRenderTarget(0, mainRT) is
 //     redirected to a carrier-created backbuffer-sized eye render target, and

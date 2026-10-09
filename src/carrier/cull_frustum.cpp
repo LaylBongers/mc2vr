@@ -14,9 +14,9 @@
 
 #include "game_addresses.h"
 #include "log.hpp"
-#include "view_table.hpp"
+#include "camera_table.hpp"
 
-namespace mc2vr::cullfov {
+namespace mc2vr::cull_frustum {
 
 namespace {
 
@@ -61,14 +61,14 @@ void tans_midhook(safetyhook::Context &ctx)
         return;
     }
     const uintptr_t entry = cam + idx * MC2_VCCAM_ENTRY_STRIDE;
-    if (!camtable::is_union_camera((const float *)(entry + MC2_VCCAM_ENTRY_ROT_OFF),
+    if (!camera_table::is_union_camera((const float *)(entry + MC2_VCCAM_ENTRY_ROT_OFF),
                                    (const float *)(entry + MC2_VCCAM_ENTRY_POS_OFF))) {
         g_other_view++;
         return;
     }
 
     float half_h, half_v;
-    if (!camtable::get_fov_union(&half_h, &half_v)) {
+    if (!camera_table::get_fov_union(&half_h, &half_v)) {
         g_no_fov++;
         return;
     }
@@ -239,4 +239,4 @@ void report_window()
     g_clear_restored = g_clear_stock = 0;
 }
 
-} // namespace mc2vr::cullfov
+} // namespace mc2vr::cull_frustum

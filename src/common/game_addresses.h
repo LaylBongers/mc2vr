@@ -171,7 +171,7 @@
 // 0x00855a78 = `cmp dword ptr [edi+0xd8], 0` immediately before the gated
 // call (JLE skips) — `mov edx,[esp+0x18]; push edx; lea eax,[edi+0xd4]; call
 // Dx9_SetVertexShaderConstantF (0x00749200)` which dispatches to the device
-// VmtHook slot 94 (= view::on_set_vs_constant). At this instruction EDI = the
+// VmtHook slot 94 (= view_rewrite::on_set_vs_constant). At this instruction EDI = the
 // CURRENT technique object (g_LastTechnique is stale here — updated only at
 // the end of the record loop). The technique's resolved constant map (plate
 // on Technique_ResolveConstantRegisters 0x0085b260): +0xd4 viewContextData

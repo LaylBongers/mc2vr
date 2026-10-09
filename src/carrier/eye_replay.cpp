@@ -616,7 +616,7 @@ void set_pass(uint32_t pass)
     g_pass = pass;
     // Per-pass eye override only when eye_pass=on (hold timer stays in
     // charge otherwise); pass 1 = LEFT (-1), pass 2 = RIGHT (+1).
-    view::set_pass_eye(g_pass_enabled && pass != 0 ? (pass == 1 ? -1 : 1) : 0);
+    view_rewrite::set_pass_eye(g_pass_enabled && pass != 0 ? (pass == 1 ? -1 : 1) : 0);
 }
 
 void on_reset()

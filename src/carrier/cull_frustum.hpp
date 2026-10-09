@@ -14,7 +14,7 @@
 // construction — no per-consumer chasing.
 //
 // Only views whose camera entry is a union-rewritten g_CameraTable copy are
-// touched (camtable::is_union_camera) — shadow/reflection/aux views keep the
+// touched (camera_table::is_union_camera) — shadow/reflection/aux views keep the
 // game's frustum. Never narrows: each extent is max(game, HMD).
 //
 // One consumer must NOT see the HMD frustum: the third-person camera sizes its
@@ -32,7 +32,7 @@
 // Requires view_table_inject=on and a tracked HMD; otherwise inert.
 #pragma once
 
-namespace mc2vr::cullfov {
+namespace mc2vr::cull_frustum {
 
 // mc2vr.conf cull_hmd_fov=on|off. Returns false on unrecognized input.
 bool set_enabled(const char *value);
@@ -47,4 +47,4 @@ void install();
 // 10s window report; resets counters.
 void report_window();
 
-} // namespace mc2vr::cullfov
+} // namespace mc2vr::cull_frustum

@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "cull_frustum.hpp"
+#include "occluder_boxes.hpp"
 #include "game_addresses.h"
 #include "eye_replay.hpp"
 #include "hooks.hpp"
@@ -15,7 +16,7 @@
 #include "stub_trace.hpp"
 #include "stream_capture.hpp"
 #include "view_rewrite.hpp"
-#include "view_table.hpp"
+#include "camera_table.hpp"
 #include "watch.hpp"
 
 namespace mc2vr::render {
@@ -307,9 +308,9 @@ void report_window()
     g_prod_a_max = 0;
     g_queue_changed_polls = 0;
 
-    view::report_window();
-    camtable::report_window();
-    cullfov::report_window();
+    view_rewrite::report_window();
+    camera_table::report_window();
+    cull_frustum::report_window();
     trace::report_window();
     s2c::report_window();
     eye::report_window();
@@ -400,15 +401,16 @@ void install_early()
 
     // View rewrite: upload-gate MidHook (the device-level tap is installed
     // with the device VmtHook, device.cpp).
-    view::install();
+    view_rewrite::install();
 
     // Union HMD injection at g_CameraTable (mc2vr.conf view_table_inject=on;
     // handler no-ops unless armed).
-    camtable::install();
+    camera_table::install();
 
     // HMD cull frustum in the view-context builder (mc2vr.conf
     // cull_hmd_fov=on; handler no-ops unless armed).
-    cullfov::install();
+    cull_frustum::install();
+    occluder_boxes::install();
 
     // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();

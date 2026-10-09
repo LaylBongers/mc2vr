@@ -30,7 +30,7 @@ carrier, conf `debug_camtable_probe=on`):
    sign conventions") and pitch/roll COUPLING once the aim is yawed/pitched (world-side
    inverse rotation about the wrong axes mixes components exactly as reported).
 
-**The implemented composition** (`src/carrier/view_table.cpp`, verified live, round 8): to
+**The implemented composition** (`src/carrier/camera_table.cpp`, verified live, round 8): to
 apply the desired aim-following LOCAL head rotation
 
    L = (−qx, −qy, +qz, qw)   (rendered local frame = x right, y up, z FORWARD — left-handed
@@ -127,11 +127,11 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
   draw-camera builder AND the culling/fov readers 0x0048067E family).
 - **Per-eye at the record level** (`view_row_rewrite=hmd_delta`, I1 as designed): per-eye
   OpenXR-FOV projection + per-eye position/rotation delta relative to camtable's same-frame
-  union (`camtable::get_union`), applied on the main-pass VP uploads. The old `hmd`
+  union (`camera_table::get_union`), applied on the main-pass VP uploads. The old `hmd`
   full-VP-replacement mode was REMOVED 2026-10-07 — superseded by this pair
   (it double-applied the pose on top of the table union).
 - **I3 as the checker, not the source**: the per-upload VP decompose remains the one-shot
-  consistency oracle (`hmd_identity`), and `view::get_game_camera` is the calibration input
+  consistency oracle (`hmd_identity`), and `view_rewrite::get_game_camera` is the calibration input
   for the camtable row-sign measurement.
 - **Verification instruments** (all conf-gated, default off): `debug_camtable_probe` — the
   transfer-function probe that settled the entry convention (injects fixed +10° local-axis

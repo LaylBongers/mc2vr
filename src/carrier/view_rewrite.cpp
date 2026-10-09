@@ -15,10 +15,10 @@
 #include "ipc.hpp"
 #include "log.hpp"
 #include "vec_math.hpp"
-#include "view_table.hpp"
+#include "camera_table.hpp"
 #include "vp_camera.hpp"
 
-namespace mc2vr::view {
+namespace mc2vr::view_rewrite {
 
 namespace {
 
@@ -209,6 +209,7 @@ struct HmdSnapshot {
     vpcam::EyePose eye[2];
 };
 HmdSnapshot g_hmd;
+ULONGLONG g_hmd_ms = 0;  // last successful pass-1 pose sample
 float g_world_scale = 1.0f;  // game world units per metre (VERIFIED: metres — gravity 9.81, docs/reverse_engineering/pandemic_engine.md)
 
 // Per-pass cache of the rebuilt camera position, for uploads that carry only
@@ -318,7 +319,7 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         // (same-frame reference, so pose and delta always pair up).
         math::Quat u_rot;
         math::Vec3 u_pos;
-        if (!camtable::get_union(&u_rot, &u_pos)) {
+        if (!camera_table::get_union(&u_rot, &u_pos)) {
             g_delta_no_union++;
             if (g_delta_warn_logged++ < 8) {
                 MC2VR_LOG("view/hmd: delta upload passed through — no camtable union "
@@ -533,8 +534,12 @@ void set_pass_eye(int sign)
         Mc2IpcState st;
         const bool sane = ipc::read_state(&st) && (st.flags & MC2VR_IPC_STF_TRACKED) &&
                           eye_is_sane(st.eye[0]) && eye_is_sane(st.eye[1]);
-        g_hmd.valid = sane;
+        // On a miss keep the previous snapshot for a short window (same hold as
+        // camtable's sample_pose) so the frame still renders with a head pose.
+        const ULONGLONG now = GetTickCount64();
+        g_hmd.valid = sane || (g_hmd.valid && now - g_hmd_ms < 250);
         if (sane) {
+            g_hmd_ms = now;
             g_hmd.id = st.hostFrame + 1;
             g_hmd.eye[0] = to_eye_pose(st.eye[0]);
             g_hmd.eye[1] = to_eye_pose(st.eye[1]);
@@ -546,4 +551,4 @@ void set_pass_eye(int sign)
     g_pass_eye = sign;
 }
 
-} // namespace mc2vr::view
+} // namespace mc2vr::view_rewrite

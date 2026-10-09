@@ -5,10 +5,11 @@ add_library(mc2vr_carrier SHARED
     dllmain.cpp
     init.cpp
     cull_frustum.cpp
+    occluder_boxes.cpp
     hooks.cpp
     device.cpp
     view_rewrite.cpp
-    view_table.cpp
+    camera_table.cpp
     vp_camera.cpp
     eye_replay.cpp
     eye_share.cpp

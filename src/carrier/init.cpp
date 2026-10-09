@@ -4,6 +4,7 @@
 
 #include "build_lock.h"
 #include "cull_frustum.hpp"
+#include "occluder_boxes.hpp"
 #include "device.hpp"
 #include "eye_replay.hpp"
 #include "eye_share.hpp"
@@ -18,7 +19,7 @@
 #include "debug/stub_trace.hpp"
 #include "debug/watch.hpp"
 #include "view_rewrite.hpp"
-#include "view_table.hpp"
+#include "camera_table.hpp"
 #include "debug/vm_dump.hpp"
 #include "sha256.h"
 
@@ -112,11 +113,11 @@ static void load_conf()
         }
         if (strcmp(key, "view_row_rewrite") == 0) {
             // The viewContextData camera channel (view_rewrite.cpp).
-            if (!view::set_view_row_rewrite(value)) {
+            if (!view_rewrite::set_view_row_rewrite(value)) {
                 MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
                           "(use off|on|pulse|stereo|hmd_delta|hmd_identity) — defaulting to off",
                           value);
-                view::set_view_row_rewrite("off");
+                view_rewrite::set_view_row_rewrite("off");
             }
         } else if (strcmp(key, "view_table_inject") == 0) {
             // Union HMD injection at g_CameraTable (docs/stereo_improvements_plan.md
@@ -125,28 +126,32 @@ static void load_conf()
             // pose — the single upstream point feeding BOTH the draw-camera
             // builder and the culling/fov readers. Pair with
             // view_row_rewrite=hmd_delta for the per-eye FOV/position delta.
-            if (!camtable::set_inject_enabled(value)) {
+            if (!camera_table::set_inject_enabled(value)) {
                 MC2VR_LOG("conf: view_table_inject=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "cull_hmd_fov") == 0) {
             // HMD cull frustum (docs/frustum_cull_plan.md): the engine's
             // culling/LOD frustum covers the HMD FOV union instead of the
             // game's widescreen fov. Needs view_table_inject=on.
-            if (!cullfov::set_enabled(value)) {
+            if (!cull_frustum::set_enabled(value)) {
                 MC2VR_LOG("conf: cull_hmd_fov=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "skip_occluder_boxes") == 0) {
+            if (!occluder_boxes::set_skip(value)) {
+                MC2VR_LOG("conf: skip_occluder_boxes=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "cull_fov_margin") == 0) {
             // Degrees added to each HMD half-angle (default 5).
             double v;
             if (parse_double(key, value, &v)) {
-                cullfov::set_margin(v);
+                cull_frustum::set_margin(v);
             }
         } else if (strcmp(key, "debug_camtable_probe") == 0) {
             // Transfer-function probe: injects fixed local-axis test
             // rotations at the fill site and logs entry + rendered response
             // — settles the rotation convention numerically (run standing
             // still in gameplay; no HMD needed).
-            if (!camtable::set_probe_enabled(value)) {
+            if (!camera_table::set_probe_enabled(value)) {
                 MC2VR_LOG("conf: debug_camtable_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_stub_trace") == 0) {
@@ -218,7 +223,7 @@ static void load_conf()
             // Game world units per metre for the HMD camera (default 1.0).
             double v;
             if (parse_double(key, value, &v)) {
-                view::set_view_world_scale((float)v);
+                view_rewrite::set_view_world_scale((float)v);
             }
         } else if (strcmp(key, "debug_watch") == 0) {
             // S5: hardware watchpoints on ViewEntry camera fields (culling-RE

@@ -14,7 +14,7 @@
 // Composition is PROBE-DERIVED (the entry's ROWS are the rendered camera's
 // axes, and writes pass through the builder's 4x4 matrix inverse — a naive
 // E·M lands inverted and world-side; closed form E' = S_r·L⁻¹·S_r·E — see
-// the composition block in view_table.cpp and the plate on
+// the composition block in camera_table.cpp and the plate on
 // CameraTable_FillFromPose; do not re-derive from static sign analysis).
 // A runtime row-sign calibration locks the measured convention before any
 // rewrite is applied.
@@ -36,7 +36,7 @@
 
 #include "vec_math.hpp"
 
-namespace mc2vr::camtable {
+namespace mc2vr::camera_table {
 
 // mc2vr.conf view_table_inject=on|off. Returns false on unrecognized input.
 bool set_inject_enabled(const char *value);
@@ -76,4 +76,4 @@ void install();
 // 10s window report (render_dump.cpp poller); resets counters.
 void report_window();
 
-} // namespace mc2vr::camtable
+} // namespace mc2vr::camera_table

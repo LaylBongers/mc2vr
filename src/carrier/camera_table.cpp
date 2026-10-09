@@ -1,7 +1,7 @@
-// Union HMD camera injection at g_CameraTable — see view_table.hpp for the
+// Union HMD camera injection at g_CameraTable — see camera_table.hpp for the
 // design and docs/stereo_improvements_plan.md for the evidence.
 
-#include "view_table.hpp"
+#include "camera_table.hpp"
 
 #include <safetyhook.hpp>
 
@@ -21,7 +21,7 @@
 #include "view_rewrite.hpp"
 #include "vp_camera.hpp"
 
-namespace mc2vr::camtable {
+namespace mc2vr::camera_table {
 
 using math::Quat;
 using math::Vec3;
@@ -38,6 +38,11 @@ uint32_t g_pose_id = 0;
 Quat g_pose_rot;
 Vec3 g_pose_pos;
 uint64_t g_pose_ms = 0;  // last successful pose/fov sample (staleness window)
+constexpr uint64_t kPoseHoldMs = 250;  // reuse the last good pose this long on a miss
+// Why a sample failed (window counters): seqlock read gave up / host reports
+// untracked / eye pose or FOV failed the sanity check; held = a miss bridged
+// by the last good pose.
+uint64_t g_miss_read = 0, g_miss_untracked = 0, g_miss_insane = 0, g_pose_held = 0;
 // HMD FOV union (radians, outermost bound over both eyes) — the cull frustum
 // input (cull_frustum.cpp via get_fov_union).
 float g_fov_half_h = 0.0f, g_fov_half_v = 0.0f;
@@ -113,8 +118,25 @@ void sample_pose()
     g_pose_valid = false;
 
     Mc2IpcState st;
-    if (!ipc::read_state(&st) || !(st.flags & MC2VR_IPC_STF_TRACKED) ||
-        !eye_is_sane(st.eye[0]) || !eye_is_sane(st.eye[1])) {
+    bool ok = true;
+    if (!ipc::read_state(&st)) {
+        g_miss_read++;
+        ok = false;
+    } else if (!(st.flags & MC2VR_IPC_STF_TRACKED)) {
+        g_miss_untracked++;
+        ok = false;
+    } else if (!eye_is_sane(st.eye[0]) || !eye_is_sane(st.eye[1])) {
+        g_miss_insane++;
+        ok = false;
+    }
+    if (!ok) {
+        // Hold the last good pose for a short window rather than dropping the
+        // whole frame to the game's own (head-less, mono) camera: a frame
+        // without the union renders AND culls from the wrong view.
+        if (g_pose_ms != 0 && GetTickCount64() - g_pose_ms < kPoseHoldMs) {
+            g_pose_valid = true;
+            g_pose_held++;
+        }
         return;
     }
 
@@ -158,7 +180,7 @@ void sample_pose()
 // the rendered camera's axes are the entry's ROWS — see the composition
 // block in fill_midhook and the plate on CameraTable_FillFromPose). Measures
 // sign(dot(row_j, rendered_axis_j)) against the decomposed VP camera
-// (view::get_game_camera — the physically-validated basis the record path
+// (view_rewrite::get_game_camera — the physically-validated basis the record path
 // renders with); two consecutive agreeing fills lock the signs. While the
 // head roughly faces where the game camera points, the dots are ~+-1. The
 // rewrite WAITS (counted as frameWaits) until the signs lock — a changed
@@ -209,7 +231,7 @@ void probe_step(float *e)
         vpcam::Camera cam;
         char dec[192];
         int m = 0;
-        if (view::get_game_camera(&cam)) {
+        if (view_rewrite::get_game_camera(&cam)) {
             m = _snprintf(dec, sizeof(dec), "R=(%.3f %.3f %.3f) U=(%.3f %.3f %.3f) "
                          "F=(%.3f %.3f %.3f) C=(%.1f %.1f %.1f)",
                          (double)cam.R.x, (double)cam.R.y, (double)cam.R.z,
@@ -241,7 +263,7 @@ void probe_step(float *e)
 void try_measure_frame(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2)
 {
     vpcam::Camera cam;
-    if (!view::get_game_camera(&cam)) {
+    if (!view_rewrite::get_game_camera(&cam)) {
         return;  // no decomposed upload yet — keep waiting
     }
     // ROW signs: the rendered basis is s_j * row_j (probe-proven) — measure
@@ -393,7 +415,7 @@ void fill_midhook(safetyhook::Context &ctx)
     e[8] = n2.x; e[9] = n2.y; e[10] = n2.z;
     const Vec3 dpos = (s0 * g_pose_pos.x) * r0 + (s1 * g_pose_pos.y) * r1 +
                       (s2 * -g_pose_pos.z) * r2;
-    math::store3(e + 12, cpos + dpos * view::world_scale());
+    math::store3(e + 12, cpos + dpos * view_rewrite::world_scale());
     remember_rewrite(e);
 
     g_rewrites++;
@@ -531,13 +553,17 @@ void report_window()
         return;
     }
     MC2VR_LOG("camtable: window: fills=%llu rewritten=%llu noPose=%llu badEntry=%llu "
-              "badRows=%llu frameWaits=%llu poseId=%u%s",
+              "badRows=%llu frameWaits=%llu poseId=%u%s | poseMiss read=%llu "
+              "untracked=%llu insane=%llu held=%llu",
               (unsigned long long)g_fills, (unsigned long long)g_rewrites,
               (unsigned long long)g_no_pose, (unsigned long long)g_bad_entry,
               (unsigned long long)g_bad_rows, (unsigned long long)g_frame_waits,
               g_pose_id,
               g_s0 == 0 ? " | FRAME UNLOCKED — rewrite waiting for calibration"
-                        : "");
+                        : "",
+              (unsigned long long)g_miss_read, (unsigned long long)g_miss_untracked,
+              (unsigned long long)g_miss_insane, (unsigned long long)g_pose_held);
+    g_miss_read = g_miss_untracked = g_miss_insane = g_pose_held = 0;
     for (uint32_t k = 0; k < g_entries_n; k++) {
         MC2VR_LOG("camtable:   entry slot=%u.%u rot=%p fills=%llu rewrites=%llu",
                   g_entries[k].slot, g_entries[k].sub, (void *)g_entries[k].rot,
@@ -554,4 +580,4 @@ void report_window()
     g_frame_waits = 0;
 }
 
-} // namespace mc2vr::camtable
+} // namespace mc2vr::camera_table

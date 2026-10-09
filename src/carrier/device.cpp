@@ -201,7 +201,7 @@ void log_present_params()
         return;
     }
 
-    view::set_main_rt_size(pp.BackBufferWidth, pp.BackBufferHeight);
+    view_rewrite::set_main_rt_size(pp.BackBufferWidth, pp.BackBufferHeight);
     MC2VR_LOG("D3D: present params: %ux%u fmt=%u count=%u windowed=%u swapeffect=%u "
               "refresh=%u interval=0x%08x hdeviceWindow=%p",
               pp.BackBufferWidth, pp.BackBufferHeight, pp.BackBufferFormat,
@@ -379,7 +379,7 @@ HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
                 h = desc.Height;
             }
         }
-        view::on_set_render_target(w, h);
+        view_rewrite::on_set_render_target(w, h);
     }
     return hr;
 }
@@ -395,7 +395,7 @@ HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UI
                   (unsigned long long)g_setvsconst_calls, (unsigned)start,
                   (unsigned)count, (unsigned long long)hooks::frame_count(), caller);
     }
-    const float *out = view::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
+    const float *out = view_rewrite::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
     return g_setvsconstf_hook->stdcall<HRESULT>(self, start, out, count);
 }
 

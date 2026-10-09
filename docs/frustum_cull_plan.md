@@ -8,7 +8,7 @@ camera behaves as stock.
 
 | Half | Mechanism | Status |
 |---|---|---|
-| Rotation (cull follows the head) | `view_table_inject=on` — union HMD pose written into `g_CameraTable` (`view_table.cpp`) | Done, live-verified 2026-10-07 |
+| Rotation (cull follows the head) | `view_table_inject=on` — union HMD pose written into `g_CameraTable` (`camera_table.cpp`) | Done, live-verified 2026-10-07 |
 | FOV (cull covers the HMD's angles) | `cull_hmd_fov=on` — HMD frustum extents written into the view-context builder, camera clearance kept stock (`cull_frustum.cpp`) | Done, live-verified 2026-10-08 (cull 62.0°/59.7° vs game 36.7°/22.7°) |
 
 ## The mechanism (cull_hmd_fov)
@@ -33,13 +33,13 @@ produces derives from XMM2/XMM0 only (raw-decoded):
 
 The carrier MidHooks that instruction. For HMD-driven views only, it sets
 `tanH = max(|tanH|, tan(hmdHalfH + margin))` (same for V; signs kept), in XMM2/XMM0 and in
-ctx+0x30/+0x34. `hmdHalf*` is the outermost half-angle across both eyes (`camtable::get_fov_union`),
+ctx+0x30/+0x34. `hmdHalf*` is the outermost half-angle across both eyes (`camera_table::get_fov_union`),
 and the margin is `cull_fov_margin` (default 5°). Each extent is shaped on its own axis, so the
 vertical is no longer tied to 16:9. The result is never narrower than the game's frustum.
 
 **View discrimination**: the builder works on copies of the `g_CameraTable` entries. The fill hook
 records every entry it rewrites (rows + position, seqlocked 8-slot history).
-`camtable::is_union_camera` matches the builder's active camera entry (`[ctx+0x28]`, self-indexed
+`camera_table::is_union_camera` matches the builder's active camera entry (`[ctx+0x28]`, self-indexed
 0x70 stride) against that history. Shadow, reflection and aux views never match, so they keep the
 game's frustum. Live: about one widened build per frame (the main view); `otherView`/`noCam` are the
 remaining views.
@@ -95,7 +95,7 @@ Conf: `view_table_inject=on`, `view_row_rewrite=hmd_delta`, `cull_hmd_fov=on`, H
    - `camClear restored` ≈ `widened`/2 (one per camera update) with `stock≈0`.
 
    Failure signatures:
-   - `widened=0, otherView>0`: the union-camera match failed (tolerances in `view_table.cpp`
+   - `widened=0, otherView>0`: the union-camera match failed (tolerances in `camera_table.cpp`
      `is_union_camera`).
    - `camClear stock>0` while widened: the copy match failed, and the pull-in returns.
    - `noFov>0`: no tracked pose in the last second.
@@ -150,3 +150,26 @@ Earlier-round misreadings worth not repeating:
   still exact, which is enough to identify readers.
 - When a run "does nothing", first check that the conf took effect in the log (the round-8 `bool`
   vs `float` no-op).
+
+## VR smearing: occluder boxes (2026-10-09, live-verified fix)
+
+Symptom: while turning in the HMD, regions at fixed in-world seams stayed undrawn (stale colour
+pixels — the game never clears colour); never in mono, not where the user looked directly.
+
+Ruled out: terrain frustum (`debug_terrain_cull_probe`: slot 1 gets the widened 62.0°/59.7° corners
+and side planes 56° apart), Z pre-pass / ZFUNC=EQUAL (`debug_zstate_probe`: the game never sets
+ZFUNC; only a small depth-only pass), occlusion queries (the only `CreateQuery` is the per-frame
+GPU sync).
+
+Cause: the engine's per-object occluder box pass. `OcclusionBox_EmitPrimRecord` (0x0046edf0)
+emits an `OcclusionMaterial` / `PgOcclusionVP` unit-box record per flagged object (flag
+`(obj+0x12>>2)&1`, plus a list at ctx+0x1430), called from `ViewObjects_DrawAndEmitOcclusionBoxes`
+(0x00468ea0) at 0x00468eed and 0x00468f12. What the boxes do (output-less draws; likely a
+stencil/depth visibility test) is still not understood, and why the replayed second eye pass
+breaks it is not known. NOPing both calls (`skip_occluder_boxes=on`, default) removes the
+smearing completely. Open: whether skipping changes anything else (shadows/LOD/effects).
+
+The `debug_terrain_cull_probe` and `debug_zstate_probe` diagnostics that ruled out the terrain
+frustum and a Z pre-pass were removed after the fix (git history has them; the terrain-pass facts
+are in the Ghidra plates on `Terrain_BuildFrustumPlaneSet` / `Terrain_QuadtreeWalk`). The box skip
+lives in `occluder_boxes.{cpp,hpp}`.
