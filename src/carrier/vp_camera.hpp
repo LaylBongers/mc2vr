@@ -6,7 +6,7 @@
 
 #include "vec_math.hpp"
 
-namespace mc2vr::vpcam {
+namespace mc2vr::vp_camera {
 
 using math::Quat;
 using math::Vec3;
@@ -41,4 +41,4 @@ Camera apply_eye(const Camera &game, const EyePose &eye, float units_per_metre);
 // Largest relative |rebuild(decompose(rows)) − rows| entry (identity self-check).
 float rebuild_residual(const float *rows, const Camera &decomposed);
 
-} // namespace mc2vr::vpcam
+} // namespace mc2vr::vp_camera

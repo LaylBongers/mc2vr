@@ -228,7 +228,7 @@ void probe_step(float *e)
     const Vec3 n2 = to_world(math::rotate(q, {0, 0, 1}));
     if (now - g_probe_last_log >= 200) {
         g_probe_last_log = now;
-        vpcam::Camera cam;
+        vp_camera::Camera cam;
         char dec[192];
         int m = 0;
         if (view_rewrite::get_game_camera(&cam)) {
@@ -262,7 +262,7 @@ void probe_step(float *e)
 
 void try_measure_frame(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2)
 {
-    vpcam::Camera cam;
+    vp_camera::Camera cam;
     if (!view_rewrite::get_game_camera(&cam)) {
         return;  // no decomposed upload yet — keep waiting
     }

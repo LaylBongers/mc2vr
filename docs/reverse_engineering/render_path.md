@@ -148,7 +148,7 @@ CameraTable_FillFromPose / ViewContext_BuildCameraConstants.
   (world-side application of the INVERSE). To apply a desired aim-following LOCAL rotation
   L, write the closed form `E' = S_r·L⁻¹·S_r·E` (S_r = diag(measured row signs) =
   diag(−1,1,1) in this build; composite quat `(qx,−qy,+qz,qw)` for `L = (−qx,−qy,+qz,qw)`).
-- **Consequence for consumers of decomposed VP rows** (e.g. the carrier's `vpcam::decompose`,
+- **Consequence for consumers of decomposed VP rows** (e.g. the carrier's `vp_camera::decompose`,
   identity-verified on real rows): its basis is consistent with the rows above only up to the
   projection-coefficient signs — near-identity cameras make every wrong row/column/handness
   reading locally consistent. Validate sign-sensitive consumers against a YAWED camera or

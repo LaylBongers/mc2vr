@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace mc2vr::vpcam {
+namespace mc2vr::vp_camera {
 
 using namespace math;
 
@@ -100,4 +100,4 @@ float rebuild_residual(const float *rows, const Camera &decomposed)
     return worst;
 }
 
-} // namespace mc2vr::vpcam
+} // namespace mc2vr::vp_camera

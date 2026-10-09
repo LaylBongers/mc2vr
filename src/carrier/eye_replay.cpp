@@ -16,7 +16,7 @@
 #include "device.hpp"
 #include "eye_share.hpp"
 
-namespace mc2vr::eye {
+namespace mc2vr::eye_replay {
 
 namespace {
 
@@ -561,7 +561,7 @@ void set_pass(uint32_t pass)
 
     // S4-5 HUD timing: boundary sample point (pass = the NEW pass; 1 =
     // pass-1 start, 2 = pass 1 done, 0 = pass 2 done). Main thread.
-    hud::on_boundary(pass);
+    hud_timing::on_boundary(pass);
 
     // Dump window opens on a frame boundary (0 -> 1) so left/right dumps of
     // one frame land as a pair (left at 1->2, right at 2->0).
@@ -587,7 +587,7 @@ void set_pass(uint32_t pass)
     // RIGHT final at 2->0 (the pin restore below would overwrite it — capture
     // runs first). The 0->1 boundary carries no fresh eye (backbuffer still
     // holds the previous frame's presented RIGHT) — the callee ignores it.
-    mc2vr::share::on_pass_boundary(pass, g_device, backbuffer());
+    mc2vr::eye_share::on_pass_boundary(pass, g_device, backbuffer());
 
     // Pass boundaries: pass 1 -> 2 = pass 1 finished (dump left = main RT);
     // pass 2 -> 0 = pass 2 finished (dump right = eye RT). A pair counts
@@ -640,13 +640,13 @@ void on_reset()
     }
     g_main_rt = nullptr;
     g_main_desc = {};
-    mc2vr::share::on_reset();
+    mc2vr::eye_share::on_reset();
     MC2VR_LOG("eye: Reset — eye/snapshot RT dropped, main RT recording cleared");
 }
 
 void report_window()
 {
-    mc2vr::share::report_window();
+    mc2vr::eye_share::report_window();
     if (g_redirects > 0 || g_blit_redirects > 0 || g_pin_saves > 0 ||
         g_pin_restores > 0 || g_bb_rt_sets > 0 || g_update_redirects > 0 ||
         g_update_texture_calls > 0 || g_dump_failures > 0 || g_dumps_written > 0 ||
@@ -732,4 +732,4 @@ void set_dump_delay(float seconds)
     MC2VR_LOG("eye: debug_dump_delay=%.1fs (shared with stream dumps)", (double)seconds);
 }
 
-} // namespace mc2vr::eye
+} // namespace mc2vr::eye_replay

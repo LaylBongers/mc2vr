@@ -313,7 +313,7 @@ void report_window()
     cull_frustum::report_window();
     trace::report_window();
     s2c::report_window();
-    eye::report_window();
+    eye_replay::report_window();
     watch::report_window();
 }
 

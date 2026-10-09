@@ -35,7 +35,7 @@
 
 #include <cstdint>
 
-namespace mc2vr::eye {
+namespace mc2vr::eye_replay {
 
 // mc2vr.conf eye_pass=off|on (default off — hold-timer A/B stays in charge).
 bool set_pass_enabled(const char *value);
@@ -89,4 +89,4 @@ void on_reset();
 // 10s window report (render_dump.cpp poller); resets counters.
 void report_window();
 
-} // namespace mc2vr::eye
+} // namespace mc2vr::eye_replay

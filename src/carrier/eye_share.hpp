@@ -22,7 +22,7 @@
 
 #include <cstdint>
 
-namespace mc2vr::share {
+namespace mc2vr::eye_share {
 
 // mc2vr.conf eye_share=off|on (default off — monitor stereo path unchanged).
 bool set_enabled(const char *value);
@@ -37,7 +37,7 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *backbuffer);
 // be recreated; the ring re-creates lazily on the next boundary).
 void on_reset();
 
-// 10s window report (called from eye::report_window); resets counters.
+// 10s window report (called from eye_replay::report_window); resets counters.
 void report_window();
 
-} // namespace mc2vr::share
+} // namespace mc2vr::eye_share

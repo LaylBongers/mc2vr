@@ -233,7 +233,7 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
     }
 
     // S4-5 HUD timing: Present is a per-frame phase sample point.
-    hud::on_present();
+    hud_timing::on_present();
 
     // 10s call-pattern report — the runtime pinning evidence: Present /
     // EndScene / BeginScene counts must track the FrameTick frame count 1:1.
@@ -302,7 +302,7 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
                   (unsigned long long)g_reset.total, (unsigned long long)hooks::frame_count());
     }
 
-    eye::on_reset(); // surfaces are lost; drop the eye RT + main-RT recording
+    eye_replay::on_reset(); // surfaces are lost; drop the eye RT + main-RT recording
 
     // S4-5 pacing: a Reset carries NEW present params (resolution etc.) —
     // re-apply the vsync unlock so the interval survives device-reset paths.
@@ -331,7 +331,7 @@ HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
 {
     g_stretch_calls++;
     bool skip = false;
-    src = eye::on_stretch_src(src, dst, &skip);
+    src = eye_replay::on_stretch_src(src, dst, &skip);
     if (skip) {
         return S_OK;
     }
@@ -346,7 +346,7 @@ HRESULT __stdcall updatesurface_hook(void *self, void *src, void *dst,
                                      const RECT *src_rect, const POINT *dst_pt)
 {
     bool skip = false;
-    src = eye::on_update_surface_src(src, dst, &skip);
+    src = eye_replay::on_update_surface_src(src, dst, &skip);
     if (skip) {
         return S_OK;
     }
@@ -358,7 +358,7 @@ HRESULT __stdcall updatesurface_hook(void *self, void *src, void *dst,
 // activity so the next audit knows whether this path exists at all.
 HRESULT __stdcall updatetexture_hook(void *self, void *src, void *dst)
 {
-    eye::on_update_texture(src, dst);
+    eye_replay::on_update_texture(src, dst);
     return g_updatetexture_hook->stdcall<HRESULT>(self, src, dst);
 }
 
@@ -366,7 +366,7 @@ HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
 {
     // S2c-2: pass-2 slot-0 sets of the main RT go to the eye RT (device-level
     // substitution only — the game's caller-side RT cache is untouched).
-    void *target = eye::on_set_render_target(self, index, surface);
+    void *target = eye_replay::on_set_render_target(self, index, surface);
     const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, target);
     if (index == 0) {
         UINT w = 0, h = 0;

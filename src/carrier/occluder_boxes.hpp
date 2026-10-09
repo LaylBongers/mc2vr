@@ -5,9 +5,15 @@
 // (0x00468ea0) at 0x00468eed and 0x00468f12 (`call rel32`, no stack args).
 // LIVE-VERIFIED 2026-10-09: with the boxes emitted, the two-pass VR render
 // leaves undrawn regions (stale colour — the game never clears it) at fixed
-// world seams; NOPing both calls removes the smearing completely. What the
-// boxes feed is not understood (output-less draws; docs/frustum_cull_plan.md
-// "VR smearing: occluder boxes").
+// world seams; NOPing both calls removes the smearing completely.
+//
+// The boxes are HARDWARE OCCLUSION QUERY bounding boxes (static RE 2026-10-09):
+// each flagged object issues a box draw with a query ring id; next frames
+// ObjectOcclusionQueries_PollAndMarkVisible (0x00468c10) polls the oldest
+// query (IDirect3DQuery9::GetData) and the object is drawn only while it was
+// seen within the last 3 frames. An object with no query id counts as visible,
+// so skipping the boxes simply disables occlusion culling (costs draw calls
+// only). See docs/frustum_cull_plan.md "VR smearing: occluder boxes".
 #pragma once
 
 namespace mc2vr::occluder_boxes {

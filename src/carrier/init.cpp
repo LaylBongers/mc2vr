@@ -170,24 +170,24 @@ static void load_conf()
             }
         } else if (strcmp(key, "eye_pass") == 0) {
             // S2c-2: deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
-            if (!eye::set_pass_enabled(value)) {
+            if (!eye_replay::set_pass_enabled(value)) {
                 MC2VR_LOG("conf: eye_pass=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_rt") == 0) {
             // S2c-2: pass-2 SetRenderTarget(0)/StretchRect redirect to an eye RT.
-            if (!eye::set_rt_enabled(value)) {
+            if (!eye_replay::set_rt_enabled(value)) {
                 MC2VR_LOG("conf: eye_rt=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_monitor_pin") == 0) {
             // S2c-2: skip the pass-2 EndSubmit RT->backbuffer copy so the
             // monitor holds pass 1's LEFT image (S4 steady state).
-            if (!eye::set_pin_enabled(value)) {
+            if (!eye_replay::set_pin_enabled(value)) {
                 MC2VR_LOG("conf: eye_monitor_pin=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_share") == 0) {
             // S4-2: pass-boundary backbuffer capture into shared-handle RTs +
             // FRAME_READY publish to the OpenXR host.
-            if (!share::set_enabled(value)) {
+            if (!eye_share::set_enabled(value)) {
                 MC2VR_LOG("conf: eye_share=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "vsync") == 0) {
@@ -200,7 +200,7 @@ static void load_conf()
         } else if (strcmp(key, "debug_eye_dump_frames") == 0) {
             uint32_t n;
             if (parse_count(key, value, &n)) {
-                eye::set_dump_frames(n);
+                eye_replay::set_dump_frames(n);
             }
         } else if (strcmp(key, "frame_replay") == 0) {
             // S2c-1: second draw pass — re-invoke PgPrimitive_SubmitToGPU after
@@ -217,7 +217,7 @@ static void load_conf()
             double d;
             if (parse_double(key, value, &d) && d >= 0.0) {
                 s2c::set_dump_delay((float)d);
-                eye::set_dump_delay((float)d);
+                eye_replay::set_dump_delay((float)d);
             }
         } else if (strcmp(key, "view_world_scale") == 0) {
             // Game world units per metre for the HMD camera (default 1.0).

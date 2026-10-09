@@ -51,11 +51,11 @@ double g_replay_ms_max = 0.0;
 // Original first, side effects after (same discipline as FrameTick).
 void submit_togpu_hook()
 {
-    eye::set_pass(1); // pass 1 = LEFT eye (override applies only if eye_pass=on)
+    eye_replay::set_pass(1); // pass 1 = LEFT eye (override applies only if eye_pass=on)
     g_submit_hook.call<void>();
 
     if (!g_replay_enabled) {
-        eye::set_pass(0);
+        eye_replay::set_pass(0);
         return;
     }
 
@@ -63,7 +63,7 @@ void submit_togpu_hook()
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);
 
-    eye::set_pass(2); // pass 2 = RIGHT eye
+    eye_replay::set_pass(2); // pass 2 = RIGHT eye
     g_submit_hook.call<void>();
 
     QueryPerformanceCounter(&t1);
@@ -74,7 +74,7 @@ void submit_togpu_hook()
     if (ms > g_replay_ms_max) {
         g_replay_ms_max = ms;
     }
-    eye::set_pass(0); // pass 2 = RIGHT eye (set below), back to none after
+    eye_replay::set_pass(0); // pass 2 = RIGHT eye (set below), back to none after
     (void)0;
 }
 

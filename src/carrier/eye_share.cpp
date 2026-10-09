@@ -12,7 +12,7 @@
 #include "log.hpp"
 #include "view_rewrite.hpp"
 
-namespace mc2vr::share {
+namespace mc2vr::eye_share {
 
 namespace {
 
@@ -298,4 +298,4 @@ bool set_enabled(const char *value)
     return true;
 }
 
-} // namespace mc2vr::share
+} // namespace mc2vr::eye_share

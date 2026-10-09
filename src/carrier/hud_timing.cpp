@@ -5,7 +5,7 @@
 #include "game_addresses.h"
 #include "log.hpp"
 
-namespace mc2vr::hud {
+namespace mc2vr::hud_timing {
 
 namespace {
 
@@ -113,4 +113,4 @@ void on_boundary(uint32_t pass)
     sample(false, pass);
 }
 
-}  // namespace mc2vr::hud
+}  // namespace mc2vr::hud_timing

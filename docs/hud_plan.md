@@ -1,6 +1,11 @@
 # HUD Depth Plan — fix the HUD/crosshair rendering in stereo
 
-**Status: OPEN (opened 2026-10-07).** Spawned from the world-scale/IPD verification
+**Status: OPEN, LOW PRIORITY (opened 2026-10-07).** NOTE 2026-10-09: the near-field focus
+discomfort this plan was spawned from turned out to be an eye-offset frame bug and a wrong-side
+eye flip in `hmd_delta`, both fixed (see `stereo_design.md` S4-4 follow-ups); the HUD is only a
+minor remaining defect. The analysis below stands, the "root-caused to the HUD" claim does not.
+
+**(original status)** Spawned from the world-scale/IPD verification
 track (closed same day): world scale s = 1.0 and the per-eye stereo pipeline are
 verified end-to-end, and the near-field focus discomfort was root-caused to the HUD.
 This plan is the fix track. Evidence numbers below are from the 2026-10-07 eye-dump

@@ -206,7 +206,7 @@ RewriteMode parse_rewrite_mode(const char *value, bool *ok)
 struct HmdSnapshot {
     bool valid = false;
     uint32_t id = 0;  // pose id (hostFrame+1) the carrier tags frames with
-    vpcam::EyePose eye[2];
+    vp_camera::EyePose eye[2];
 };
 HmdSnapshot g_hmd;
 ULONGLONG g_hmd_ms = 0;  // last successful pass-1 pose sample
@@ -219,7 +219,7 @@ bool g_pw_valid = false;
 
 // E2 probe input: the RAW (pre-rewrite) game camera from the latest
 // main-pass upload (see get_game_camera in the header).
-vpcam::Camera g_game_cam;
+vp_camera::Camera g_game_cam;
 uint64_t g_game_cam_ms = 0;
 
 uint64_t g_hmd_blocks = 0, g_hmd_split = 0, g_hmd_decomp_fail = 0, g_hmd_cam_only = 0;
@@ -229,7 +229,7 @@ uint64_t g_delta_no_union = 0;  // hmd_delta uploads skipped: no table union thi
 uint32_t g_delta_warn_logged = 0;
 
 // Host-published eye (IPC layout) -> pure-math eye.
-vpcam::EyePose to_eye_pose(const Mc2IpcEyePose &e)
+vp_camera::EyePose to_eye_pose(const Mc2IpcEyePose &e)
 {
     return {{e.pos.x, e.pos.y, e.pos.z},
             {e.rot.x, e.rot.y, e.rot.z, e.rot.w},
@@ -289,8 +289,8 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         return data;
     }
     const float *raw = data + (base - start_register) * 4;
-    vpcam::Camera game, cam;
-    if (!vpcam::decompose(raw, &game)) {
+    vp_camera::Camera game, cam;
+    if (!vp_camera::decompose(raw, &game)) {
         g_hmd_decomp_fail++;
         if (g_hmd_fail_logged++ < 8) {
             MC2VR_LOG("view/hmd: decompose FAILED c%u: |r3.xyz|=%.4f r0.w=%.3f "
@@ -308,7 +308,7 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
     g_game_cam_ms = GetTickCount64();
     if (identity) {
         cam = game;
-        g_hmd_resid_max = std::fmax(g_hmd_resid_max, vpcam::rebuild_residual(raw, game));
+        g_hmd_resid_max = std::fmax(g_hmd_resid_max, vp_camera::rebuild_residual(raw, game));
     } else if (!g_hmd.valid || g_pass_eye == 0) {
         // No pose for this frame/pass — pass the RAW rows through untouched.
         return data;
@@ -327,8 +327,8 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
             }
             return data;
         }
-        const vpcam::EyePose &pose = g_hmd.eye[eye];
-        vpcam::EyePose delta;
+        const vp_camera::EyePose &pose = g_hmd.eye[eye];
+        vp_camera::EyePose delta;
         // apply_eye maps the delta through the game camera's R/U/F, which
         // already carry the union (head) rotation — so the delta must be
         // expressed in the HEAD frame, not XR local space. Otherwise the eye
@@ -347,11 +347,11 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         // flip. (An earlier R-negation put each eye on the wrong side:
         // pseudoscopic parallax, invisible at distance but uncomfortable for
         // near objects. Live-verified fixed 2026-10-09.)
-        cam = vpcam::apply_eye(game, delta, g_world_scale);
+        cam = vp_camera::apply_eye(game, delta, g_world_scale);
     } else {
         return data;  // unreachable: Off/On/Pulse/Stereo never reach hmd_rewrite
     }
-    vpcam::rebuild(cam, scratch + (base - start_register) * 4);
+    vp_camera::rebuild(cam, scratch + (base - start_register) * 4);
     if (camrow) {
         math::store3(camrow, cam.C);
     }
@@ -517,7 +517,7 @@ uint32_t current_pose_id()
     return g_hmd.valid && g_mode == RewriteMode::HmdDelta ? g_hmd.id : 0;
 }
 
-bool get_game_camera(vpcam::Camera *out)
+bool get_game_camera(vp_camera::Camera *out)
 {
     if (g_game_cam_ms == 0 || GetTickCount64() - g_game_cam_ms > 1000) {
         return false;

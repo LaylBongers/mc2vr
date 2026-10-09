@@ -11,14 +11,14 @@
 
 #include <cstdint>
 
-namespace mc2vr::hud {
+namespace mc2vr::hud_timing {
 
 // From device::present_hook — every Present (pass-1 and pass-2 BeginSubmit
 // with the second draw pass; 1/frame in mono mode).
 void on_present();
 
-// From eye::set_pass — `pass` is the NEW pass value at a boundary transition
+// From eye_replay::set_pass — `pass` is the NEW pass value at a boundary transition
 // (1 = pass-1 start, 2 = pass 1 done, 0 = pass 2 done).
 void on_boundary(uint32_t pass);
 
-}  // namespace mc2vr::hud
+}  // namespace mc2vr::hud_timing

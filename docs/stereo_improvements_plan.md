@@ -175,6 +175,16 @@ Per-address facts live on the Ghidra plates (`g_CameraTable`, `CameraTable_FillF
    (the I4 "stays hard" texgen/matViewMat derivations — if they read the table, the union
    injection already fixed them).
 
+### Pose-hold + poseMiss oracle (2026-10-09)
+
+`camera_table::sample_pose` and `view_rewrite::set_pass_eye` now hold the last good HMD pose for
+250 ms when a sample fails (instead of dropping that frame to the game's head-less mono camera,
+which also culls from the wrong view). The `camtable: window` line ends with
+`poseMiss read=… untracked=… insane=… held=…`: why samples failed (seqlock read gave up / host
+reports untracked / eye failed sanity) and how many misses the hold bridged. A run showed ~17-20%
+of fills with `noPose` before the hold; the cause of those misses was never separated (smearing
+turned out to be unrelated — see `frustum_cull_plan.md` § VR smearing).
+
 ### Phase oracles (reading a run's log — learned 2026-10-06)
 
 - `view: record` census: menu = idx 2/3 (immediate after attach), load-in = idx 9/10 (~+13 s),

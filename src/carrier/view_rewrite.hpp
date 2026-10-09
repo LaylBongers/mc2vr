@@ -61,7 +61,7 @@ uint32_t current_pose_id();
 // viewContextData/ViewProj upload (hmd_delta/hmd_identity modes, main pass
 // only). Input for the camtable row-sign calibration and the transfer probe;
 // valid for ~1s after the last main-pass upload.
-bool get_game_camera(vpcam::Camera *out);
+bool get_game_camera(vp_camera::Camera *out);
 
 // S2c-2 per-pass eye override (eye_replay.cpp): pass 1 = -1, pass 2 = +1,
 // 0 = none. hmd_delta requires it (per-pass eye); the pass-1 transition

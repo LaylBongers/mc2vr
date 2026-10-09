@@ -100,7 +100,7 @@ space (the VS passes world position to the PS), so they are eye-invariant.
 > live-verified (docs/stereo_improvements_plan.md). This section stays as the
 > S2 record: the row-shift math, the pass gate and the register-map MidHook are
 > still the machinery `hmd_delta` runs on; only the pan/hold/asym modes are
-> gone. The rewrite above now happens via `vpcam::decompose` + `apply_eye` on
+> gone. The rewrite above now happens via `vp_camera::decompose` + `apply_eye` on
 > the same register map.
 
 ## Architecture
@@ -326,10 +326,13 @@ model was wrong).
 0.065 IPD was never checked)~~ — **CLOSED 2026-10-07**: units are METRES (Havok world gravity
 9.8–9.81 game units/s² — evidence in `reverse_engineering/pandemic_engine.md` § World units)
 and the per-eye pipeline is IPD-correct end-to-end (live eye-dump pair verification).
-**The near-field focus discomfort is root-caused to the HUD/crosshair: composited into the
-backbuffer, it ignores the per-eye asymmetric-frustum centers and acquires ~0.47 tangent units
-of CROSSED disparity — it visually floats ~14 cm in front of the user. Fix track:
-`docs/hud_plan.md`.** Engine culling vs the game camera frustum —
+**CORRECTION 2026-10-09: the near-field focus discomfort was NOT the HUD** (the HUD is barely
+visible and the discomfort persisted). Root causes, both in `hmd_delta` (`view_rewrite.cpp`) and
+live-verified fixed: (1) the per-eye offset was expressed in XR-local space but applied along the
+head-rotated camera axes — it is now rotated into the head frame (`conj(union rot)`); (2) a
+legacy `R = -R` flip put each eye on the wrong side (pseudoscopic parallax: invisible at
+distance, uncomfortable inside ~2 m) — removed. The HUD crossed-disparity analysis in
+`docs/hud_plan.md` is still a real (minor) defect, now low priority. Engine culling vs the game camera frustum —
 **RESOLVED as a track (2026-10-06)**: the culling-input chain is fully RE'd (plaintext, change-gated,
 culminating in `ViewEntry_DeriveCullTask` `0x00876a90`); design in `frustum_cull_plan.md` (§S6);
 non-`viewContextData` shaders, PS-side camera data and texgen stay mono/lag with rotation (improvement

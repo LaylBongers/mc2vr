@@ -7,7 +7,7 @@
 #include "vp_camera.hpp"
 
 using namespace mc2vr::math;
-using namespace mc2vr::vpcam;
+using namespace mc2vr::vp_camera;
 
 static int g_fail = 0;
 #define CHECK(cond, ...)                                  \

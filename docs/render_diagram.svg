@@ -77,7 +77,7 @@
 <text x="700.0" y="892" text-anchor="start" font-size="10" font-weight="normal" fill="#5b6b8a" font-style="italic">regs + record</text>
 <rect x="358" y="898" width="664" height="96" rx="8" fill="#ffe3ec" stroke="#d6336c" stroke-width="3"/>
 <text x="372" y="918" text-anchor="start" font-size="13" font-weight="bold" fill="#1c2433">② PER-EYE DELTA — Dx9_SetVertexShaderConstantF → device slot 94</text>
-<text x="372" y="936" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">view_row_rewrite=hmd_delta: vpcam::decompose the VP → per-eye OpenXR FOV projection</text>
+<text x="372" y="936" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">view_row_rewrite=hmd_delta: vp_camera::decompose the VP → per-eye OpenXR FOV projection</text>
 <text x="372" y="952" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">+ per-eye position/rotation delta relative to the same-frame union (camtable::get_union)</text>
 <text x="372" y="968" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">rows: w −= dot(row.xyz, D) · camPos: xyz += D · applied on a scratch copy, game buffer untouched</text>
 <text x="372" y="984" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">main pass only (RT0 == backbuffer size) · shadow / reflection / offscreen passes skipped</text>
