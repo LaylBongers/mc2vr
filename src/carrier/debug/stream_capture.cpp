@@ -32,14 +32,14 @@ constexpr uint32_t WALK_DWORD_CAP = 32 * 1024;
 // Per-frame copy arena. Reset at each frame boundary; holds the raw dwords of
 // every stream of one frame (observed order of magnitude: tens of KB).
 constexpr uint32_t ARENA_DWORDS = 256 * 1024; // 1 MB
-constexpr uint32_t STREAMS_PER_FRAME_MAX = 1024; // x2 for S2c-1 replay passes
+constexpr uint32_t STREAMS_PER_FRAME_MAX = 1024; // x2 for replay passes
 constexpr uint32_t SAMPLES_PER_OP = 2;
 
 bool g_enabled = false;
 uint32_t g_dump_frames = 0;
 float g_dump_delay_s = 15.0f;
 
-// ---- S2c-1 frame replay ----------------------------------------------------
+// ---- frame replay ----------------------------------------------------
 
 bool g_replay_enabled = false;
 SafetyHookInline g_submit_hook;   // InlineHook on PgPrimitive_SubmitToGPU
@@ -182,7 +182,7 @@ void log_sample(uint32_t op, const uint32_t *c, const uint32_t *base)
         break;
     }
 
-    MC2VR_LOG("S2c census op=%02u %-44s stream=%p:{%s }%s", op,
+    MC2VR_LOG("stream census op=%02u %-44s stream=%p:{%s }%s", op,
               OP_NAME[op < OP_COUNT ? op : 0], (const void *)base, raw, note);
 }
 
@@ -200,7 +200,7 @@ bool dump_armed()
     }
     if (first.QuadPart == 0) {
         QueryPerformanceCounter(&first);
-        MC2VR_LOG("S2c: stream capture started; dump window arms in %.1fs "
+        MC2VR_LOG("stream: capture started; dump window arms in %.1fs "
                   "(debug_dump_delay)", (double)g_dump_delay_s);
     }
     LARGE_INTEGER now;
@@ -218,7 +218,7 @@ void write_dump(uint64_t frame)
                                 GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                             (LPCWSTR)&write_dump, &self) ||
         GetModuleFileNameW(self, dir, MAX_PATH) == 0) {
-        MC2VR_LOG("S2c: dump skipped — cannot locate deploy dir");
+        MC2VR_LOG("stream: dump skipped — cannot locate deploy dir");
         return;
     }
     wchar_t *slash = wcsrchr(dir, L'\\');
@@ -233,11 +233,11 @@ void write_dump(uint64_t frame)
 
     FILE *f = _wfopen(path, L"wb");
     if (!f) {
-        MC2VR_LOG("S2c: dump FAILED to open %ls", path);
+        MC2VR_LOG("stream: dump FAILED to open %ls", path);
         return;
     }
 
-    fprintf(f, "# mc2vr S2c-0 stream dump, frame %llu\n", (unsigned long long)frame);
+    fprintf(f, "# mc2vr stream dump, frame %llu\n", (unsigned long long)frame);
     fprintf(f, "# dwords are little-endian u32; opcode size table:\n");
     fprintf(f, "# op: 1,3,4,4,3,3,3,3,7,3,1,1,1,2,2,3,5,5,3,2,3,2,3,4,2,1,1 (dwords)\n");
     fprintf(f, "# arg2/arg3 = ExecuteStream stack args 2/3 (technique ctx used by op 8)\n");
@@ -265,7 +265,7 @@ void write_dump(uint64_t frame)
     }
     fclose(f);
     g_w_dump_files++;
-    MC2VR_LOG("S2c: dumped frame %llu -> %ls (%u streams, %u dwords)",
+    MC2VR_LOG("stream: dumped frame %llu -> %ls (%u streams, %u dwords)",
               (unsigned long long)frame, path, g_rec_n, g_arena_used);
 }
 
@@ -297,14 +297,14 @@ void finalize_frame(uint64_t frame)
     if (!window_done && dump_remaining == 0 && dump_armed()) {
         dump_remaining = g_dump_frames;
         window_done = true;
-        MC2VR_LOG("S2c: dump window open — dumping the next %u frames",
+        MC2VR_LOG("stream: dump window open — dumping the next %u frames",
                   g_dump_frames);
     }
     if (dump_remaining > 0) {
         write_dump(frame);
         dump_remaining--;
         if (dump_remaining == 0) {
-            MC2VR_LOG("S2c: dump window closed");
+            MC2VR_LOG("stream: dump window closed");
         }
     }
 }
@@ -383,7 +383,7 @@ void on_opcode(uint32_t esp, uint32_t ebp, uint32_t eax)
 
     if (runaway) {
         g_w_runaway++;
-        MC2VR_LOG("S2c: RUNAWAY walk stopped at stream %p (cmd %u, dword %u) — "
+        MC2VR_LOG("stream: RUNAWAY walk stopped at stream %p (cmd %u, dword %u) — "
                   "size-table bug or missing terminator (execution unaffected)",
                   (const void *)stream, cmds, dwords);
     }
@@ -402,7 +402,7 @@ void report_window()
 {
     // Replay stats report even without stream_capture (independent feature).
     if (g_replays > 0) {
-        MC2VR_LOG("S2c replay: extraPasses=%llu avgMs=%.2f maxMs=%.2f",
+        MC2VR_LOG("stream replay: extraPasses=%llu avgMs=%.2f maxMs=%.2f",
                   (unsigned long long)g_replays,
                   g_replays ? g_replay_ms_sum / (double)g_replays : 0.0,
                   g_replay_ms_max);
@@ -416,7 +416,7 @@ void report_window()
     }
 
     const int64_t delta = (int64_t)g_w_hook_cmds - (int64_t)g_w_walk_cmds;
-    MC2VR_LOG("S2c window: streams=%llu framesWithStreams=%llu streams/frame=%u..%u "
+    MC2VR_LOG("stream window: streams=%llu framesWithStreams=%llu streams/frame=%u..%u "
               "cmds walk=%llu hook=%llu (delta=%lld — zero is healthy; nonzero = "
               "size-table bug or mid-frame stream mutation) "
               "dwords=%llu trunc=%llu runaway=%llu dumps=%llu",
@@ -436,7 +436,7 @@ void report_window()
         }
     }
     hist[n] = '\0';
-    MC2VR_LOG("S2c walk ops:%s", n ? hist : " (none — no streams in window)");
+    MC2VR_LOG("stream walk ops:%s", n ? hist : " (none — no streams in window)");
 
     g_w_streams = 0;
     g_w_walk_cmds = 0;
@@ -460,7 +460,7 @@ bool set_enabled(const char *value)
     } else {
         return false;
     }
-    MC2VR_LOG("S2c: debug_stream_capture=%s (census %s)", value,
+    MC2VR_LOG("stream: debug_stream_capture=%s (census %s)", value,
               g_enabled ? "armed" : "idle");
     return true;
 }
@@ -468,13 +468,13 @@ bool set_enabled(const char *value)
 void set_dump_frames(uint32_t n)
 {
     g_dump_frames = n;
-    MC2VR_LOG("S2c: debug_stream_dump_frames=%u", n);
+    MC2VR_LOG("stream: debug_stream_dump_frames=%u", n);
 }
 
 void set_dump_delay(float seconds)
 {
     g_dump_delay_s = seconds;
-    MC2VR_LOG("S2c: debug_dump_delay=%.1fs", (double)seconds);
+    MC2VR_LOG("stream: debug_dump_delay=%.1fs", (double)seconds);
 }
 
 bool set_replay_enabled(const char *value)
@@ -486,7 +486,7 @@ bool set_replay_enabled(const char *value)
     } else {
         return false;
     }
-    MC2VR_LOG("S2c: frame_replay=%s (S2c-1 second draw pass, same eye/RTs)",
+    MC2VR_LOG("stream: frame_replay=%s (second draw pass, same eye/RTs)",
               g_replay_enabled ? "on" : "off");
     return true;
 }
@@ -501,14 +501,14 @@ void install()
         reinterpret_cast<uint8_t *>(MC2_PGPRIMITIVE_SUBMITTOGPU),
         reinterpret_cast<uint8_t *>(&submit_togpu_hook));
     if (!result) {
-        MC2VR_LOG("S2c: warning — SubmitToGPU InlineHook failed @ %p (error %u) "
+        MC2VR_LOG("stream: warning — SubmitToGPU InlineHook failed @ %p (error %u) "
                   "— frame replay disabled, capture unaffected",
                   (void *)MC2_PGPRIMITIVE_SUBMITTOGPU,
                   (unsigned)result.error().type);
         return;
     }
     g_submit_hook = std::move(*result);
-    MC2VR_LOG("S2c: installed SubmitToGPU InlineHook @ %p (replay %s)",
+    MC2VR_LOG("stream: installed SubmitToGPU InlineHook @ %p (replay %s)",
               (void *)MC2_PGPRIMITIVE_SUBMITTOGPU,
               g_replay_enabled ? "ARMED" : "idle");
 }

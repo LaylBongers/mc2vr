@@ -106,7 +106,7 @@ bool eye_is_sane(const Mc2IpcEyePose &e)
 }
 
 // Read the host pose and cache the UNION (mid-eye) pose for this frame. Same
-// lock-free seqlock read the S4-4 pass-1 sample in view_rewrite.cpp uses; the
+// lock-free seqlock read the pass-1 sample in view_rewrite.cpp uses; the
 // fill loop runs on the main thread, same as every other IPC consumer.
 void sample_pose()
 {

@@ -1,0 +1,5 @@
+# Render threading model (important, easy to get wrong)
+
+- Rendering is NOT threaded. The D3D device is used on the main/window thread only: `RenderSystem_Init` asserts `GetCurrentThreadId() == GetWindowThreadProcessId(hwnd)`, and the window is created on the main thread inside `GameShell_Run`.
+- The priority-boosted thread created during boot (`0x008271b0` → `FUN_00827450`) looks like a render thread (event wait, frame counters, Sleep-based pacing) but is the **streaming-IO worker** (`ReadFile` on package files). Don't hook it for rendering.
+- The render "queue" (`g_RenderQueue` @ `0x00ff3618`, [view_table.md](view_table.md)) is a same-thread deferred command list, not a thread handoff: producers publish packet elements during the frame pipeline; the interpreter (SecuROM-VM'd, entered via the `0x0050f660` stub right after `SubmitWorldPackets` — [frame_chain.md](frame_chain.md)) turns them into draw-records + command streams consumed later in the same frame by `RenderFrame`/`ExecuteStream`. The producer's in-publish spin-wait can never deadlock precisely because consumer and producer are the same thread.

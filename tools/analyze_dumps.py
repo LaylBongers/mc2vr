@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Parse mc2vr_carrier.log M3 ViewDump blocks and analyze ViewEntry field usage.
+# Parse mc2vr_carrier.log ViewDump blocks and analyze ViewEntry field usage.
 # Usage: analyze_dumps.py [path/to/mc2vr_carrier.log] [stream_dump_file_or_dir]
 #
 # Produces:
@@ -8,15 +8,15 @@
 #   - nonzero-dword field map per dump (with float interpretation)
 #   - varying-across-dumps region analysis (constant vs per-view fields)
 #
-# S2c-0 stream-dump support (src/carrier/debug/stream_capture.cpp): with a second
+# Stream-dump support (src/carrier/debug/stream_capture.cpp): with a second
 # argument (a mc2vr_stream_frame<N>.txt file, or a directory containing them,
 # or omitted to auto-discover next to the log) each stream is decoded with the
 # RE'd RenderCmd_ExecuteStream opcode table and a per-frame census printed
-# (per-opcode counts + payload field stats). "S2c" log lines are echoed.
+# (per-opcode counts + payload field stats). "stream" log lines are echoed.
 #
-# Written during M3 field-map derivation. Entry size and dump line format must stay in sync
-# with src/carrier/debug/render_dump.cpp (dump_bytes: 32 bytes/line, "M3 entry
-# +0xOFF: hex", "M3 obj +0xOFF: hex").
+# Written during the field-map derivation. Entry size and dump line format must stay in sync
+# with src/carrier/debug/render_dump.cpp (dump_bytes: 32 bytes/line, "entry
+# +0xOFF: hex", "obj +0xOFF: hex").
 
 import glob
 import os
@@ -104,7 +104,7 @@ def parse(path):
     dumps, cur = [], None
     for line in open(path, encoding="utf-8", errors="replace"):
         m = re.search(
-            r"M3 ViewDump( \(refresh\))? idx=(\d+) type=(\d+) entry=(\w+) "
+            r"ViewDump( \(refresh\))? idx=(\d+) type=(\d+) entry=(\w+) "
             r"obj=(\w+) t3=(\w+) \((\w[\w-]*)\)",
             line,
         )
@@ -121,12 +121,12 @@ def parse(path):
             }
             dumps.append(cur)
             continue
-        m = re.search(r"M3 entry \+0x([0-9a-f]+): ([0-9a-f]+)", line)
+        m = re.search(r"entry \+0x([0-9a-f]+): ([0-9a-f]+)", line)
         if m and cur:
             off = int(m.group(1), 16)
             cur["data"][off : off + 32] = bytes.fromhex(m.group(2))
             continue
-        m = re.search(r"M3 obj \+0x([0-9a-f]+): ([0-9a-f]+)", line)
+        m = re.search(r"obj \+0x([0-9a-f]+): ([0-9a-f]+)", line)
         if m and cur:
             off = int(m.group(1), 16)
             cur["objdata"][off : off + 32] = bytes.fromhex(m.group(2))
@@ -140,12 +140,12 @@ def words(d, key="data"):
 # ---- view-rewrite log echo ---------------------------------------------------
 
 VIEW_ECHO = re.compile(r"\bview:")
-S2C_ECHO = re.compile(r"\bS2c")
+STREAM_ECHO = re.compile(r"\bstream( census| window| walk| replay|:)")
 
 
 def report_view(path):
-    """Echo the view-rewrite and S2c stream-capture log lines."""
-    sections = [("view rewrite", VIEW_ECHO), ("S2c stream capture", S2C_ECHO)]
+    """Echo the view-rewrite and stream-capture log lines."""
+    sections = [("view rewrite", VIEW_ECHO), ("stream capture", STREAM_ECHO)]
     for title, pat in sections:
         echoes = []
         for line in open(path, encoding="utf-8", errors="replace"):
@@ -159,7 +159,7 @@ def report_view(path):
                 print(f"  ... ({len(echoes) - 80} more echoed lines)")
 
 
-# ---- S2c-2 eye dumps (BMP pairs) --------------------------------------------
+# ---- eye dumps (BMP pairs) --------------------------------------------
 
 
 def load_bmp(path):
@@ -229,7 +229,9 @@ def gray_array(w, h, buf, row):
     """Full-resolution grayscale int32 array from 24-bit BMP BGR rows."""
     import numpy as np
 
-    img = np.frombuffer(buf, dtype=np.uint8).reshape(h, row)[:, : w * 3].astype(np.int32)
+    img = (
+        np.frombuffer(buf, dtype=np.uint8).reshape(h, row)[:, : w * 3].astype(np.int32)
+    )
     b, g, r = img[:, 0::3], img[:, 1::3], img[:, 2::3]
     return (b * 114 + g * 587 + r * 299) // 1000
 
@@ -258,6 +260,7 @@ def shift_sad(left, right, shifts):
 
 def report_eye_dumps(paths):
     import glob as _glob
+
     try:
         import numpy  # noqa: F401 — presence selects the full-res path
     except ImportError:
@@ -269,10 +272,12 @@ def report_eye_dumps(paths):
         m = re.search(r"mc2vr_eye_(left|right)_frame(\d+)\.bmp", p)
         if m:
             by_frame.setdefault(int(m.group(2)), {})[m.group(1)] = p
-    pairs = [(f, d) for f, d in sorted(by_frame.items()) if "left" in d and "right" in d]
+    pairs = [
+        (f, d) for f, d in sorted(by_frame.items()) if "left" in d and "right" in d
+    ]
     if not pairs:
         return
-    print(f"\n################ S2c-2 eye pair analysis ({len(pairs)} pairs) ################")
+    print(f"\n################ eye pair analysis ({len(pairs)} pairs) ################")
     for frame, d in pairs[:5]:
         try:
             lw, lh, lb, lrow = load_bmp(d["left"])
@@ -297,19 +302,25 @@ def report_eye_dumps(paths):
             )
             unit = "px"
         else:
-            sh, sad, sad0 = best_shift(gray_rows(lw, lh, lb, lrow),
-                                      gray_rows(rw, rh, rb, rrow))
+            sh, sad, sad0 = best_shift(
+                gray_rows(lw, lh, lb, lrow), gray_rows(rw, rh, rb, rrow)
+            )
             sh = sh * 4  # downsampled units -> full-res px
             unit = "px (4px grid)"
         verdict = (
-            "PARALLAX PRESENT" if sh != 0 and sad < sad0 * 0.95 else "no measurable parallax"
+            "PARALLAX PRESENT"
+            if sh != 0 and sad < sad0 * 0.95
+            else "no measurable parallax"
         )
-        print(f"  frame {frame}: {lw}x{lh} | best shift {sh:+d}{unit}, "
-              f"SAD {sad:.2f} vs shift0 {sad0:.2f} | {verdict}")
+        print(
+            f"  frame {frame}: {lw}x{lh} | best shift {sh:+d}{unit}, "
+            f"SAD {sad:.2f} vs shift0 {sad0:.2f} | {verdict}"
+        )
 
 
 def discover_eye_dumps(arg):
     import glob as _glob
+
     if arg:
         if os.path.isdir(arg):
             return arg
@@ -317,7 +328,7 @@ def discover_eye_dumps(arg):
     return None
 
 
-# ---- S2c stream dumps ----------------------------------------------------------
+# ---- stream dumps ----------------------------------------------------------
 
 
 def parse_stream_dump(path):

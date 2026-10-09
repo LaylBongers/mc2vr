@@ -2,7 +2,7 @@
 
 GPU-boundary per-eye injection: the frame renders once per eye. During an eye pass the `viewContextData` uploads are rewritten for that eye ([view_rewrite.md](view_rewrite.md)); the eye images go to the [host](host.md) over [shared textures](shared_textures.md).
 
-Premises (proven, do not re-litigate; RE detail: [render_path.md](reverse_engineering/render_path.md), [view_and_camera.md](reverse_engineering/view_and_camera.md)):
+Premises (proven, do not re-litigate; RE detail: [draw_camera_chain.md](reverse_engineering/draw_camera_chain.md), [view_context_records.md](reverse_engineering/view_context_records.md)):
 
 - The draw camera is external to the view system — it only crosses plaintext code as D3D constant uploads, so the GPU boundary (plus the camera table, [camera.md](camera.md)) are the injection points. Producer-side view duplication cannot work (E2: the ViewEntry pose fields are output channels).
 - No fixed-function projection (`SetTransform` is never called); the projection is folded into the `viewContextData` VP rows, so per-eye asymmetric projection is an edit to the same rows.
@@ -28,7 +28,7 @@ Snapshot backbuffer → snapshot RT at 1→2, restore after pass 2 via `device::
 
 ## Known gaps (open, low priority)
 
-- Shaders without `viewContextData` are not rewritten and lag the per-eye camera: explicit `g_ViewProjMtx` (same per-row `w` shift); `LocalToProj` (view folded in per object — needs the view-space eye offset, `clip.x -= P00*e.x`, P00 derivable from cached VP rows); `Mvp`/`TexGen`; rain. Check billboards/rain/particles/quads before implementing (not yet visibly wrong). Shader addresses: [view_and_camera.md](reverse_engineering/view_and_camera.md).
+- Shaders without `viewContextData` are not rewritten and lag the per-eye camera: explicit `g_ViewProjMtx` (same per-row `w` shift); `LocalToProj` (view folded in per object — needs the view-space eye offset, `clip.x -= P00*e.x`, P00 derivable from cached VP rows); `Mvp`/`TexGen`; rain. Check billboards/rain/particles/quads before implementing (not yet visibly wrong). Shader addresses: [shader_ctab_map.md](reverse_engineering/shader_ctab_map.md).
 - PS-side camera data (`cameraPos` c92, texgen matrices) is mono — hook `SetPixelShaderConstantF` (slot 109) if reflections/shadows skew at IPD scale.
 - Deferred (accepted): the second per-frame Present presents identical pinned-LEFT content; with `vsync=off` it is a non-blocking blit — re-evaluate only if compositor pressure is implicated in the staleness issue ([pacing.md](pacing.md)).
 - If per-eye RTs ever can't differ at the D3D level, fall back to a single-backbuffer interop blit.

@@ -40,8 +40,8 @@ const char *session_state_name(uint32_t s)
 // Low-rate monitor: logs session-state transitions (via the seqlock state,
 // which is what covers early boot before the slot-5 claim) + first-pose
 // evidence, and watches the host process. Deliberately NOT on the render
-// thread — the render-thread consumer (S4-4) reads the seqlock directly.
-// S4-5: the event-ring drain moved to ipc::drain_events() (slot-5
+// thread — the render-thread consumer reads the seqlock directly.
+// The event-ring drain moved to ipc::drain_events() (slot-5
 // PostUpdateHook, main thread) — the ring is SPSC, so this thread must NEVER
 // pop events, or the two consumers would tear the ring.
 DWORD WINAPI monitor_thread(void *)
@@ -153,7 +153,7 @@ bool pop_event(Mc2IpcMsg *out)
     return mc2_ring_pop(&g.blk->events, out) == 0;
 }
 
-// ---- S4-5 session events (drained at the slot-5 PostUpdateHook) -------------
+// ---- session events (drained at the slot-5 PostUpdateHook) -------------
 
 void drain_events()
 {

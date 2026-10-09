@@ -1,4 +1,4 @@
-// M3: view-table dump + command histogram (docs/hooks.md hook
+// View-table dump + command histogram (docs/hooks.md hook
 // table). Feeds the stereo submission design. Three instrumentations plus a
 // queue poller:
 //   - MidHook at RenderCmd_ExecuteStream's opcode dispatch -> per-opcode
@@ -8,7 +8,7 @@
 //     (the missing field map).
 //   - VmtHook (cloned vtable) on g_RenderShell claiming slots 4/5 (the NoOp
 //     EndOfFrameHook/PostUpdateHook) — proves both that the slots are called
-//     and that the M4 claim mechanism works. Handlers are new no-ops that
+//     and that the vtable-claim mechanism works. Handlers are new no-ops that
 //     count; the original is VirtHook_NoOp (empty), so no original call is
 //     needed and the convention (thiscall, no stack args) can't mismatch.
 //   - Poller thread sampling the g_RenderQueue producer counters.

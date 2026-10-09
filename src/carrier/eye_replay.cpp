@@ -20,7 +20,7 @@ namespace mc2vr::eye_replay {
 
 namespace {
 
-// Device + surface vtable slots (indices pinned by M2 runtime evidence;
+// Device + surface vtable slots (indices pinned by runtime evidence;
 // see device.cpp — Surface GetDesc = 12).
 constexpr size_t DSLOT_CreateRenderTarget = 28;
 constexpr size_t DSLOT_GetRenderTargetData = 32;
@@ -559,7 +559,7 @@ void set_pass(uint32_t pass)
         return;
     }
 
-    // S4-5 HUD timing: boundary sample point (pass = the NEW pass; 1 =
+    // HUD timing: boundary sample point (pass = the NEW pass; 1 =
     // pass-1 start, 2 = pass 1 done, 0 = pass 2 done). Main thread.
     hud_timing::on_boundary(pass);
 
@@ -583,7 +583,7 @@ void set_pass(uint32_t pass)
         }
     }
 
-    // S4-2: the backbuffer holds the pass-1 LEFT final at 1->2 and the pass-2
+    // The backbuffer holds the pass-1 LEFT final at 1->2 and the pass-2
     // RIGHT final at 2->0 (the pin restore below would overwrite it — capture
     // runs first). The 0->1 boundary carries no fresh eye (backbuffer still
     // holds the previous frame's presented RIGHT) — the callee ignores it.

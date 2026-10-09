@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic S2c-2 eye-dump fixture generator (regression test for the
+"""Synthetic eye-dump fixture generator (regression test for the
 parallax analysis in analyze_dumps.py).
 
 Generates mc2vr_eye_left/right_frame<N>.bmp pairs by mirroring the carrier's

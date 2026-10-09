@@ -1,9 +1,9 @@
-// S4-2 probe consumer (win64, runs in the SAME Proton prefix => D3D11 = DXVK).
+// Shared-handle probe consumer (win64, runs in the SAME Proton prefix => D3D11 = DXVK).
 // Complement of d3d9_producer.cpp: opens the producer's legacy shared handle
 // with ID3D11Device::OpenSharedResource, verifies the pixel pattern, then
 // re-reads after a delay to verify live redraws are observable across the
 // process boundary with only the producer-side event-query ordering (no
-// fence/keyed mutex on legacy handles — docs/stereo.md §S4 risk 2).
+// fence/keyed mutex on legacy handles — docs/shared_textures.md).
 //
 // Success criteria (exit 0): OpenSharedResource succeeds, dims match, RGB
 // pattern exact (alpha ignored), blue counter uniform per read, and the
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
     logf_("consumer: read1 k=%d mismatches=%llu\n", k1, (unsigned long long)mm);
     if (k1 < 0 || mm > 0) { fail("first frame verify"); return 1; }
 
-    // Sustained concurrent-read loop (emulates the live S4-2 host: continuous
+    // Sustained concurrent-read loop (emulates the live host: continuous
     // staging reads while the producer redraws; the original probe read twice
     // and stopped, which left the sustained path untested).
     uint32_t reads = 0, torn = 0;

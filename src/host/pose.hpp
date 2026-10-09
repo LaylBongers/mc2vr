@@ -1,4 +1,4 @@
-// Plain pose types shared by the real and mock paths (the S4-1 IPC block
+// Plain pose types shared by the real and mock paths (the IPC block
 // will carry these).
 #pragma once
 

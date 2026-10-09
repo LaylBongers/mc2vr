@@ -1,6 +1,6 @@
 # View rewrite (the `viewContextData` channel)
 
-Code: `src/carrier/view_rewrite.cpp`. The visible view lives in the VS constant `viewContextData` (layout: VP rows 0..3, optional camPos, optional world-fixed extra row, row-major, `clip_i = dot(VP_row_i, worldpos)`; the count-6 extra row is left alone — RE: [view_and_camera.md](reverse_engineering/view_and_camera.md)).
+Code: `src/carrier/view_rewrite.cpp`. The visible view lives in the VS constant `viewContextData` (layout: VP rows 0..3, optional camPos, optional world-fixed extra row, row-major, `clip_i = dot(VP_row_i, worldpos)`; the count-6 extra row is left alone — RE: [view_context_records.md](reverse_engineering/view_context_records.md)).
 
 ## Register map
 
@@ -12,7 +12,7 @@ Exact registers come from the game's own resolver, not shape matching: a MidHook
 - `hmd_delta` (live mode): per-eye OpenXR-FOV projection + per-eye position/rotation delta relative to the same-frame union pose ([camera.md](camera.md)), applied on main-pass VP uploads via `vp_camera::decompose` + `apply_eye` on the register map.
 - `hmd_identity` (oracle): rebuilds the game's own camera and logs the max residual — the one-shot consistency check; also the calibration input for the camtable row-sign measurement.
 
-Historical S2 verification modes — `on`/`pulse` (row-shift pans), `stereo` (±right·IPD/2 A/B with the right-axis cache, `view_asym` NDC shift, `view_stereo_hold`), `hmd` (full-VP replacement) — were REMOVED 2026-10-07, superseded by the union injection + `hmd_delta` (git history has them). The math below survives as the machinery `hmd_delta` runs on.
+Historical verification modes — `on`/`pulse` (row-shift pans), `stereo` (±right·IPD/2 A/B with the right-axis cache, `view_asym` NDC shift, `view_stereo_hold`), `hmd` (full-VP replacement) — were REMOVED 2026-10-07, superseded by the union injection + `hmd_delta` (git history has them). The math below survives as the machinery `hmd_delta` runs on.
 
 ## Math
 

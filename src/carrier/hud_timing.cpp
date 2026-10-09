@@ -10,7 +10,7 @@ namespace mc2vr::hud_timing {
 namespace {
 
 // PROTOCOL (runtime-derived 2026-10-06 from the raw burst, menu + gameplay,
-// docs/reverse_engineering/render_path.md open items — supersedes the S0
+// docs/reverse_engineering/view_table.md — supersedes the earlier
 // packed-halves model, which is contradicted at runtime):
 //   +0x10 high16 = pending-unconsumed element count (producers += during the
 //                  frame; the VM consumer clears it, advancing low16, between
@@ -18,8 +18,8 @@ namespace {
 //   +0x10 low16   = ring position (moves on publish/consume; FROZEN during
 //                  both pass walks and the inter-pass gap)
 //   +0x14         = never moves at runtime (unused by the live path)
-// HUD conclusion (S4-5): both queues are fully consumed BEFORE pass 1 begins
-// drawing, and both passes walk the same record table (S2c-1) — so 2D/HUD
+// HUD conclusion: both queues are fully consumed BEFORE pass 1 begins
+// drawing, and both passes walk the same record table (frame replay) — so 2D/HUD
 // content is drawn into both eyes' composites. One-eye HUD is impossible;
 // no host quad layer needed.
 //

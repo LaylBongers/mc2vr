@@ -1,4 +1,4 @@
-// Per-eye D3D11 render targets + the S4-0 test pattern. Real mode renders
+// Per-eye D3D11 render targets + the test pattern. Real mode renders
 // into the OpenXR swapchain images; mock mode into plain textures.
 #pragma once
 

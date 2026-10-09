@@ -11,24 +11,24 @@
 // if the real base differs — every VA below is absolute.
 #define MC2_GAME_BASE_EXPECTED ((uintptr_t)0x00400000u)
 
-// ---- M1 hook/probe sites (all plaintext .text/.data, well below the ----
+// ---- hook/probe sites (all plaintext .text/.data, well below the ----
 // ---- SecuROM region at 0x01a48000; see docs/hooks.md hook list) --
 
 // GameShell_FrameTick — void (void), called once per main-loop iteration from
-// GameShell_Run (single call site). The main M1 inline hook: frame counting,
+// GameShell_Run (single call site). The main inline hook: frame counting,
 // timing sanity, install ack.
 #define MC2_GAMESHELL_FRAMETICK ((uintptr_t)0x00630e10u)
 
 // LtiRenderer_BeginSubmit (0x0074aaa0, plaintext .text, vtable slot 15 of
 // LtiRenderer_vtbl 0x00bd38e8) — thiscall (this in ECX). Every frame:
-// Present(prev frame) then BeginScene (M2 runtime evidence). An M2.5 MidHook
+// Present(prev frame) then BeginScene (runtime evidence). A MidHook
 // probe at its entry reads ECX (this) and [ESP] (return address) to answer
 // two open questions: which vtable the live object holds (base vs the
 // derived RenderShell override 'Flush') and who drives the frame (the
 // encrypted thunk_FUN_0256b6f0 is the suspect).
 #define MC2_LTI_BEGINSUBMIT ((uintptr_t)0x0074aaa0u)
 
-// ---- M3 instrument sites (instruction-level, verified by disassembly) ----
+// ---- instrument sites (instruction-level, verified by disassembly) ----
 
 // RenderCmd_ExecuteStream opcode dispatch: `cmp eax,0x1a` — 27 opcodes
 // (0x00..0x1a), jump table at 0x856d40. At this instruction EAX = opcode,
@@ -62,11 +62,11 @@
 #define MC2_VIEW_STAGING_QUAT_OFF ((uintptr_t)0x10u)
 #define MC2_VIEW_STAGING_SERIAL_OFF ((uintptr_t)0xcu)
 // Active-view intrusive list head = INDEX into g_ViewTable (negative terminates;
-// link = ViewEntry+0x4). S0-corrected semantics; render_dump logs it per frame.
+// link = ViewEntry+0x4). Corrected semantics; render_dump logs it per frame.
 #define MC2_ACTIVE_VIEW_LIST_HEAD ((uintptr_t)0x00d29e60u)
 
 // ViewEntry camera-field offsets (plate on g_ViewTable; the suspected culling
-// inputs — docs/reverse_engineering/view_and_camera.md). All 4-byte aligned
+// inputs — docs/reverse_engineering/camera_data_flow.md). All 4-byte aligned
 // relative to the 0x810-stride table (required for DR LEN=4 watchpoints):
 //   +0x20  slot[0].mtx[0] row0 (viewToWorld, camera pos at row 3)
 //   +0x60  slot[0].mtx[1] row0 (worldToView, negated pos)
@@ -102,13 +102,13 @@
 // 5 (PostUpdateHook), called by GameShell_FrameTick every frame.
 #define MC2_G_RENDERSHELL ((uintptr_t)0x017ceaf0u)
 
-// g_RenderQueue ring buffer fields (docs/reverse_engineering/render_path.md): base is the struct;
+// g_RenderQueue ring buffer fields (docs/reverse_engineering/view_table.md): base is the struct;
 // elementSize base+4, capacity base+8, buffer base+0xc, counters base+0x10/
-// base+0x14 (S0 decode: countersA base+0x10 packs low16 = consumer-advanced,
+// base+0x14 (static decode: countersA base+0x10 packs low16 = consumer-advanced,
 // high16 = producer-advanced; countersB base+0x14 packs low16 = producer
 // batch count), CS base+0x18.
-// g_RenderQueue ring — S2c (stream replay) timing inputs; ring
-// position = queue+0x10 low16 % cap (S1b, verified).
+// g_RenderQueue ring — stream-replay timing inputs; ring
+// position = queue+0x10 low16 % cap (runtime-verified).
 #define MC2_G_RENDERQUEUE ((uintptr_t)0x00ff3618u)
 #define MC2_QUEUE_ELEM_SIZE ((uintptr_t)0x00ff361cu)  // u32 = 96
 #define MC2_QUEUE_CAPACITY ((uintptr_t)0x00ff3620u)   // u32 = 4096
@@ -116,11 +116,11 @@
 #define MC2_QUEUE_COUNTERS_A ((uintptr_t)0x00ff3628u) // packed u16 consumer/producer
 #define MC2_QUEUE_COUNTERS_B ((uintptr_t)0x00ff362cu) // packed u16 producer batch
 
-// g_RenderQueue2 (0x00ff3650) — 2D/overlay submissions (docs/reverse_engineering/view_and_camera.md).
+// g_RenderQueue2 (0x00ff3650) — 2D/overlay submissions (docs/reverse_engineering/view_table.md).
 // No plaintext xref: the frame-ctx block hands &g_RenderQueue2 to the SecuROM-VM'd
 // interpreter (frame-ctx +0x78/+0x90; queue1's counters are at +0x60/+0x6c/+0x9c/+0xa8).
 // Same struct as g_RenderQueue (elem +0x04, cap +0x08, buffer +0x0c, countersA +0x10
-// = low16 consumer-advanced / high16 producer elements, countersB +0x14). S4-5 HUD
+// = low16 consumer-advanced / high16 producer elements, countersB +0x14). HUD
 // timing: the carrier samples these counters at Present + pass boundaries because
 // the consumer itself is unhookable (VM).
 #define MC2_G_RENDERQUEUE2 ((uintptr_t)0x00ff3650u)
@@ -155,7 +155,7 @@
 // SecuROM region — never hooked), so the plaintext way to reach device
 // creation params is: InlineHook this thunk, VmtHook the returned IDirect3D9
 // (CreateDevice = slot 16) and patch the D3DPRESENT_PARAMETERS there.
-// S4-5 pacing: vsync=off forces PresentationInterval=IMMEDIATE (two
+// Vsync pacing: vsync=off forces PresentationInterval=IMMEDIATE (two
 // vsync-locked Presents per frame cap the game at ~30 Hz).
 #define MC2_D3DCREATE9_THUNK ((uintptr_t)0x00a4e892u)
 
@@ -163,7 +163,7 @@
 // submission: BeginSubmit (Present prev + BeginScene + GPU-sync + RT set +
 // Clear) then the SecuROM-mutated per-record walk (state + ExecuteStream +
 // bind + draw per record) then EndSubmit. void(void), single caller
-// (RenderShell_RenderFrameTimed 0x0085abd0). S2c-1 second draw pass = call
+// (RenderShell_RenderFrameTimed 0x0085abd0). The second draw pass = call
 // this twice (re-entrant between frames: EndSubmit clears the in-scene flag).
 #define MC2_PGPRIMITIVE_SUBMITTOGPU ((uintptr_t)0x00855690u)
 
@@ -200,7 +200,7 @@
 // (readers are all VM-side, hence no plaintext read xrefs). Record layout:
 // +0x00 viewContextData (VP rows first), +0x40 PS view consts, +0x60
 // atmosphereData*, +0x64 globalLightData* (docs/reverse_engineering/
-// view_and_camera.md). A record VA rec decomposes as
+// view_context_records.md). A record VA rec decomposes as
 //   base = *g_ViewContextTable;  idx = (rec - base) / 0x70  (idx < 32)
 #define MC2_G_VIEWCONTEXTTABLE ((uintptr_t)0x01169774u)
 #define MC2_VIEWCONTEXT_STRIDE ((uintptr_t)0x70u)

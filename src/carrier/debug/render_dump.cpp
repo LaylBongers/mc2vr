@@ -61,7 +61,7 @@ uint64_t g_agg_frame = UINT64_MAX;
 uint32_t g_vpf_cur = 0;
 uint32_t g_vpf_min = 0;
 uint32_t g_vpf_max = 0;
-uint32_t g_view_list_head = 0;    // DAT_00d29e60 = ACTIVE-VIEW LIST HEAD INDEX (S0: not a count; link = ViewEntry+0x4, negative = end)
+uint32_t g_view_list_head = 0;    // DAT_00d29e60 = ACTIVE-VIEW LIST HEAD INDEX (not a count; link = ViewEntry+0x4, negative = end)
 uint32_t g_dumps_done = 0;
 uint32_t g_dumped_idx[ENTRY_DUMP_MAX] = {};
 
@@ -111,12 +111,12 @@ void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry, bool tra
     const uint32_t obj_ptr = *(const uint32_t *)(entry + MC2_VIEW_OBJ_PTR_OFF);
     const uint8_t t3 = *(const uint8_t *)(MC2_VIEW_TABLE3 + idx * 0x20 + 0x18);
 
-    MC2VR_LOG("M3 ViewDump%s idx=%u type=%u entry=%p obj=%p t3=%02x (%s)",
+    MC2VR_LOG("ViewDump%s idx=%u type=%u entry=%p obj=%p t3=%02x (%s)",
               track ? "" : " (refresh)", idx, type, entry, (const void *)(uintptr_t)obj_ptr,
               t3, track ? "first" : "steady-state");
-    dump_bytes("M3 entry", 0, entry, VIEW_STRIDE);
+    dump_bytes("entry", 0, entry, VIEW_STRIDE);
     if (obj_ptr) {
-        dump_bytes("M3 obj", 0, (const uint8_t *)(uintptr_t)obj_ptr, 0x40);
+        dump_bytes("obj", 0, (const uint8_t *)(uintptr_t)obj_ptr, 0x40);
     }
     if (track) {
         g_dumped_idx[g_dumps_done++] = idx;
@@ -126,7 +126,7 @@ void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry, bool tra
 // ---- MidHook handlers -----------------------------------------------------
 
 // RenderCmd_ExecuteStream opcode dispatch: EAX = opcode. Also feeds the
-// S2c-0 stream tap (stream_capture.cpp): EBP/ESP identify the stream.
+// Stream tap (stream_capture.cpp): EBP/ESP identify the stream.
 void opcode_midhook(safetyhook::Context &ctx)
 {
     const uint32_t op = (uint32_t)ctx.eax;
@@ -148,7 +148,7 @@ void view_midhook(safetyhook::Context &ctx)
 
     g_view_submits++;
 
-    // S5 culling-watch: identify the view entry whose camera fields get
+    // Culling-watch: identify the view entry whose camera fields get
     // hardware-watched (debug_watch; no-op when disabled). EBX = the frame-ctx
     // object (callee-saved from function entry — plate), needed for the
     // staged-block targets.
@@ -162,7 +162,7 @@ void view_midhook(safetyhook::Context &ctx)
         }
         g_agg_frame = frame;
         g_vpf_cur = 0;
-        g_view_list_head = *(const uint32_t *)0x00d29e60u; // active-view list head index (S0-corrected; M3 called this tableCount)
+        g_view_list_head = *(const uint32_t *)0x00d29e60u; // active-view list head index (corrected; formerly mislabeled tableCount)
     }
     g_vpf_cur++;
     if (g_vpf_cur > g_vpf_max) {
@@ -220,7 +220,7 @@ void slot4_endofframe_hook()
     g_slot4_calls++;
     if (!g_slot4_logged) {
         g_slot4_logged = true;
-        MC2VR_LOG("M3: EndOfFrameHook (g_RenderShell slot 4) CALLED, frame=%llu — slots "
+        MC2VR_LOG("EndOfFrameHook (g_RenderShell slot 4) CALLED, frame=%llu — slots "
                   "claimable, mechanism works",
                   (unsigned long long)hooks::frame_count());
     }
@@ -231,11 +231,11 @@ void slot5_postupdate_hook()
     g_slot5_calls++;
     if (!g_slot5_logged) {
         g_slot5_logged = true;
-        MC2VR_LOG("M3: PostUpdateHook (g_RenderShell slot 5) CALLED, frame=%llu — slots "
+        MC2VR_LOG("PostUpdateHook (g_RenderShell slot 5) CALLED, frame=%llu — slots "
                   "claimable, mechanism works",
                   (unsigned long long)hooks::frame_count());
     }
-    // S4-5: the host-event drain point (main thread, once per frame — before
+    // The host-event drain point (main thread, once per frame — before
     // the next pass-1 pose sample so events apply to THIS frame's camera).
     // No-op when disconnected. Pose sampling itself happens at pass-1 start.
     ipc::drain_events();
@@ -246,7 +246,7 @@ void slot5_postupdate_hook()
 void report_window()
 {
     // Views line.
-    MC2VR_LOG("M3 views: submits=%llu frames-with-views=%llu views/frame min=%u max=%u "
+    MC2VR_LOG("views: submits=%llu frames-with-views=%llu views/frame min=%u max=%u "
               "listHead=%u distinct=%u",
               (unsigned long long)g_view_submits, (unsigned long long)g_view_frames,
               g_vpf_min, g_vpf_max, g_view_list_head, g_view_distinct);
@@ -263,7 +263,7 @@ void report_window()
                            g_view_distinct - shown);
         }
         list[n] = '\0';
-        MC2VR_LOG("M3 view list:%s", list);
+        MC2VR_LOG("view list:%s", list);
     }
 
     // Histogram line — nonzero bins only.
@@ -279,13 +279,13 @@ void report_window()
             }
         }
         hist[n] = '\0';
-        MC2VR_LOG("M3 cmds: total=%llu in window (%u opcodes active):%s",
+        MC2VR_LOG("cmds: total=%llu in window (%u opcodes active):%s",
                   (unsigned long long)g_cmd_total, (uint32_t)nonzero,
                   nonzero ? hist : " (stream empty — no world packets?)");
     }
 
     // Slots + queue line. prodA is a ring position: raw window stats only.
-    MC2VR_LOG("M3 slots: endOfFrame=%llu postUpdate=%llu | queue: elem=%u cap=%u "
+    MC2VR_LOG("slots: endOfFrame=%llu postUpdate=%llu | queue: elem=%u cap=%u "
               "prodA last=%u min=%u max=%u prodB=%u changedPolls=%llu",
               (unsigned long long)g_slot4_calls, (unsigned long long)g_slot5_calls,
               g_queue_elem, g_queue_cap, g_prod_a_last, g_prod_a_min, g_prod_a_max,
@@ -331,7 +331,7 @@ DWORD WINAPI poller_thread(LPVOID)
     while (InterlockedCompareExchange(&g_poller_run, 1, 1)) {
         Sleep(POLL_MS);
 
-        // S5 culling-watch: one-time DR0-3 arm once a target view exists
+        // Culling-watch: one-time DR0-3 arm once a target view exists
         // (per-thread DRs cannot be set from the watching thread itself).
         watch::poll();
 
@@ -380,12 +380,12 @@ bool install_mid(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn
 {
     auto mid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(target), fn);
     if (!mid) {
-        MC2VR_LOG("M3: FATAL — %s MidHook install failed @ %p (error %u)", name,
+        MC2VR_LOG("FATAL — %s MidHook install failed @ %p (error %u)", name,
                   (void *)target, (unsigned)mid.error().type);
         return false;
     }
     storage = std::move(*mid);
-    MC2VR_LOG("M3: installed %s MidHook @ %p", name, (void *)target);
+    MC2VR_LOG("installed %s MidHook @ %p", name, (void *)target);
     return true;
 }
 
@@ -415,17 +415,17 @@ void install_early()
     // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();
 
-    // S2c-1: SubmitToGPU frame-replay InlineHook (mc2vr.conf frame_replay=on).
+    // SubmitToGPU frame-replay InlineHook (mc2vr.conf frame_replay=on).
     s2c::install();
 }
 
 void install_late()
 {
-    // g_RenderShell slots 4/5 claim (also proves the M4 claim mechanism).
+    // g_RenderShell slots 4/5 claim (also proves the vtable-claim mechanism).
     // The object's vptr is only valid once the engine has constructed it.
     auto vmt = safetyhook::VmtHook::create(reinterpret_cast<void *>(MC2_G_RENDERSHELL));
     if (!vmt) {
-        MC2VR_LOG("M3: FATAL — g_RenderShell VmtHook create failed (error %u)",
+        MC2VR_LOG("FATAL — g_RenderShell VmtHook create failed (error %u)",
                   (unsigned)vmt.error().type);
     } else {
         g_shell_vmt = new safetyhook::VmtHook(std::move(*vmt));
@@ -433,11 +433,11 @@ void install_late()
         auto slot4 = g_shell_vmt->hook_method(4, (void *)&slot4_endofframe_hook);
         auto slot5 = g_shell_vmt->hook_method(5, (void *)&slot5_postupdate_hook);
         if (!slot4 || !slot5) {
-            MC2VR_LOG("M3: FATAL — g_RenderShell slot hook failed (%u)", (unsigned)(slot4 ? slot5.error().type : slot4.error().type));
+            MC2VR_LOG("FATAL — g_RenderShell slot hook failed (%u)", (unsigned)(slot4 ? slot5.error().type : slot4.error().type));
         } else {
             g_shell_slot4 = new safetyhook::VmHook(std::move(*slot4));
             g_shell_slot5 = new safetyhook::VmHook(std::move(*slot5));
-            MC2VR_LOG("M3: claimed g_RenderShell slots 4 (EndOfFrameHook) / 5 (PostUpdateHook) "
+            MC2VR_LOG("claimed g_RenderShell slots 4 (EndOfFrameHook) / 5 (PostUpdateHook) "
                       "via cloned vtable");
         }
     }
@@ -446,7 +446,7 @@ void install_late()
     InterlockedExchange(&g_poller_run, 1);
     g_poller_thread = CreateThread(nullptr, 0, poller_thread, nullptr, 0, nullptr);
     if (!g_poller_thread) {
-        MC2VR_LOG("M3: FATAL — queue poller thread creation failed (%lu)", GetLastError());
+        MC2VR_LOG("FATAL — queue poller thread creation failed (%lu)", GetLastError());
     }
 }
 

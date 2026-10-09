@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scan MC2 shader containers for D3D9 shader bytecode and dump the CTAB
 constant tables (constant name -> register index) — the register-role
-map input (docs/reverse_engineering/view_and_camera.md).
+map input (docs/reverse_engineering/view_context_records.md).
 
 Containers (game data dir + Precache/): shaderVT*.bin / shaderR2VB*.bin /
 shader3*.bin are {entry} directories of raw bytecode; Precache/*.precache are

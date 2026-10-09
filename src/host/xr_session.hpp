@@ -1,4 +1,4 @@
-// OpenXR session wrapper (S4-0): instance, D3D11 session, LOCAL space,
+// OpenXR session wrapper: instance, D3D11 session, LOCAL space,
 // stereo swapchains, event pump and the frame loop.
 #pragma once
 

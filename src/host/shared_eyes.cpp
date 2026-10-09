@@ -26,7 +26,7 @@ struct Entry {
     uint64_t handle = 0;
     ID3D11Texture2D* tex = nullptr;   // opened shared texture
     ID3D11Texture2D* stg = nullptr;   // same-desc CPU-read staging
-    ID3D11ShaderResourceView* srv = nullptr;  // UNORM-cast view (S4-3 blit)
+    ID3D11ShaderResourceView* srv = nullptr;  // UNORM-cast view (blit)
     uint32_t w = 0, h = 0;
 };
 std::vector<Entry> g_cache;
@@ -203,7 +203,7 @@ void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
             tex->Release();
             return;
         }
-        // S4-3: plain-UNORM-cast SRV on the BGRA8-family texture (87 or 88
+        // Plain-UNORM-cast SRV on the BGRA8-family texture (87 or 88
         // typed — both cast to 87). Raw bytes, no sRGB decode: the blit
         // shader passes them through and the compositor decodes the sRGB
         // swapchain — the intended path for display-referred finals. Failure
@@ -270,7 +270,7 @@ void pump() {
     }
     ReleaseDC(g_hwnd, dc);
 
-    // ~10s activity line (diagnostic; the log is the S4-2 acceptance evidence).
+    // ~10s activity line (diagnostic; the log is the acceptance evidence).
     static ULONGLONG next_stats = 0;
     const ULONGLONG now = GetTickCount64();
     if (!g_stats_armed) {

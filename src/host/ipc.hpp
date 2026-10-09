@@ -1,4 +1,4 @@
-// Host side of the mc2vr IPC (S4-1): creates the shared section, publishes the
+// Host side of the mc2vr IPC: creates the shared section, publishes the
 // seqlocked state, feeds the host->carrier event ring, drains the command
 // ring. All calls are non-blocking; the host owns OpenXR pacing.
 #pragma once

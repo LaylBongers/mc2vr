@@ -1,5 +1,5 @@
 // Hardware-watchpoint tracer for the ViewEntry camera fields (the suspected
-// culling inputs; docs/reverse_engineering/view_and_camera.md § open items).
+// culling inputs; docs/reverse_engineering/camera_data_flow.md).
 //
 // The doc records two unproven assumptions:
 //   1. The culling/draw-record build happens inside the SecuROM-VM'd packet

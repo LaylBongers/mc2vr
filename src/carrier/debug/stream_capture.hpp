@@ -1,7 +1,7 @@
-// S2c-0: render-command-stream capture + opcode census (docs/stereo.md §S2,
-// docs/stereo.md §S2c). Read-only — no behavior change.
+// Render-command-stream capture + opcode census (docs/stereo.md,
+// docs/stereo.md). Read-only — no behavior change.
 //
-// The M3 opcode MidHook inside RenderCmd_ExecuteStream (0x008569f5, installed
+// The opcode MidHook inside RenderCmd_ExecuteStream (0x008569f5, installed
 // once by render_dump.cpp) calls on_opcode() for every command. At that
 // instruction EBP = pointer to the current command dword and [ESP+0x14] = the
 // stream base argument (verified against the 0x008569d0 disassembly: entry
@@ -30,12 +30,12 @@ void set_dump_frames(uint32_t n);
 // before the dump window arms (default 15.0 — let the game reach gameplay).
 void set_dump_delay(float seconds);
 
-// mc2vr.conf frame_replay=off|on (default off): S2c-1 — invoke
+// mc2vr.conf frame_replay=off|on (default off): invoke
 // PgPrimitive_SubmitToGPU a second time after the original returns (same
-// eye, same RTs — the "replay unchanged" state-safety test; docs/stereo.md §S2).
+// eye, same RTs — the "replay unchanged" state-safety test; docs/stereo.md).
 bool set_replay_enabled(const char *value);
 
-// Install the S2c-1 frame-replay InlineHook on PgPrimitive_SubmitToGPU
+// Install the frame-replay InlineHook on PgPrimitive_SubmitToGPU
 // (no-op unless frame_replay=on was set first; the hook itself is installed
 // unconditionally and cheap). Call after conf load.
 void install();

@@ -1,5 +1,5 @@
-// mc2vr IPC protocol v1 (S4-1) — the carrier (win32, in-game) <-> host
-// (win64, OpenXR) shared-memory contract. See docs/stereo.md §S4.
+// mc2vr IPC protocol v1 — the carrier (win32, in-game) <-> host
+// (win64, OpenXR) shared-memory contract. See docs/ipc.md.
 //
 // One fixed-size section created by the HOST (server) via CreateFileMappingA
 // and opened by the carrier/client with OpenFileMappingA. Both ends map it
@@ -68,7 +68,7 @@ typedef struct Mc2IpcState {
     int64_t  displayTime;         // XrTime ns (mock: QPC-derived)
     uint32_t sessionState;        // MC2VR_XR_SESSION_*
     uint32_t recenterCount;      // increments on every reference-space change
-    uint32_t hostFrame;           // host publish counter; poseId = hostFrame+1 (S4-4:
+    uint32_t hostFrame;           // host publish counter; poseId = hostFrame+1 (
                                   // the carrier echoes it in FRAME_READY.e so the host
                                   // can submit the layer with the pose that was rendered)
     float    ipd;                 // meters
@@ -79,19 +79,19 @@ typedef struct Mc2IpcState {
 
 // Host -> carrier events.
 #define MC2VR_MSG_SESSION_STATE 1u  // a=state b=recenterCount
-#define MC2VR_MSG_EXIT         2u  // runtime wants the app to quit (S4-5)
-#define MC2VR_MSG_RECENTER     3u  // user recentered (S4-5)
+#define MC2VR_MSG_EXIT         2u  // runtime wants the app to quit
+#define MC2VR_MSG_RECENTER     3u  // user recentered
 
 // Carrier -> host commands.
 #define MC2VR_CMD_SHUTDOWN     1u  // clean host shutdown (host exits 0)
-#define MC2VR_CMD_CONFIG       2u  // a=width b=height c=format d=reserved (S4-2)
+#define MC2VR_CMD_CONFIG       2u  // a=width b=height c=format d=reserved
 #define MC2VR_CMD_FRAME_READY  3u  // x=frameId y=sharedHandle a=slot b=eye
-                                   // c=width d=height (S4-2)
-                                   // e=poseId (S4-4): the Mc2IpcState.hostFrame+1
+                                   // c=width d=height
+                                   // e=poseId: the Mc2IpcState.hostFrame+1
                                    // the carrier rendered this frame with; 0 =
                                    // no HMD pose (static-pan render)
 
-// One message fits every current and planned (S4-2 FrameReady) payload.
+// One message fits every current and planned (FrameReady) payload.
 typedef struct Mc2IpcMsg {
     uint32_t type;
     uint32_t a, b, c, d;   // 32-bit payload words

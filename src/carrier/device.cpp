@@ -87,7 +87,7 @@ void *g_device = nullptr;
 bool g_params_logged = false;
 
 // Per-call statistics. Present/BeginScene/EndScene/Reset all fire on the
-// main thread only (render threading model, docs/reverse_engineering/render_path.md) — no atomics.
+// main thread only (render threading model, docs/reverse_engineering/render_threading.md) — no atomics.
 // `total` drives the one-shot diagnostic burst (first calls of the process
 // lifetime, not per report window); `window` drives the 10s pattern reports.
 constexpr uint32_t BURST_LOG_CALLS = 3;
@@ -101,7 +101,7 @@ struct CallStat {
 CallStat g_present, g_beginscene, g_endscene, g_reset;
 LARGE_INTEGER g_qpc_freq = {};
 
-// ---- S4-5 pacing: vsync=off (CreateDevice/Reset interval patch) ----------
+// ---- Pacing: vsync=off (CreateDevice/Reset interval patch) ----------
 // The frame's two Presents (present-prev at each BeginSubmit) each block on
 // a 60 Hz vsync slot -> ~30 Hz game (live-log-proven). vsync=off forces
 // D3DPRESENT_INTERVAL_IMMEDIATE so the game renders as fast as the passes
@@ -232,7 +232,7 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
         log_present_params(); // main thread — first Present is the safe point
     }
 
-    // S4-5 HUD timing: Present is a per-frame phase sample point.
+    // HUD timing: Present is a per-frame phase sample point.
     hud_timing::on_present();
 
     // 10s call-pattern report — the runtime pinning evidence: Present /
@@ -288,7 +288,7 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
     g_reset.total++;
     g_reset.window++;
 
-    // Reset carries the NEW present parameters — the M4-relevant data. Log
+    // Reset carries the NEW present parameters. Log
     // every Reset (they're rare).
     if (pp) {
         MC2VR_LOG("D3D: Reset call #%llu: new params %ux%u fmt=%u count=%u windowed=%u "
@@ -304,7 +304,7 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
 
     eye_replay::on_reset(); // surfaces are lost; drop the eye RT + main-RT recording
 
-    // S4-5 pacing: a Reset carries NEW present params (resolution etc.) —
+    // Pacing: a Reset carries NEW present params (resolution etc.) —
     // re-apply the vsync unlock so the interval survives device-reset paths.
     if (pp != nullptr && g_present_immediate &&
         pp->PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
@@ -364,7 +364,7 @@ HRESULT __stdcall updatetexture_hook(void *self, void *src, void *dst)
 
 HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
 {
-    // S2c-2: pass-2 slot-0 sets of the main RT go to the eye RT (device-level
+    // Per-eye: pass-2 slot-0 sets of the main RT go to the eye RT (device-level
     // substitution only — the game's caller-side RT cache is untouched).
     void *target = eye_replay::on_set_render_target(self, index, surface);
     const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, target);
@@ -455,7 +455,7 @@ bool capture_and_hook()
     // calls us once g_LtiRenderer->dx9State is non-NULL).
     g_device = ((GetD3DDevice_t)MC2_GETD3DDEVICE_THUNK)();
     if (!g_device) {
-        MC2VR_LOG("D3D: FATAL — GetD3DDevice() returned NULL at init (unexpected per M1)");
+        MC2VR_LOG("D3D: FATAL — GetD3DDevice() returned NULL at init (unexpected per the early boot probes)");
         return false;
     }
 
@@ -510,7 +510,7 @@ bool capture_and_hook()
     }
 
     MC2VR_LOG("D3D: VmtHook installed — Present/BeginScene/EndScene/Reset pinned "
-              "(M2) + SetVertexShaderConstantF slot %u (the S2 GPU-boundary "
+              "+ SetVertexShaderConstantF slot %u (the GPU-boundary "
               "channel)", (unsigned)SLOT_SetVertexShaderConstantF);
     return true;
 }

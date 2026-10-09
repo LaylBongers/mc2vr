@@ -1,8 +1,8 @@
-// S4-2: shared-handle image path — carrier side (docs/stereo.md §S4).
+// Shared-handle image path — carrier side (docs/stereo.md).
 //
 // At the pass boundaries the backbuffer holds the per-eye tonemapped LDR
 // finals (1->2 = pass-1 LEFT, 2->0 = pass-2 RIGHT before the monitor-pin
-// restore — the S4-2 design observation). This module blits them into a ring
+// restore — the design observation). This module blits them into a ring
 // of DEFAULT-pool textures created with legacy pSharedHandle — the mechanism
 // PROVEN cross-process by tools/probe/run_shared_handle.sh (2026-10-04: DXVK
 // D3D9 -> DXVK D3D11 OpenSharedResource works for both A8R8G8B8 and

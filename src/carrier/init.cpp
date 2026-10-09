@@ -163,35 +163,35 @@ static void load_conf()
                 MC2VR_LOG("conf: debug_vm_dump=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_stream_capture") == 0) {
-            // S2c-0: render-command-stream capture + opcode census (read-only;
-            // docs/stereo.md §S2). Requires the opcode MidHook (M3).
+            // Render-command-stream capture + opcode census (read-only;
+            // docs/stereo.md). Requires the opcode MidHook (render_dump.cpp).
             if (!s2c::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_stream_capture=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_pass") == 0) {
-            // S2c-2: deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
+            // Deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
             if (!eye_replay::set_pass_enabled(value)) {
                 MC2VR_LOG("conf: eye_pass=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_rt") == 0) {
-            // S2c-2: pass-2 SetRenderTarget(0)/StretchRect redirect to an eye RT.
+            // Per-eye: pass-2 SetRenderTarget(0)/StretchRect redirect to an eye RT.
             if (!eye_replay::set_rt_enabled(value)) {
                 MC2VR_LOG("conf: eye_rt=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_monitor_pin") == 0) {
-            // S2c-2: skip the pass-2 EndSubmit RT->backbuffer copy so the
-            // monitor holds pass 1's LEFT image (S4 steady state).
+            // Per-eye: skip the pass-2 EndSubmit RT->backbuffer copy so the
+            // monitor holds pass 1's LEFT image (the host consumes the eyes).
             if (!eye_replay::set_pin_enabled(value)) {
                 MC2VR_LOG("conf: eye_monitor_pin=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_share") == 0) {
-            // S4-2: pass-boundary backbuffer capture into shared-handle RTs +
+            // Shared-handle: pass-boundary backbuffer capture into shared-handle RTs +
             // FRAME_READY publish to the OpenXR host.
             if (!eye_share::set_enabled(value)) {
                 MC2VR_LOG("conf: eye_share=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "vsync") == 0) {
-            // S4-5 pacing: off = force D3DPRESENT_INTERVAL_IMMEDIATE at
+            // Vsync pacing: off = force D3DPRESENT_INTERVAL_IMMEDIATE at
             // CreateDevice/Reset (the frame's two Presents are vsync-locked
             // and cap the game at ~30 Hz).
             if (!device::set_vsync(value)) {
@@ -203,8 +203,8 @@ static void load_conf()
                 eye_replay::set_dump_frames(n);
             }
         } else if (strcmp(key, "frame_replay") == 0) {
-            // S2c-1: second draw pass — re-invoke PgPrimitive_SubmitToGPU after
-            // the original (same eye/RTs; state-safety test, docs/stereo.md §S2).
+            // Second draw pass — re-invoke PgPrimitive_SubmitToGPU after
+            // the original (same eye/RTs; state-safety test, docs/stereo.md).
             if (!s2c::set_replay_enabled(value)) {
                 MC2VR_LOG("conf: frame_replay=%s not recognized (use on|off)", value);
             }
@@ -226,8 +226,8 @@ static void load_conf()
                 view_rewrite::set_view_world_scale((float)v);
             }
         } else if (strcmp(key, "debug_watch") == 0) {
-            // S5: hardware watchpoints on ViewEntry camera fields (culling-RE
-            // evidence; docs/reverse_engineering/view_and_camera.md).
+            // Hardware watchpoints on ViewEntry camera fields (culling-RE
+            // evidence; docs/reverse_engineering/camera_data_flow.md).
             if (!watch::set_targets(value)) {
                 MC2VR_LOG("conf: debug_watch=%s not recognized (named ViewEntry "
                           "fields or addr:<hex>, '+'-separated, max 4) — disabled",
@@ -361,7 +361,7 @@ void init()
     load_conf();
 
     // Gate: no hooks unless this is exactly the RE'd binary at the expected
-    // base. Log everything either way — the log is the M0 deliverable.
+    // base. Log everything either way — this log is the deliverable.
     const bool base_ok = verify_image_base();
     const bool lock_ok = base_ok && verify_build_lock();
 
@@ -375,7 +375,7 @@ void init()
     // (launcher starts it suspended and resumes on the marker below). Plaintext
     // .text hooks only — nothing that needs engine-constructed state.
 
-    // S4-1: attach to the OpenXR host's shared section, if one exists (the
+    // Attach to the OpenXR host's shared section, if one exists (the
     // launcher spawns the host before the game). Non-fatal: no host means
     // the game runs the monitor-stereo path exactly as today. Only a
     // lock-passing carrier registers — an idle one stays fully idle.
@@ -383,7 +383,7 @@ void init()
 
     hooks::install();
     render::install_early();
-    // S4-5 pacing (vsync=off): must run while the game is still suspended —
+    // Vsync pacing (vsync=off): must run while the game is still suspended —
     // RenderSystem_Init calls Direct3DCreate9 during boot, before stage 2.
     device::install_d3d9_gate();
     MC2VR_LOG("early init done"); // launcher's resume marker
@@ -396,16 +396,16 @@ void init()
     }
     MC2VR_LOG("D3D device live — late init");
 
-    // M1 SecuROM pre-probes: each step logs, so a crash is attributable to
+    // SecuROM pre-probes: each step logs, so a crash is attributable to
     // exactly one action.
     probes::data_write_restore();
     probes::call_vm_thunk();
 
-    // M2: device capture + VmtHook (Present/BeginScene/EndScene/Reset).
+    // Device capture + VmtHook (Present/BeginScene/EndScene/Reset).
     // Best-effort: a failure here keeps the game and FrameTick hook alive.
     device::capture_and_hook();
 
-    // M3: g_RenderShell slot claim + queue poll.
+    // g_RenderShell slot claim + queue poll.
     render::install_late();
 
     // Read-only live dump of the VM chain behind RenderTask_RenderFrame.

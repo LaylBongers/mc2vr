@@ -1,16 +1,16 @@
-// S4-3: copy the carrier's shared-eye images into the OpenXR swapchains
-// (docs/stereo.md §S4). One fullscreen
+// Copy the carrier's shared-eye images into the OpenXR swapchains
+// (docs/stereo.md). One fullscreen
 // triangle with a tiny sample-and-write shader: the source SRV and the
 // swapchain RTV are both PLAIN-UNORM-cast views, so the sRGB-encoded LDR
 // finals pass through byte-exact — the runtime's compositor then decodes
 // the sRGB-typed swapchain, which is exactly what our display-referred
 // content means. (CopyResource is illegal across UNORM<->sRGB, and the
-// runtime offers sRGB-only 8-bit formats — S4-0, live-verified.)
+// runtime offers sRGB-only 8-bit formats, live-verified.)
 //
 // The draw letterboxes: the shared pair is 2560x1440 (16:9) while the eye
 // images are e.g. 2016x2240, so the image is scaled to fit and centered on
 // black. All entry points are safe no-ops when init() failed — the frame
-// loop then falls back to the S4-0 test pattern, which doubles as the
+// loop then falls back to the test pattern, which doubles as the
 // "carrier not talking" diagnostic.
 #pragma once
 

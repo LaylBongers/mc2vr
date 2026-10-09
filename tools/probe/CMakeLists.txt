@@ -1,6 +1,6 @@
-# S4-2 shared-handle probe: two tiny processes answering whether DXVK D3D9
+# Shared-handle probe: two tiny processes answering whether DXVK D3D9
 # shared textures (legacy pSharedHandle) open in DXVK D3D11 across processes —
-# the key S4 risk (docs/stereo.md §S4 risk 1). The producer builds in the
+# the key shared-handle risk (docs/shared_textures.md). The producer builds in the
 # 32-bit tree, the consumer in the 64-bit tree; drive both (same Proton
 # prefix, concurrently) with tools/probe/run_shared_handle.sh.
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)

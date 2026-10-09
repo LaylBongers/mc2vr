@@ -31,12 +31,12 @@ double g_window_dt_sum = 0.0;
 double g_window_dt_min = 0.0;
 double g_window_dt_max = 0.0;
 
-// ---- M2.5 probe: LtiRenderer_BeginSubmit MidHook --------------------------
+// ---- LtiRenderer_BeginSubmit MidHook probe --------------------------------
 // BeginSubmit is thiscall via virtual dispatch — a plain inline hook can't
 // portably preserve ECX, but a MidHook at the entry instruction hands us the
 // full register context: ECX = this (its vtable slot reveals base-vs-derived),
 // [ESP] = return address (reveals the frame driver — the encrypted
-// thunk_FUN_0256b6f0 is the suspect per docs/reverse_engineering/render_path.md open items).
+// thunk_FUN_0256b6f0 is the suspect per docs/reverse_engineering/frame_chain.md).
 // One-shot burst; zero behavior change afterwards.
 SafetyHookMid g_beginsubmit_mid;
 uint64_t g_beginsubmit_hits = 0;
@@ -107,8 +107,8 @@ void frame_tick_hook()
     // ---- original game logic first, instrumentation side effects after ----
     g_frame_tick_hook.call<void>();
 
-    // M1 bonus / M2 pre-work: observe the D3D device once it exists. The
-    // call runs on the main thread (render threading rules, docs/reverse_engineering/render_path.md)
+    // Observe the D3D device once it exists. The
+    // call runs on the main thread (render threading rules, docs/reverse_engineering/render_threading.md)
     // and stops as soon as the pointer is non-NULL — normal game code calls
     // this thunk constantly, so per-frame calls are routine for it.
     static void *observed_device = nullptr;
@@ -173,7 +173,7 @@ bool install()
     MC2VR_LOG("hooks: installed FrameTick @ %p (trap-based install, no external suspension)",
               (void *)MC2_GAMESHELL_FRAMETICK);
 
-    // M2.5 probe: BeginSubmit MidHook (entry instruction — register-context
+    // BeginSubmit MidHook probe (entry instruction — register-context
     // access, zero calling-convention risk; instrument-only, no trampoline
     // dispatch). Leaked by design like the device hooks.
     auto mid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_LTI_BEGINSUBMIT),

@@ -38,7 +38,7 @@ const char *const REGION_NAME[REGION_COUNT] = {"text", "protected", "other"};
 
 Region classify(uint32_t addr, const char **detail)
 {
-    // Section map (PE headers; docs/reverse_engineering/securom_vm.md).
+    // Section map (PE headers; docs/reverse_engineering/target_binary.md).
     if (addr >= 0x00401000u && addr <= 0x00b04fffu) {
         *detail = ".text";
         return R_TEXT;

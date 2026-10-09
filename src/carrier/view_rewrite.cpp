@@ -1,4 +1,4 @@
-// Per-eye camera injection — see view_rewrite.hpp and docs/stereo.md §S2.
+// Per-eye camera injection — see view_rewrite.hpp and docs/view_rewrite.md.
 
 #include "view_rewrite.hpp"
 
@@ -33,7 +33,7 @@ constexpr uint32_t VS_ROWS = 256;  // vs_3_0 float constant registers (plus head
 // HmdIdentity = the same decompose/rebuild with the game's OWN camera and
 // projection — output must equal input (self-check of the decomposition;
 // also the clean pass-through channel for diagnostic probe runs). The old
-// `hmd` full-VP-replacement mode and the S2 verification modes (on/pulse/
+// `hmd` full-VP-replacement mode and the early verification modes (on/pulse/
 // stereo row-shift pans) were REMOVED 2026-10-07 — superseded by
 // view_table_inject + hmd_delta (live-verified).
 enum class RewriteMode { Off, HmdDelta, HmdIdentity };
@@ -80,7 +80,7 @@ uint32_t g_rt_seen[16][2];  // distinct RT0 sizes (log once each)
 uint32_t g_rt_seen_n = 0;
 
 // ---- per-pass eye state ----------------------------------------------------------
-int g_pass_eye = 0;  // S2c-2 per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 none
+int g_pass_eye = 0;  // Per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 none
 
 bool pass_is_main()
 {
@@ -210,7 +210,7 @@ struct HmdSnapshot {
 };
 HmdSnapshot g_hmd;
 ULONGLONG g_hmd_ms = 0;  // last successful pass-1 pose sample
-float g_world_scale = 1.0f;  // game world units per metre (VERIFIED: metres — gravity 9.81, docs/reverse_engineering/pandemic_engine.md)
+float g_world_scale = 1.0f;  // game world units per metre (VERIFIED: metres — gravity 9.81, docs/reverse_engineering/world_units.md)
 
 // Per-pass cache of the rebuilt camera position, for uploads that carry only
 // the camPos row (VP rows arrived in an earlier call).
@@ -483,7 +483,7 @@ void report_window()
 
 void install()
 {
-    // Plaintext .text MidHook (same pattern as the M2.5/M3 MidHooks). Failure
+    // Plaintext .text MidHook (same pattern as the debug MidHooks). Failure
     // is non-fatal: the map stays INVALID and the rewrite idles.
     auto mid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_VCD_UPLOAD_CMP), vcd_midhook);
     if (!mid) {

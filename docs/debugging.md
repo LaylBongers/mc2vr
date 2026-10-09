@@ -2,7 +2,7 @@
 
 ## Iteration loop
 
-The agent implements/logs; the human runs `./launch.sh` into GAMEPLAY (SteamVR up — gameplay, not menu, for render instrumentation) and reports; the agent audits `<GAME_DIR>/mc2vr/mc2vr_{carrier,host,launcher}.log` (`GAME_DIR` from `launch.conf`). `tools/analyze_dumps.py <log>` parses view/S2c/eye evidence. Selftest needs an unsandboxed terminal: [build.md](build.md).
+The agent implements/logs; the human runs `./launch.sh` into GAMEPLAY (SteamVR up — gameplay, not menu, for render instrumentation) and reports; the agent audits `<GAME_DIR>/mc2vr/mc2vr_{carrier,host,launcher}.log` (`GAME_DIR` from `launch.conf`). `tools/analyze_dumps.py <log>` parses view/stream/eye evidence. Selftest needs an unsandboxed terminal: [build.md](build.md).
 
 ## Deployed conf steady state
 

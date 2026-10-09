@@ -205,5 +205,5 @@
 <text x="867.8" y="1274" text-anchor="start" font-size="12" font-weight="normal" fill="#44506a">known gap / note</text>
 <text x="40" y="1300" text-anchor="start" font-size="12" font-weight="normal" fill="#44506a">Pink arrows = HMD pose/FOV flowing into the two overwrite points; blue/violet elbows = which pass supplies the eye; dashed violet = eye images to the OpenXR host.</text>
 <text x="40" y="1320" text-anchor="start" font-size="12" font-weight="normal" fill="#44506a">Facts: the draw camera never exists in patchable plaintext data except as g_CameraTable (upstream) and the per-frame records / GPU constants (downstream) — the VM only orchestrates in between.</text>
-<text x="40" y="1340" text-anchor="start" font-size="12" font-weight="normal" fill="#44506a">Sources: docs/plans/stereo_improvements.md (chain, entry convention) · docs/plans/stereo_design.md · docs/reverse_engineering/render_path.md · docs/plans/launcher.md (hook sites).</text>
+<text x="40" y="1340" text-anchor="start" font-size="12" font-weight="normal" fill="#44506a">Sources: docs/camera.md (chain, entry convention) · docs/stereo.md · docs/reverse_engineering/draw_camera_chain.md · docs/hooks.md (hook sites).</text>
 </svg>

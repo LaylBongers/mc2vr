@@ -1,4 +1,4 @@
-// Per-eye camera channel at the GPU boundary (docs/stereo.md §S4-4,
+// Per-eye camera channel at the GPU boundary (docs/view_rewrite.md,
 // docs/camera.md): the camtable union injection puts the
 // HMD-union pose into the game's camera table upstream; this module taps the
 // SetVertexShaderConstantF uploads of the technique's viewContextData and
@@ -38,14 +38,14 @@ void set_main_rt_size(uint32_t w, uint32_t h);
 // OpenXR FOV + per-eye position delta, pose already in the records from the
 // table union; hmd_identity = decompose/rebuild self-check, output must
 // equal input, and the clean pass-through channel for probe runs; off =
-// pass-through). The old `hmd` full-VP mode and the S2 verification modes
+// pass-through). The old `hmd` full-VP mode and the early verification modes
 // (on/pulse/stereo) were REMOVED 2026-10-07 — superseded by
 // view_table_inject + hmd_delta. Returns false on unrecognized values.
 bool set_view_row_rewrite(const char *value);
 
 // mc2vr.conf view_world_scale=<float>: game world units per metre for the HMD
 // camera (default 1.0 — VERIFIED 2026-10-07: units are metres; see
-// docs/reverse_engineering/pandemic_engine.md § World units).
+// docs/reverse_engineering/world_units.md).
 void set_view_world_scale(float units_per_metre);
 
 
@@ -63,7 +63,7 @@ uint32_t current_pose_id();
 // valid for ~1s after the last main-pass upload.
 bool get_game_camera(vp_camera::Camera *out);
 
-// S2c-2 per-pass eye override (eye_replay.cpp): pass 1 = -1, pass 2 = +1,
+// Per-pass eye override (eye_replay.cpp): pass 1 = -1, pass 2 = +1,
 // 0 = none. hmd_delta requires it (per-pass eye); the pass-1 transition
 // samples the HMD pose once per frame.
 void set_pass_eye(int sign);

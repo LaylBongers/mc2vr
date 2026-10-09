@@ -1,9 +1,9 @@
-// S4-5 HUD/2D — RESOLVED (2026-10-06, live-verified): both render queues are
+// HUD/2D — RESOLVED (2026-10-06, live-verified): both render queues are
 // consumed once per frame, entirely between SubmitToGPU entry and BeginSubmit's
 // Present (before pass 1 draws); both passes then walk the same record table,
 // so 2D/HUD content lands in both eyes' composites. One-eye HUD is impossible;
 // no host quad layer is needed. Full evidence and protocol derivation:
-// docs/reverse_engineering/render_path.md (queue counter open item).
+// docs/reverse_engineering/view_table.md (queue counter open item).
 //
 // What remains: a one-shot raw-counter diagnostic burst (first 3 frames after
 // the first 10s window) for future queue-protocol questions. Read-only.

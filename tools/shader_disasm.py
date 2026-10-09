@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Minimal D3D9 vs_3_0/ps_3_0 shader disassembler — the viewContextData layout oracle.
 
-Why this exists (docs/reverse_engineering/view_and_camera.md): the viewContextData block is
+Why this exists (docs/reverse_engineering/view_context_records.md): the viewContextData block is
 written by SecuROM-VM'd code (opaque), so the *engine* binary cannot tell us
 which of the 4-5 constant registers is the camera-position anchor and which
 are the VP rows. The SHADERS are static plaintext data and are the other

@@ -86,7 +86,7 @@ int run(int frames) {
         }
     }
 
-    // S4-3 smoke check: compile the blit shaders + run one draw in the same
+    // Smoke check: compile the blit shaders + run one draw in the same
     // prefix the real host uses, so the SELFTEST — not the first HMD run —
     // catches a missing d3dcompiler_47 or a broken view cast.
     if (sub::init(d.dev)) {

@@ -1,9 +1,9 @@
-// S4-2: host side of the shared-handle image path (docs/stereo.md §S4). The carrier blits the per-eye LDR finals into
+// Host side of the shared-handle image path (docs/shared_textures.md). The carrier blits the per-eye LDR finals into
 // D3D9 shared-handle textures at the pass boundaries and publishes
 // FRAME_READY; this module opens them with ID3D11Device::OpenSharedResource
 // (the mechanism PROVEN cross-process by tools/probe/run_shared_handle.sh,
-// 2026-10-04) and mirrors the newest pair to a desktop window — the S4-2
-// verification step BEFORE any OpenXR submission (S4-3).
+// 2026-10-04) and mirrors the newest pair to a desktop window — the
+// verification step BEFORE any OpenXR submission.
 //
 // The mirror is GDI-side (StretchDIBits from a staging read): no shaders, no
 // swapchain, nothing that could interfere with the OpenXR session device.
@@ -33,15 +33,15 @@ void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
 // arrived. Cheap when idle.
 void pump();
 
-// S4-3 seam: the newest carrier image per eye. Returns true when eye has a
+// Seam: the newest carrier image per eye. Returns true when eye has a
 // shared texture opened (with its UNORM-cast SRV). Does NOT consume the
 // mirror's `fresh` flag — the OpenXR loop re-submits the newest pair at HMD
-// cadence while the game runs ~30 Hz (S4-3 pacing), so freshness is
+// cadence while the game runs ~30 Hz, so freshness is
 // irrelevant to the caller.
 struct LatestImage {
     ID3D11ShaderResourceView* srv = nullptr;
     uint64_t frameId = 0;
-    uint32_t poseId = 0;  // S4-4: carrier pose id (0 = static-pan render)
+    uint32_t poseId = 0;  // Carrier pose id (0 = static-pan render)
     uint32_t w = 0, h = 0;
 };
 bool latest(uint32_t eye, LatestImage& out);

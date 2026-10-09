@@ -1,6 +1,6 @@
-// S4-2 probe producer (win32, runs in the game's Proton prefix => D3D9 = DXVK).
+// Shared-handle probe producer (win32, runs in the game's Proton prefix => D3D9 = DXVK).
 //
-// Question this answers (docs/stereo.md §S4 risk 1): does a D3D9 texture
+// Question this answers (docs/shared_textures.md): does a D3D9 texture
 // created with a legacy pSharedHandle open in DXVK's D3D11 via
 // OpenSharedResource in ANOTHER process?
 //
@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
     hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, &q);
     if (FAILED(hr)) { logf_("producer: event query failed hr=0x%08lx (continuing without sync)\n", (unsigned long)hr); }
 
-    // --- LIVE-PATH EMULATION (S4-2 black-mirror repro, 2026-10-04) ---------
+    // --- LIVE-PATH EMULATION (black-mirror repro, 2026-10-04) ---------
     // The original probe proved usage-0 shared textures filled via
     // UpdateTexture. The live carrier fills RENDERTARGET-usage shared
     // textures via StretchRect FROM THE SWAPCHAIN BACKBUFFER. Emulate that

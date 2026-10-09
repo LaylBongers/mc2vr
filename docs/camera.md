@@ -31,7 +31,7 @@ Two `hmd_delta` bugs caused near-field focus discomfort (this was NOT the HUD �
 
 ## World scale: s = 1.0 (CLOSED 2026-10-07)
 
-Units are METRES: Havok world gravity is 9.8–9.81 game units/s², zero feet-convention constants in the image (evidence: [pandemic_engine.md](reverse_engineering/pandemic_engine.md) § World units). Live IPD verified end-to-end: applied parallax = ipd_runtime·s/z; asymmetric-frustum offset −451 px (predicted −460), per-eye FOV span scale 1.7%, door z agrees between width and parallax.
+Units are METRES: Havok world gravity is 9.8–9.81 game units/s², zero feet-convention constants in the image (evidence: [world_units.md](reverse_engineering/world_units.md)). Live IPD verified end-to-end: applied parallax = ipd_runtime·s/z; asymmetric-frustum offset −451 px (predicted −460), per-eye FOV span scale 1.7%, door z agrees between width and parallax.
 
 ## Verdicts (do not re-litigate)
 
@@ -39,7 +39,7 @@ Units are METRES: Havok world gravity is 9.8–9.81 game units/s², zero feet-co
 - Upstream ViewEntry pose injection does NOT steer the draw camera (E2): `pos7c4`/`quat7d4` are OUTPUT channels of the staged round-trip — every write+bump is answered by the copy-back re-asserting the VM's pose within one frame (regression slope 0.00). This also killed the old ViewEntry D1/D2 culling design.
 - `g_CameraTable` (`0x014A2EE0`) is the single upstream injection point (E1b + E2b): static VA, runtime-live, plaintext-filled ~1.7/frame from the camera entity's quat+pos, read by BOTH the draw-camera builder AND the culling/fov consumers.
 
-Full chain (plates in Ghidra; narrative: [render_path.md](reverse_engineering/render_path.md) § Draw-camera constant chain): camera entity pose (heap record) → `CameraTable_FillFromPose` → `g_CameraTable` → per-builder stack entry (clear from `g_CameraPoseClearBlock` `0x00DFBBD0`, live copy from the table, fov from static `0x00B9B688`) → VM thunk `0x00506a26` → `ViewContext_BuildCameraConstants` (`0x008591ac`, plaintext VP build) → VP → record fill (`0x018c45e0 + (bufIdx*32 + viewIdx)*0x70`, bufIdx = `[0x00ff364c]`) → upload gate → device slot 94 → GPU; the same table feeds the culling/fov consumers.
+Full chain (plates in Ghidra; narrative: [draw_camera_chain.md](reverse_engineering/draw_camera_chain.md)): camera entity pose (heap record) → `CameraTable_FillFromPose` → `g_CameraTable` → per-builder stack entry (clear from `g_CameraPoseClearBlock` `0x00DFBBD0`, live copy from the table, fov from static `0x00B9B688`) → VM thunk `0x00506a26` → `ViewContext_BuildCameraConstants` (`0x008591ac`, plaintext VP build) → VP → record fill (`0x018c45e0 + (bufIdx*32 + viewIdx)*0x70`, bufIdx = `[0x00ff364c]`) → upload gate → device slot 94 → GPU; the same table feeds the culling/fov consumers.
 
 ## Pose-hold (2026-10-09)
 

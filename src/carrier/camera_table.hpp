@@ -21,7 +21,7 @@
 //
 // The write lands after every fill and before every consumer by construction:
 // the draw-camera builder reads the table, and the culling volume is derived
-// from the builder's frustum, so culling/LOD follow the head (S6). The cull
+// from the builder's frustum, so culling/LOD follow the head. The cull
 // FOV (as opposed to its rotation) is cull_frustum.cpp's job.
 //
 // Pose source: the OpenXR host IPC state, sampled once per game frame. Without

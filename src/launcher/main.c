@@ -157,7 +157,7 @@ int main(void) // no arguments: everything is resolved from the install layout
     mc2_log("game exe : %ls", game_exe);
     mc2_log("carrier  : %ls", carrier_dll);
 
-    // ---- Start the OpenXR host (S4-1) ----------------------------------------
+    // ---- Start the OpenXR host  ----------------------------------------
     // The host owns the VR session and its IPC section; the carrier connects
     // at stage 1 by name. Spawn it first so the section exists before the
     // carrier attaches. Everything here is non-fatal: no host (or a failed

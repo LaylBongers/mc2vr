@@ -1,7 +1,7 @@
-// Carrier side of the mc2vr IPC (S4-1): connects to the host's shared section
+// Carrier side of the mc2vr IPC: connects to the host's shared section
 // in stage 1 (non-fatal — no host means the game runs exactly as today),
 // registers the game's pid, and runs a low-rate monitor thread that logs
-// session-state transitions and host death. Later milestones (S4-4) read the
+// session-state transitions and host death. The per-eye path reads the
 // pose from the render thread via read_state() — lock-free, never blocking.
 #pragma once
 
@@ -25,7 +25,7 @@ bool read_state(Mc2IpcState *out);
 // Pop one host event. False when none pending.
 bool pop_event(Mc2IpcMsg *out);
 
-// S4-5 session events: drain + act on the host's event ring. THE drain point —
+// Session events: drain + act on the host's event ring. THE drain point —
 // call once per frame from the main thread (slot-5 PostUpdateHook). The event
 // ring is SPSC: this is the ONLY consumer (the 250ms monitor thread no longer
 // pops events; it only reads the seqlock state + watches host death).
@@ -41,14 +41,14 @@ void drain_events();
 // Queue the Shutdown command (idempotent, logged once).
 void send_shutdown();
 
-// S4-2: announce the shared-texture ring geometry once (a=width b=height
+// Announce the shared-texture ring geometry once (a=width b=height
 // c=format). False when not connected or the ring is full.
 bool send_config(uint32_t width, uint32_t height, uint32_t format);
 
-// S4-2: publish one eye's rendered frame in a shared-texture slot
+// Publish one eye's rendered frame in a shared-texture slot
 // (x=frameId y=sharedHandle a=slot b=eye c=width d=height). False when not
 // connected or the command ring is full.
-// poseId (S4-4) = the pose id the frame was rendered with (0 = none).
+// poseId = the pose id the frame was rendered with (0 = none).
 bool send_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
                       uint32_t eye, uint32_t width, uint32_t height,
                       uint32_t poseId);
