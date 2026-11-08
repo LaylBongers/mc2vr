@@ -20,7 +20,7 @@ The goal is to add full-featured VR support. (Motion controls were cancelled —
 
 - One topic per note; link to related notes instead of repeating their content. When a note grows past one topic, split it.
 - Per-address facts live in the Ghidra project, not docs — docs record methodology, cross-cutting facts, and open items, and point to them.
-- Open tracks / known issues live in the note they concern, marked OPEN (e.g. `docs/hud.md`, the staleness issue in `docs/pacing.md`). When a track closes, record the verdict in the note; history lives in git — no changelogs.
+- Open tracks / known issues live in the note they concern, marked OPEN (e.g. `docs/hud.md`, the residual-warp issue in `docs/pacing.md`). When a track closes, record the verdict in the note; history lives in git — no changelogs.
 
 ## Context Budget
 

@@ -12,17 +12,14 @@ Live result: ~135 Hz gameplay (dt avg ~7.4 ms; pass 2 costs 3.2 ms — the wait 
 
 ## Decision: FREE-RUN (closed 2026-10-06)
 
-At ~135 Hz the game outpaces the ~120 Hz host; the host consumes the newest pair and the runtime reprojects.
+At ~135 Hz (window render size — at HMD size it is ~71 Hz, see below) the game outpaces the ~120 Hz host; the host consumes the newest pair and the runtime reprojects.
 
-## KNOWN ISSUE — head-turn judder (OPEN, fixes pending live verification)
+## Head-turn judder — FIXED (live-verified 2026-11-08, "very strong improvement")
 
-Head turns feel choppy/low-rate while the frame rate is fine and the image is smooth with the head still. Error scales with head velocity → the image content and the pose it is submitted with disagree, or the pair is older than it needs to be. Loop audit 2026-11-08 found four defects, all fixed (verify with the next gameplay log):
+Symptom: head turns choppy while frame rate fine and still-head image smooth. Root cause (carrier): the engine builds each frame's VP from the PREVIOUS frame's camtable fill (`camtable: VP union age` = 100% age 1, [camera.md](camera.md)), but the per-eye delta was taken against the current frame's union — the rendered eye was one game frame of head motion off the tagged pose, uncorrectable by the compositor. Fix: the delta uses the union the VP actually carries (`camera_table::union_for_camera`, matched by basis).
 
-1. Commands (FRAME_READY) were drained BEFORE `xrWaitFrame`, so a pair completed during the wait block slipped a frame — image age jittered between 1 and 2 periods with the game/HMD beat. Now late-latched after `xrBeginFrame` ([host.md](host.md)).
-2. The render pose was predicted for the CURRENT frame's display time, though its image reaches the display ≥1 period later. Now predicted for `+1 period`. Evidence: `submit: … warp avg/max` (ms; ~0 ideal, ≈8.3 = one frame behind).
-3. Eyes were taken newest-per-eye, so LEFT of frame N+1 could ship with RIGHT of frame N. Now complete pairs only (`seyes: … pairs/unpaired`).
-4. The host mirror did a blocking full-res staging readback + GDI stretch of both eyes on every fresh frame inside the HMD loop. Now ≤5 Hz, non-blocking (`mirrorMax`).
+Host loop defects fixed in the same audit ([host.md](host.md)): FRAME_READY drained before `xrWaitFrame` (now late-latched after `xrBeginFrame`); render pose predicted for the current frame (now `+1 period`); per-eye newest images mixing two game frames (now complete pairs only, `unpaired=0`); blocking full-res mirror readback in the HMD loop (now ≤5 Hz non-blocking, `mirrorMax` ~2 ms).
 
-Carrier side: the per-eye delta was taken against the CURRENT frame's camtable union, assuming the uploaded VP was built from this frame's fill. If the engine builds a VP from an earlier fill, the rendered eye ≠ the tagged pose by one frame of head motion — exactly this symptom. The delta now uses the union the VP actually carries (matched by basis, `camera_table::union_for_camera`); `camtable: VP union age 0=… 1=…` records which case the game is in (any non-zero ages = that was a live bug).
+## OPEN — residual warp at HMD resolution
 
-If judder remains after these: check SteamVR's frame timing for missed host frames; then (a) timewarp inputs (depth/motion vectors) or (b) throttle the game to HMD cadence via slot-4 `EndOfFrameHook` ([hooks.md](hooks.md)).
+At HMD render size (2016×2240/eye, two passes) gameplay runs ~71 Hz (dt avg ~14 ms), NOT the ~135 Hz measured at window size — the `+1 period` lead assumes a game faster than the HMD. `submit: warp avg` 10–13 ms, max 25 ms; fresh pairs on ~60% of host frames. Next: (1) adaptive lead — predict the published pose by the measured warp (EMA) instead of a fixed period; (2) profile the 71 Hz (GPU at HMD res?) and decide between speed-up and throttling the game to a stable HMD divisor via slot-4 `EndOfFrameHook` ([hooks.md](hooks.md)); (3) timewarp inputs (depth/motion vectors) for the translational residue.
