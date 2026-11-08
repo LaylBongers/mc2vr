@@ -340,7 +340,8 @@ void handle_events(State& s) {
 }
 
 // One frame: wait/begin/locate/render/end. Returns false on a hard error.
-void publish_frame(State& s, XrTime displayTime, const XrView views[2], bool poseOk);
+void publish_frame(State& s, XrTime displayTime, XrDuration period, const XrView views[2],
+                   bool poseOk);
 void drain_commands(State& s);
 
 bool locate(State& s, XrTime t, XrView views[2], bool* poseOk) {
@@ -389,7 +390,7 @@ bool frame(State& s, unsigned n) {
         // This frame's views = the render pose, published at once so the
         // carrier's pass-1 gate releases.
         if (!locate(s, fs.predictedDisplayTime, views, &poseOk)) return false;
-        publish_frame(s, fs.predictedDisplayTime, views, poseOk);
+        publish_frame(s, fs.predictedDisplayTime, fs.predictedDisplayPeriod, views, poseOk);
         const uint32_t want = s.pubFrame;  // == the id just published
 
         // Wait for the pair rendered from it (bounded; see kPairTimeoutMs).
@@ -498,7 +499,7 @@ bool frame(State& s, unsigned n) {
     } else {
         // Not rendering (not VISIBLE): keep the carrier's state current with
         // an untracked publish (the carrier gate is off outside VISIBLE).
-        publish_frame(s, fs.predictedDisplayTime, views, false);
+        publish_frame(s, fs.predictedDisplayTime, fs.predictedDisplayPeriod, views, false);
         drain_commands(s);
     }
 
@@ -513,10 +514,12 @@ bool frame(State& s, unsigned n) {
 
 // Publish the located views (or a tracked=false state-only frame) to the
 // carrier. Eye fov mirrors XrFovF exactly (tangent half-angles).
-void publish_frame(State& s, XrTime displayTime, const XrView views[2], bool poseOk) {
+void publish_frame(State& s, XrTime displayTime, XrDuration period, const XrView views[2],
+                   bool poseOk) {
     HmdFrame f;
     f.tracked = poseOk;
     f.displayTime = displayTime;
+    f.displayPeriod = period;
     for (int e = 0; e < 2; ++e) {
         f.eye[e].pos = {views[e].pose.position.x, views[e].pose.position.y,
                         views[e].pose.position.z};

@@ -1,4 +1,5 @@
 #include "device.hpp"
+#include "eye_share.hpp"
 
 #include <safetyhook.hpp>
 
@@ -184,6 +185,14 @@ HRESULT __stdcall createdevice_hook(void *self, UINT adapter, DWORD device_type,
     D3DPRESENT_PARAMETERS used = {};
     if (pp != nullptr) {
         used = apply_param_policy(*pp, "CreateDevice");
+    }
+    MC2VR_LOG("D3D: CreateDevice behavior flags 0x%08lx (MULTITHREADED %s by the game)",
+              (unsigned long)behavior_flags,
+              (behavior_flags & D3DCREATE_MULTITHREADED) ? "already set" : "not set");
+    if (eye_share::async_completion() && !(behavior_flags & D3DCREATE_MULTITHREADED)) {
+        // The pair-completion thread polls event queries (eye_share.cpp).
+        behavior_flags |= D3DCREATE_MULTITHREADED;
+        MC2VR_LOG("D3D: CreateDevice + D3DCREATE_MULTITHREADED (async frame completion)");
     }
     const HRESULT hr = g_createdevice_hook->stdcall<HRESULT>(self, adapter, device_type,
                                                              focus_window, behavior_flags,

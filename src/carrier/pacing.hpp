@@ -1,19 +1,22 @@
-// Lockstep frame pacing with the host (docs/pacing.md). Main thread only.
-//   - frame_start(): GameShell_FrameTick entry, BEFORE the game's own QPC
-//     sample. While the host session is VISIBLE/FOCUSED: (1) wait (bounded
-//     50 ms) until the host has published a pose newer than the one the last
-//     frame rendered with; (2) feed the game's dt governor the DISPLAY time
-//     delta of that pose instead of the FrameTick body time, so the
-//     simulation advances exactly as far as the display does.
-//   - on_pose_sampled(): the pass-1 pose sample's id (hostFrame+1).
+// Lockstep frame pacing with the host (docs/pacing.md).
+//   - render_gate(): render thread, at the pass-1 pose sample. While the host
+//     session is VISIBLE/FOCUSED, waits (bounded 50 ms) until the host has
+//     published a pose newer than the one the last frame rendered with, and
+//     returns that state. The update thread is never held, so the next
+//     frame's update and render prep overlap the host's wait.
+//   - frame_start(): update thread, GameShell_FrameTick entry, before the
+//     game's QPC sample: feeds the dt governor the display-time step (last
+//     rendered display time + one display period, minus the previous target).
 #pragma once
 
 #include <cstdint>
 
+#include "mc2vr_ipc.h"
+
 namespace mc2vr::pacing {
 
 void frame_start();
-void on_pose_sampled(uint32_t pose_id);
+bool render_gate(Mc2IpcState *st);
 
 // The replay pass (pass 2) skips LtiRenderer_BeginSubmit's GPU drain, so the
 // CPU queues the right eye while the GPU still draws the left (DXVK tracks

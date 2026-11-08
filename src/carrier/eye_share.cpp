@@ -64,7 +64,26 @@ struct Slot {
 Slot g_slots[2][RING_SLOTS] = {};
 bool g_slots_ok = false;
 bool g_config_pending = false; // CONFIG to send once the host is connected
-void *g_query = nullptr; // event query for the pre-publish GPU sync
+void *g_query = nullptr; // event query for the synchronous path
+
+// ---- async completion (default) ----------------------------------------------
+// One event query per ring slot; the render thread issues it after the RIGHT
+// capture and moves on, the completion thread polls it and sends the pair.
+bool g_async = true;  // debug_sync_frame_ready=on -> false
+void *g_qring[RING_SLOTS] = {};
+struct Pending {
+    volatile LONG state;  // 0 free, 1 issued (completion thread owns it)
+    uint64_t frame_id;
+    HANDLE hl, hr;
+    uint32_t pose_l, pose_r;
+    double t_issue;
+};
+Pending g_pend[RING_SLOTS] = {};
+CRITICAL_SECTION g_poll_lock;  // completion thread vs Reset (query lifetime)
+HANDLE g_poll_event = nullptr;  // signalled when a pair is issued
+HANDLE g_poll_thread = nullptr;
+uint64_t g_async_done = 0, g_ring_waits = 0;
+double g_done_sum_ms = 0.0, g_done_max_ms = 0.0;
 
 uint32_t g_ring = 0;     // ring index for the frame being built
 uint64_t g_frame_id = 0; // published (complete) frame ids
@@ -96,6 +115,8 @@ double qpc_ms()
     QueryPerformanceCounter(&t);
     return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
 }
+
+DWORD WINAPI completion_thread(void *);
 
 bool ensure_resources(void *device, void *bb)
 {
@@ -166,6 +187,30 @@ bool ensure_resources(void *device, void *bb)
         return false;
     }
 
+    if (g_async) {
+        if (g_poll_thread == nullptr) {
+            InitializeCriticalSection(&g_poll_lock);
+            g_poll_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            g_poll_thread = CreateThread(nullptr, 0, completion_thread, nullptr, 0, nullptr);
+        }
+        EnterCriticalSection(&g_poll_lock);
+        bool ok = g_poll_thread != nullptr;
+        for (uint32_t i = 0; i < RING_SLOTS && ok; ++i) {
+            g_pend[i].state = 0;
+            if (FAILED(((CreateQuery_t)vt[DSLOT_CreateQuery])(device, D3DQUERYTYPE_EVENT,
+                                                              &g_qring[i])) ||
+                g_qring[i] == nullptr) {
+                ok = false;
+            }
+        }
+        LeaveCriticalSection(&g_poll_lock);
+        if (!ok) {
+            MC2VR_LOG("share: async completion unavailable (thread/query creation failed) — "
+                      "synchronous end-of-frame wait");
+            g_async = false;
+        }
+    }
+
     g_slots_ok = true;
     g_config_pending = true;
     MC2VR_LOG("share: shared RT ring ready (handles eye0: 0x%08x 0x%08x 0x%08x 0x%08x, "
@@ -213,7 +258,85 @@ bool gpu_sync()
     return done;
 }
 
+// Completion thread: sends each issued pair once its event query signals, in
+// frame order. GetData from this thread is safe because the device is created
+// D3DCREATE_MULTITHREADED in async mode (device.cpp).
+DWORD WINAPI completion_thread(void *)
+{
+    for (;;) {
+        bool any = false;
+        EnterCriticalSection(&g_poll_lock);
+        // oldest issued pair first
+        int best = -1;
+        for (uint32_t i = 0; i < RING_SLOTS; ++i) {
+            if (g_pend[i].state == 1 &&
+                (best < 0 || g_pend[i].frame_id < g_pend[best].frame_id)) {
+                best = (int)i;
+            }
+        }
+        if (best >= 0 && g_qring[best] != nullptr) {
+            any = true;
+            Pending &p = g_pend[best];
+            DWORD data = 0;
+            const HRESULT hr = ((QueryGetData_t)(*(void ***)g_qring[best])[QSLOT_GetData])(
+                g_qring[best], &data, sizeof data, 0);
+            if (hr != S_FALSE) {  // S_OK (done) or an error: publish either way
+                const bool ok_l = ipc::send_frame_ready(p.frame_id, (uint64_t)(uintptr_t)p.hl,
+                                                        (uint32_t)best, 0u, g_w, g_h, p.pose_l);
+                const bool ok_r = ok_l && ipc::send_frame_ready(p.frame_id,
+                                                                (uint64_t)(uintptr_t)p.hr,
+                                                                (uint32_t)best, 1u, g_w, g_h,
+                                                                p.pose_r);
+                if (ok_r) {
+                    const double ms = qpc_ms() - p.t_issue;
+                    g_done_sum_ms += ms;
+                    if (ms > g_done_max_ms) g_done_max_ms = ms;
+                    g_async_done++;
+                    g_publishes++;
+                    InterlockedExchange(&p.state, 0);
+                } else {
+                    g_ring_full++;  // retried on the next poll
+                }
+            }
+        }
+        LeaveCriticalSection(&g_poll_lock);
+        if (any) {
+            Sleep(0);
+        } else {
+            WaitForSingleObject(g_poll_event, 2);
+        }
+    }
+    return 0;
+}
+
+// Wait (render thread) until ring slot `i` is no longer owned by the
+// completion thread — only when the host fell 4 pairs behind.
+void wait_slot_free(uint32_t i)
+{
+    if (g_pend[i].state == 0) return;
+    g_ring_waits++;
+    const double t0 = qpc_ms();
+    while (g_pend[i].state != 0 && qpc_ms() - t0 < 50.0) {
+        Sleep(0);
+    }
+}
+
 } // namespace
+
+bool set_sync_frame_ready(const char *value)
+{
+    if (strcmp(value, "on") == 0) g_async = false;
+    else if (strcmp(value, "off") == 0) g_async = true;
+    else return false;
+    MC2VR_LOG("share: debug_sync_frame_ready=%s (%s)", value,
+              g_async ? "completion thread" : "synchronous end-of-frame wait");
+    return true;
+}
+
+bool async_completion()
+{
+    return g_async;
+}
 
 // ---- public entry points ------------------------------------------------------
 
@@ -241,6 +364,9 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
 
     if (eye == 0) {
         g_left_pending = false;
+        if (g_async) {
+            wait_slot_free(g_ring);  // never overwrite a pair still in flight
+        }
     }
     if (!device::blit_surfaces(bb, slot.surf)) {
         // Counted by eye_replay's window as blit failures there; nothing else
@@ -258,6 +384,28 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
         return;  // no LEFT this frame: a lone RIGHT can never complete a pair
     }
     g_left_pending = false;
+
+    if (g_async) {
+        // Fence the pair and hand it to the completion thread; the render
+        // thread goes straight on to the next frame.
+        void *q = g_qring[g_ring];
+        ((QueryIssue_t)(*(void ***)q)[QSLOT_Issue])(q, D3DISSUE_END);
+        DWORD data = 0;
+        ((QueryGetData_t)(*(void ***)q)[QSLOT_GetData])(q, &data, sizeof data,
+                                                         D3DGETDATA_FLUSH);  // submit, no wait
+        Pending &p = g_pend[g_ring];
+        p.frame_id = g_frame_id;
+        p.hl = g_slots[0][g_ring].handle;
+        p.hr = slot.handle;
+        p.pose_l = g_left_pose_id;
+        p.pose_r = view_rewrite::current_pose_id();
+        p.t_issue = qpc_ms();
+        InterlockedExchange(&p.state, 1);
+        SetEvent(g_poll_event);
+        g_frame_id++;
+        g_ring = (g_ring + 1) % RING_SLOTS;
+        return;
+    }
 
     gpu_sync();
 
@@ -281,6 +429,19 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
 
 void on_reset()
 {
+    if (g_poll_thread != nullptr) {
+        // Keep the completion thread off the queries while they go away;
+        // pending pairs are dropped (their textures go with the Reset).
+        EnterCriticalSection(&g_poll_lock);
+        for (uint32_t i = 0; i < RING_SLOTS; ++i) {
+            g_pend[i].state = 0;
+            if (g_qring[i]) {
+                ((Release_t)(*(void ***)g_qring[i])[COM_Release])(g_qring[i]);
+                g_qring[i] = nullptr;
+            }
+        }
+        LeaveCriticalSection(&g_poll_lock);
+    }
     if (g_query) {
         ((Release_t)(*(void ***)g_query)[COM_Release])(g_query);
         g_query = nullptr;
@@ -321,6 +482,13 @@ void report_window()
                   (unsigned long long)g_ipc_skipped,
                   g_sync_n ? g_sync_sum_ms / (double)g_sync_n : 0.0, g_sync_max_ms,
                   (unsigned long long)g_sync_n);
+        if (g_async) {
+            MC2VR_LOG("share window: async completion pairs=%llu fence->done avg=%.2fms "
+                      "max=%.2fms ringWaits=%llu",
+                      (unsigned long long)g_async_done,
+                      g_async_done ? g_done_sum_ms / (double)g_async_done : 0.0, g_done_max_ms,
+                      (unsigned long long)g_ring_waits);
+        }
     }
     g_captures[0] = 0;
     g_captures[1] = 0;
@@ -330,6 +498,8 @@ void report_window()
     g_ipc_skipped = 0;
     g_sync_n = 0;
     g_sync_sum_ms = g_sync_max_ms = 0.0;
+    g_async_done = g_ring_waits = 0;
+    g_done_sum_ms = g_done_max_ms = 0.0;
 }
 
 } // namespace mc2vr::eye_share

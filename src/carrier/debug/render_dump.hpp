@@ -4,16 +4,16 @@
 //   - MidHook at RenderCmd_ExecuteStream's opcode dispatch -> per-opcode
 //     histogram (what actually executes).
 //   - MidHook at RenderQueue_SubmitWorldPackets' per-view loop head ->
-//     per-frame view aggregation + one-shot hex dumps of view-table entries
-//     (the missing field map).
+//     per-frame view aggregation; with debug_view_dumps=on also hex dumps of
+//     view-table entries (one per new index + periodic re-dumps). The dumps
+//     are written from the game thread — tens of lines each, a visible hitch.
 //   - MidHooks at GameShell_FrameTick's two per-frame g_RenderShell slot 5/4
 //     call sites (PostUpdateHook / EndOfFrameHook, both the no-op
-//     VirtHook_NoOp): frame counters + the IPC event drain. Replaced the
-//     cloned-vtable claim 2026-11-08 (no vptr dependency).
+//     VirtHook_NoOp): frame counters + the IPC event drain.
 //   - Poller thread sampling the g_RenderQueue producer counters.
-// MidHook handlers run on the main thread (single-threaded render path);
-// the poller reads their counters cross-thread — plain u64 reads, exact
-// values not required for diagnostics.
+// MidHook handlers run on the game's update/render threads
+// (docs/reverse_engineering/render_threading.md); the poller reads their
+// counters cross-thread — plain u64 reads, exact values not required.
 #pragma once
 
 namespace mc2vr::render {
@@ -28,5 +28,8 @@ void install_early();
 // Post-boot (first Present): the queue poller thread (reads g_RenderQueue
 // fields the engine initializes during boot).
 void install_late();
+
+// mc2vr.conf debug_view_dumps=on|off (default off): view-table entry dumps.
+bool set_view_dumps(const char *value);
 
 } // namespace mc2vr::render

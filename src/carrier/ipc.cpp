@@ -222,6 +222,24 @@ void drain_events()
     }
 }
 
+// The command ring is SPSC; the carrier has several producers (render thread:
+// CONFIG; eye_share's completion thread: FRAME_READY; shutdown path).
+CRITICAL_SECTION g_cmd_lock;
+INIT_ONCE g_cmd_lock_once = INIT_ONCE_STATIC_INIT;
+BOOL CALLBACK init_cmd_lock(PINIT_ONCE, PVOID, PVOID *)
+{
+    InitializeCriticalSection(&g_cmd_lock);
+    return TRUE;
+}
+int locked_push(Mc2IpcMsg *m)
+{
+    InitOnceExecuteOnce(&g_cmd_lock_once, init_cmd_lock, nullptr, nullptr);
+    EnterCriticalSection(&g_cmd_lock);
+    const int r = mc2_ring_push(&g.blk->commands, m);
+    LeaveCriticalSection(&g_cmd_lock);
+    return r;
+}
+
 void send_shutdown()
 {
     if (!connected() || g.stopSent) return;
@@ -229,7 +247,7 @@ void send_shutdown()
     Mc2IpcMsg m;
     ZeroMemory(&m, sizeof m);
     m.type = MC2VR_CMD_SHUTDOWN;
-    if (mc2_ring_push(&g.blk->commands, &m) == 0) {
+    if (locked_push(&m) == 0) {
         MC2VR_LOG("ipc: Shutdown queued");
     } else {
         MC2VR_LOG("ipc: command ring full — Shutdown not delivered");
@@ -240,7 +258,7 @@ void send_shutdown()
 bool push_command(Mc2IpcMsg *m)
 {
     if (!connected()) return false;
-    return mc2_ring_push(&g.blk->commands, m) == 0;
+    return locked_push(m) == 0;
 }
 
 bool send_config(uint32_t width, uint32_t height, uint32_t format)

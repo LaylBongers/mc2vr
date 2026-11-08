@@ -84,8 +84,9 @@ void log_report(double window_sec)
 // and so is this handler: cdecl and stdcall are identical for () on i386.
 void frame_tick_hook()
 {
-    // Lockstep pacing BEFORE the game's own FrameTick runs: the gate, and the
-    // display-time delta fed to the dt governor (docs/pacing.md).
+    // Lockstep pacing BEFORE the game's own FrameTick runs: the display-time
+    // step fed to the dt governor (docs/pacing.md; the gate itself is on the
+    // render thread's pose sample).
     wait_census::mark(wait_census::Mark::FrameEntry);
     pacing::frame_start();
     wait_census::mark(wait_census::Mark::GateDone);

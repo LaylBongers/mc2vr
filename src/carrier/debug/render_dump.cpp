@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstring>
 
 #include "cull_frustum.hpp"
 #include "occluder_boxes.hpp"
@@ -73,6 +74,7 @@ uint32_t g_dumped_idx[ENTRY_DUMP_MAX] = {};
 // (rotating through observed indices); the MidHook performs it so the entry
 // read happens mid-loop on the main thread.
 volatile LONG g_refresh_target = -1;
+bool g_view_dumps = false;  // debug_view_dumps=on
 uint32_t g_refresh_done = 0;
 
 // g_RenderShell slot 4/5 claim test.
@@ -191,7 +193,7 @@ void view_midhook(safetyhook::Context &ctx)
     }
 
     // One-shot dump per new index.
-    if (g_dumps_done < ENTRY_DUMP_MAX) {
+    if (g_view_dumps && g_dumps_done < ENTRY_DUMP_MAX) {
         bool seen = false;
         for (uint32_t d = 0; d < g_dumps_done; d++) {
             if (g_dumped_idx[d] == idx) {
@@ -206,7 +208,7 @@ void view_midhook(safetyhook::Context &ctx)
 
     // Steady-state re-dump requested by the poller (runs here so the entry
     // read stays on the main thread, mid-loop).
-    if (g_refresh_target == (LONG)idx && g_refresh_done < REFRESH_MAX) {
+    if (g_view_dumps && g_refresh_target == (LONG)idx && g_refresh_done < REFRESH_MAX) {
         g_refresh_target = -1;
         g_refresh_done++;
         dump_view_entry(idx, type, entry, false);
@@ -371,7 +373,7 @@ DWORD WINAPI poller_thread(LPVOID)
             report_window();
             windows++;
 
-            if (windows % REFRESH_EVERY_WINDOWS == 0 && g_refresh_done < REFRESH_MAX &&
+            if (g_view_dumps && windows % REFRESH_EVERY_WINDOWS == 0 && g_refresh_done < REFRESH_MAX &&
                 pick != UINT32_MAX) {
                 InterlockedExchange(&g_refresh_target, (LONG)pick);
             }
@@ -397,6 +399,15 @@ bool install_mid(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn
 }
 
 } // namespace
+
+bool set_view_dumps(const char *value)
+{
+    if (strcmp(value, "on") == 0) g_view_dumps = true;
+    else if (strcmp(value, "off") == 0) g_view_dumps = false;
+    else return false;
+    MC2VR_LOG("views: debug_view_dumps=%s", value);
+    return true;
+}
 
 void install_early()
 {

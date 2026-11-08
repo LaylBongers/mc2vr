@@ -15,6 +15,7 @@ struct EyePose {
 
 struct HmdFrame {
     long long displayTime = 0;  // XrTime ns (mock: QPC-derived)
+    long long displayPeriod = 0;  // XrDuration ns (0 = unknown)
     EyePose eye[2];
     bool tracked = false;
 };

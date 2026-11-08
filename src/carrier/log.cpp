@@ -97,8 +97,10 @@ void log_write(const char *fmt, ...)
 
     DWORD written = 0;
     SetFilePointer(g_log_file, 0, nullptr, FILE_END);
+    // No per-line FlushFileBuffers: under Wine it is a disk sync (~5 ms) and
+    // stalls whichever game thread logs. WriteFile already lands in the OS
+    // cache, so lines survive a game crash.
     WriteFile(g_log_file, line, (DWORD)len + 1, &written, nullptr);
-    FlushFileBuffers(g_log_file);
 
     LeaveCriticalSection(&g_log_lock);
 }

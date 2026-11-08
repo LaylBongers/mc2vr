@@ -136,10 +136,22 @@ static void load_conf()
             if (!camera_table::set_probe_enabled(value)) {
                 MC2VR_LOG("conf: debug_camtable_probe=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "debug_sync_frame_ready") == 0) {
+            // A/B: synchronous end-of-frame GPU wait instead of the completion
+            // thread (also keeps the device non-multithreaded).
+            if (!eye_share::set_sync_frame_ready(value)) {
+                MC2VR_LOG("conf: debug_sync_frame_ready=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "debug_keep_replay_drain") == 0) {
             // A/B: keep LtiRenderer_BeginSubmit's GPU drain in the replay pass.
             if (!pacing::set_keep_replay_drain(value)) {
                 MC2VR_LOG("conf: debug_keep_replay_drain=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_view_dumps") == 0) {
+            // View-table entry hex dumps (log-only; written from the game
+            // thread, each one a visible hitch).
+            if (!render::set_view_dumps(value)) {
+                MC2VR_LOG("conf: debug_view_dumps=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_wait_census") == 0) {
             // Main-thread wait census + per-frame phase split (log-only;

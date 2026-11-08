@@ -73,6 +73,7 @@ typedef struct Mc2IpcState {
                                   // can submit the layer with the pose that was rendered)
     float    ipd;                 // meters
     Mc2IpcEyePose eye[2];         // [0]=LEFT [1]=RIGHT
+    int64_t  displayPeriod;       // XrFrameState.predictedDisplayPeriod, ns (0 = unknown)
 } Mc2IpcState;
 
 // ---- Rings (SPSC; fixed-size messages) -------------------------------------

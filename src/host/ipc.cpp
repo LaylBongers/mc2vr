@@ -77,6 +77,7 @@ void publish(const HmdFrame& f, float ipd, uint32_t sessionState,
     ZeroMemory(&st, sizeof st);
     st.flags = f.tracked ? MC2VR_IPC_STF_TRACKED : 0;
     st.displayTime = f.displayTime;
+    st.displayPeriod = f.displayPeriod;
     st.sessionState = sessionState;
     st.recenterCount = recenterCount;
     st.hostFrame = hostFrame;

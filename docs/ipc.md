@@ -3,7 +3,7 @@
 Carrier ↔ host link. Header: `src/common/mc2vr_ipc.h`; implementations `src/host/ipc.cpp`, `src/carrier/ipc.cpp`.
 
 - One section created by the HOST (refuses if one exists), name `mc2vr_ipc_v1` (env `MC2VR_IPC_NAME`).
-- `Mc2IpcState` seqlock (host writer): pose/FOV per eye (OpenXR **angles in radians, not tangents**), IPD, session state, recenter counter, `hostFrame` (`poseId = hostFrame+1`).
+- `Mc2IpcState` seqlock (host writer): pose/FOV per eye (OpenXR **angles in radians, not tangents**), IPD, session state, recenter counter, `hostFrame` (`poseId = hostFrame+1`), `displayTime` / `displayPeriod` of the frame the pose is predicted for (`XrFrameState`).
 - SPSC rings: **events** host→carrier (session state, exit, recenter, `VIEW_SIZE{a=w, b=h}` = the runtime's recommended per-eye size, pushed after swapchain creation — `render_size=hmd`); **commands** carrier→host (`CONFIG`, `FRAME_READY{x=frameId, y=handle, a=slot, b=eye, c=w, d=h, e=poseId}`, `SHUTDOWN`).
 - Both sides watch each other's process (carrier pid in the section header; `hostExiting` flag). The host exits on carrier `Shutdown` or game exit.
 - Carrier connects at attach (non-fatal); a 250 ms monitor thread logs state transitions; the render thread only does lock-free seqlock reads.

@@ -537,13 +537,10 @@ void set_pass_eye(int sign)
 {
     // Pass 1 start (-1 = LEFT): sample the HMD pose ONCE for the whole frame —
     // both eyes render with it and the id travels in FRAME_READY. In lockstep
-    // the frame-start gate (pacing::frame_start) already waited for this publish.
+    // the sample first waits for the host's next publish (pacing::render_gate).
     if (sign < 0 && g_mode == RewriteMode::HmdDelta) {
         Mc2IpcState st;
-        const bool have = ipc::read_state(&st);
-        if (have) {
-            pacing::on_pose_sampled(st.hostFrame + 1);  // next frame's gate waits past it
-        }
+        const bool have = pacing::render_gate(&st);  // lockstep: waits for the host's next pose
         const bool sane = have && (st.flags & MC2VR_IPC_STF_TRACKED) &&
                           eye_is_sane(st.eye[0]) && eye_is_sane(st.eye[1]);
         // On a miss keep the previous snapshot for a short window (same hold as
