@@ -7,7 +7,11 @@
 //   2. Task order: node 0 / 3 / 4 / 2 and build/publish brackets — a one-shot
 //      sequence dump (~3 cycles) after the first 10 s window.
 //   3. Which emitters write which records: PgPrimitiveScratchRecord_Submit tallied by
-//      (emitter return address, sub-view index, record type) — finds the HUD/2D emitters.
+//      (emitter return address, sub-view index, record type).
+//   4. GUI (Scaleform GRenderer impl, vtable 0x00bad178): BeginDisplay calls per frame,
+//      a one-shot caller chain + viewport per distinct caller, GUI records per frame, and
+//      (once per window, at PublishFrame return) where the GUI records sit in the sorted
+//      draw list and which view / RT / stencil fields and VS constants they carry.
 // "build:" log lines. Controlled by mc2vr.conf debug_build_census=on|off (default off).
 #pragma once
 

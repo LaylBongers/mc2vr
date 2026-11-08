@@ -136,6 +136,129 @@ void tally(uint64_t key)
     InterlockedIncrement(&g_tally_overflow);
 }
 
+// ---- GUI (Scaleform GFx 2.x GRenderer implementation, vtable 0x00bad178) ------
+// A record is a GUI record iff PgPrimitiveScratchRecord_Submit's caller lies in
+// the renderer's code range (every scene emitter is outside it).
+bool is_gui_ret(uint32_t ret) { return ret >= MC2_GUI_RENDERER_CODE_LO && ret < MC2_GUI_RENDERER_CODE_HI; }
+
+volatile LONG g_gui_displays = 0;  // BeginDisplay calls (window)
+volatile LONG g_gui_records = 0;   // GUI records submitted (window)
+int64_t g_gui_t_first = 0, g_gui_t_last = 0;  // this build: first BeginDisplay .. last GUI submit
+int64_t g_gui_span_sum = 0;
+uint32_t g_gui_span_n = 0;
+uint32_t g_gui_first_index_sum = 0;  // record index (write count) at the first BeginDisplay
+uint32_t g_gui_first_index_n = 0;
+uint32_t g_gui_bits[0x2000 / 32];  // GUI record indices of the buffer being built
+
+constexpr int BD_SEEN_MAX = 6;  // one-shot BeginDisplay caller log
+uint32_t g_bd_seen[BD_SEEN_MAX];
+int g_bd_seen_n = 0;
+
+// Published-list analysis, requested by the poller, run at PublishFrame return
+// on the render thread, printed by the next report.
+struct Combo {
+    uint64_t key;  // viewType | viewContextIdx | screenIdx | rtWriteMask | stencilMode | viewIdx
+    uint32_t n;
+};
+constexpr int COMBO_MAX = 10;
+struct ListStats {
+    uint32_t walked, gui, first_rank, last_rank, scene_after_last_gui;
+    uint64_t gui_key_min, gui_key_max, scene_key_min, scene_key_max;
+    Combo gui_combo[COMBO_MAX], scene_combo[COMBO_MAX];
+    int gui_combo_n, scene_combo_n;
+    uint32_t vs_count;
+    float vs[8];
+    uint32_t gui_with_cmd, gui_with_vs;
+};
+ListStats g_list;
+volatile LONG g_list_request = 0;  // poller -> render thread
+volatile LONG g_list_ready = 0;    // render thread -> poller
+
+void combo_add(Combo *c, int *n, uint64_t key)
+{
+    for (int i = 0; i < *n; i++) {
+        if (c[i].key == key) {
+            c[i].n++;
+            return;
+        }
+    }
+    if (*n < COMBO_MAX) {
+        c[(*n)++] = {key, 1};
+    }
+}
+
+void analyse_published_list()
+{
+    ListStats st = {};
+    st.first_rank = UINT32_MAX;
+    st.gui_key_min = st.scene_key_min = UINT64_MAX;
+    const uint8_t *base = *(uint8_t *const volatile *)MC2_G_PRIMITIVE_BASE;
+    uint32_t idx = *(volatile const uint16_t *)MC2_G_PRIMITIVE_HEAD;
+    for (uint32_t rank = 0; idx != 0xffff && idx < 0x2000 && rank < 0x2000; rank++) {
+        const uint8_t *rec = base + idx * 0x58;
+        const uint64_t sort_key =
+            *(volatile const uint64_t *)(MC2_G_PRIMITIVE_SORTKEYS + idx * 8) & 0xffffffffffffull;
+        const uint64_t combo = (uint64_t)rec[0x44] | ((uint64_t)rec[0x49] << 8) |
+                               ((uint64_t)*(const uint16_t *)(rec + 0x4a) << 16) |
+                               ((uint64_t)rec[0x48] << 32) | ((uint64_t)rec[0x30] << 40) |
+                               ((uint64_t)*(const uint16_t *)(rec + 0x3a) << 48);
+        const bool gui = (g_gui_bits[idx >> 5] >> (idx & 31)) & 1u;
+        if (gui) {
+            st.gui++;
+            st.first_rank = std::min(st.first_rank, rank);
+            st.last_rank = rank;
+            st.scene_after_last_gui = 0;
+            st.gui_key_min = std::min(st.gui_key_min, sort_key);
+            st.gui_key_max = std::max(st.gui_key_max, sort_key);
+            combo_add(st.gui_combo, &st.gui_combo_n, combo);
+            const uint32_t vcount = *(const uint32_t *)(rec + 0x54);
+            const float *vdata = *(float *const *)(rec + 0x50);
+            if (*(void *const *)(rec + 0x2c) != nullptr) {
+                st.gui_with_cmd++;
+            }
+            if (vcount != 0 && vdata != nullptr) {
+                st.gui_with_vs++;
+                if (st.vs_count == 0 && vcount <= 256 && !IsBadReadPtr(vdata, 8 * sizeof(float))) {
+                    st.vs_count = vcount;
+                    memcpy(st.vs, vdata, sizeof(st.vs));
+                }
+            }
+        } else {
+            st.scene_after_last_gui++;
+            st.scene_key_min = std::min(st.scene_key_min, sort_key);
+            st.scene_key_max = std::max(st.scene_key_max, sort_key);
+            combo_add(st.scene_combo, &st.scene_combo_n, combo);
+        }
+        st.walked++;
+        idx = *(volatile const uint16_t *)(MC2_G_PRIMITIVE_SORTKEYS + idx * 8 + 6);
+    }
+    if (st.gui == 0) {
+        st.scene_after_last_gui = 0;
+    }
+    g_list = st;
+    InterlockedExchange(&g_list_ready, 1);
+}
+
+// Heuristic backtrace (as in stub_trace.cpp): stack dwords in .text preceded by an
+// E8 call, outermost last. Stale stack data can produce false links.
+void log_chain(uint32_t ret, uint32_t esp)
+{
+    const uint32_t stack_top = (uint32_t)((NT_TIB *)NtCurrentTeb())->StackBase;
+    const uint32_t limit = std::min(esp + 4 + 2048, stack_top);
+    char line[512];
+    int n = snprintf(line, sizeof(line), "%08x", ret);
+    int found = 0;
+    for (uint32_t a = esp + 4; a + 4 <= limit && found < 14; a += 4) {
+        const uint32_t v = *(volatile const uint32_t *)a;
+        if (v >= 0x00401006u && v <= 0x00b04fffu && v != ret && *(const volatile uint8_t *)(v - 5) == 0xE8 &&
+            n < (int)sizeof(line) - 16) {
+            n += snprintf(line + n, sizeof(line) - n, " <- %08x", v);
+            found++;
+        }
+    }
+    MC2VR_LOG("build: GUI BeginDisplay chain: %s", line);
+}
+
 // ---- handlers ------------------------------------------------------------------
 uint16_t rs_u16(uintptr_t off)
 {
@@ -164,6 +287,8 @@ void h_build_in(safetyhook::Context &)
     }
     g_build_tid = GetCurrentThreadId();
     g_build_t0 = now;
+    memset(g_gui_bits, 0, sizeof(g_gui_bits));
+    g_gui_t_first = g_gui_t_last = 0;
     InterlockedExchange(&g_build_active, 1);
 }
 
@@ -178,6 +303,10 @@ void h_build_out(safetyhook::Context &)
         g_build_max = std::max(g_build_max, d);
         g_build_n++;
         g_build_t0 = 0;
+    }
+    if (g_gui_t_first != 0 && g_gui_t_last > g_gui_t_first) {
+        g_gui_span_sum += g_gui_t_last - g_gui_t_first;
+        g_gui_span_n++;
     }
 }
 
@@ -202,6 +331,9 @@ void h_pub_out(safetyhook::Context &)
         g_pub_n++;
         g_pub_t0 = 0;
     }
+    if (g_list_request && InterlockedExchange(&g_list_request, 0)) {
+        analyse_published_list();
+    }
 }
 
 void h_submit(safetyhook::Context &ctx)
@@ -214,7 +346,48 @@ void h_submit(safetyhook::Context &ctx)
         InterlockedIncrement(&g_submit_in_build);
     }
     InterlockedIncrement(&g_submit_n);
+    if (is_gui_ret(ret)) {
+        InterlockedIncrement(&g_gui_records);
+        const uint32_t index = *(volatile const uint32_t *)MC2_G_PRIM_WRITE_COUNT;  // this record's slot
+        if (index < 0x2000) {
+            g_gui_bits[index >> 5] |= 1u << (index & 31);
+        }
+        if (g_build_active) {
+            g_gui_t_last = qpc_now();
+        }
+    }
     tally(((uint64_t)ret << 32) | ((uint64_t)view << 16) | ((uint64_t)type << 8) | 1u);
+}
+
+void h_gui_begin_display(safetyhook::Context &ctx)
+{
+    const int64_t now = qpc_now();
+    InterlockedIncrement(&g_gui_displays);
+    if (g_build_active && g_gui_t_first == 0) {
+        g_gui_t_first = now;
+        g_gui_first_index_sum += *(volatile const uint32_t *)MC2_G_PRIM_WRITE_COUNT;
+        g_gui_first_index_n++;
+    }
+    // thiscall: ECX = renderer; [esp] ret, +4 GColor bg, +8 GViewport*, +0xc..+0x18 x0 x1 y0 y1.
+    const uint32_t *sp = (const uint32_t *)ctx.esp;
+    const uint32_t ret = sp[0];
+    for (int i = 0; i < g_bd_seen_n; i++) {
+        if (g_bd_seen[i] == ret) {
+            return;
+        }
+    }
+    if (g_bd_seen_n >= BD_SEEN_MAX) {
+        return;
+    }
+    g_bd_seen[g_bd_seen_n++] = ret;
+    const int32_t *vp = (const int32_t *)sp[2];
+    const float *f = (const float *)&sp[3];
+    MC2VR_LOG("build: GUI BeginDisplay #%d from %08x this=%08x bg=%08x viewport{buf %dx%d, rect %d,%d %dx%d} "
+              "frame x %.1f..%.1f y %.1f..%.1f | build=%d sub-view=%u",
+              g_bd_seen_n, ret, (unsigned)ctx.ecx, sp[1], vp ? vp[0] : -1, vp ? vp[1] : -1, vp ? vp[2] : -1,
+              vp ? vp[3] : -1, vp ? vp[4] : -1, vp ? vp[5] : -1, f[0], f[1], f[2], f[3], (int)g_build_active,
+              (unsigned)rs_u16(MC2_RS_SUBVIEW_CUR_OFF));
+    log_chain(ret, ctx.esp);
 }
 
 struct Site {
@@ -232,6 +405,7 @@ const Site SITES[] = {
     {"PublishFrame call", MC2_PUBLISH_CALL, h_pub_in},
     {"PublishFrame return", MC2_PUBLISH_RETURN, h_pub_out},
     {"PgPrimitiveScratchRecord_Submit", MC2_PRIM_SCRATCH_SUBMIT, h_submit},
+    {"GUI GRenderer::BeginDisplay", MC2_GUI_BEGIN_DISPLAY, h_gui_begin_display},
 };
 constexpr size_t SITE_COUNT = sizeof(SITES) / sizeof(SITES[0]);
 SafetyHookMid g_mid[SITE_COUNT];
@@ -392,10 +566,55 @@ void report_window()
                   (unsigned)((k >> 8) & 0xff), (double)g_rows[i].count / fr);
     }
 
-    // Sequence capture: arm after the first window (steady state), dump once full.
+    // GUI (Scaleform renderer) summary.
+    const LONG gui_displays = InterlockedExchange(&g_gui_displays, 0);
+    const LONG gui_records = InterlockedExchange(&g_gui_records, 0);
+    MC2VR_LOG("build: GUI BeginDisplay=%.2f/frame records=%.1f/frame | span first BeginDisplay..last GUI "
+              "submit avg=%.3fms (n=%u) | first GUI record at write index avg=%.0f",
+              (double)gui_displays / fr, (double)gui_records / fr,
+              g_gui_span_n ? (double)g_gui_span_sum / g_gui_span_n * g_qpc_to_ms : 0.0, g_gui_span_n,
+              g_gui_first_index_n ? (double)g_gui_first_index_sum / g_gui_first_index_n : 0.0);
+    g_gui_span_sum = 0;
+    g_gui_span_n = 0;
+    g_gui_first_index_sum = 0;
+    g_gui_first_index_n = 0;
+    if (g_list_ready && InterlockedExchange(&g_list_ready, 0)) {
+        const ListStats &st = g_list;
+        MC2VR_LOG("build: list walked=%u gui=%u | GUI draw ranks %u..%u (%s), scene records after last GUI=%u | "
+                  "sort keys GUI %012llx..%012llx scene %012llx..%012llx | GUI with cmdStream=%u vsConst=%u",
+                  st.walked, st.gui, st.gui ? st.first_rank : 0, st.last_rank,
+                  st.gui && st.last_rank - st.first_rank + 1 == st.gui ? "contiguous" : "interleaved",
+                  st.scene_after_last_gui, (unsigned long long)(st.gui ? st.gui_key_min : 0),
+                  (unsigned long long)st.gui_key_max,
+                  (unsigned long long)(st.scene_key_min == UINT64_MAX ? 0 : st.scene_key_min),
+                  (unsigned long long)st.scene_key_max, st.gui_with_cmd, st.gui_with_vs);
+        for (int pass = 0; pass < 2; pass++) {
+            const Combo *c = pass ? st.scene_combo : st.gui_combo;
+            const int cn = pass ? st.scene_combo_n : st.gui_combo_n;
+            for (int i = 0; i < cn; i++) {
+                const uint64_t k = c[i].key;
+                MC2VR_LOG("build:   %s fields viewType=%u viewContextIdx=%u screenIdx=%u rtWriteMask=%02x "
+                          "stencilMode=%u viewIdx=%u  n=%u",
+                          pass ? "scene" : "GUI  ", (unsigned)(k & 0xff), (unsigned)((k >> 8) & 0xff),
+                          (unsigned)((k >> 16) & 0xffff), (unsigned)((k >> 32) & 0xff),
+                          (unsigned)((k >> 40) & 0xff), (unsigned)(k >> 48), c[i].n);
+            }
+        }
+        if (st.vs_count) {
+            MC2VR_LOG("build:   first GUI record vsConstCount=%u data %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f",
+                      st.vs_count, st.vs[0], st.vs[1], st.vs[2], st.vs[3], st.vs[4], st.vs[5], st.vs[6],
+                      st.vs[7]);
+        }
+    }
+    InterlockedExchange(&g_list_request, 1);
+
+    // Sequence capture: arm once a window looks like gameplay (>1000 records/frame),
+    // dump once full.
     if (!g_first_window_done) {
-        g_first_window_done = true;
-        InterlockedExchange(&g_seq_armed, 1);
+        if ((double)submits / fr > 1000.0) {
+            g_first_window_done = true;
+            InterlockedExchange(&g_seq_armed, 1);
+        }
     } else if (g_seq_armed == 1 && g_seq_n >= SEQ_MAX) {
         InterlockedExchange(&g_seq_armed, 2);
         dump_sequence();

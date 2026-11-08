@@ -25,6 +25,8 @@ The HUD is composited into the per-eye pass images (screen-space drawing into th
 
 ## Open items
 
+- HUD draw path: Scaleform GFx renderer → ordinary draw records ([reverse_engineering/gui_renderer.md](reverse_engineering/gui_renderer.md)); where its transform reaches the GPU is still open there.
+
 - [ ] Pre-fix HUD-offset measurement on the existing dumps
 - [ ] HUD technique census at the upload gate (screen-space records list, registers, cadence — is the crosshair a separate technique from menus/HUD?)
 - [ ] Comfort distance vs zero-disparity (infinity) decision

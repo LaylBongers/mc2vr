@@ -485,3 +485,14 @@
 #define MC2_G_SCENE_BUILD_MS ((uintptr_t)0x01175624u)        // engine's own build timer (float ms)
 #define MC2_RS_SUBVIEW_COUNT_OFF ((uintptr_t)0x2b90u)        // g_RenderShell u16 sub-view count
 #define MC2_RS_SUBVIEW_CUR_OFF ((uintptr_t)0x2b92u)          // g_RenderShell u16 current sub-view
+// Published draw-record list (read at PublishFrame return): g_PrimitiveBase (ptr),
+// g_PrimitiveHead (u16), sort-key/next table (8-byte entries: 6-byte key, u16 next).
+#define MC2_G_PRIMITIVE_BASE ((uintptr_t)0x0116977cu)
+#define MC2_G_PRIMITIVE_HEAD ((uintptr_t)0x01169780u)
+#define MC2_G_PRIMITIVE_SORTKEYS ((uintptr_t)0x01153700u)
+// Scaleform GFx 2.x GRenderer implementation (vtable 0x00bad178, ctor 0x004adfe0):
+// BeginDisplay (slot 5) entry, and the class's code range (all its draw-record
+// emitters lie inside it, every scene emitter outside).
+#define MC2_GUI_BEGIN_DISPLAY ((uintptr_t)0x004aefd0u)
+#define MC2_GUI_RENDERER_CODE_LO ((uintptr_t)0x004ae2d0u)
+#define MC2_GUI_RENDERER_CODE_HI ((uintptr_t)0x004b051cu)
