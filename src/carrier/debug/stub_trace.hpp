@@ -1,7 +1,7 @@
 // SecuROM-stub callback tracer (docs/reverse_engineering/vm_stub_callbacks.md).
 //
-// Question: does the protected packet processing (call site 0x004c99f9 ->
-// thunk 0x0050c660 -> 0x024F2170)
+// Question: does the protected routine behind call site 0x004c99f9 (thunk
+// 0x0050c660 -> 0x024F2170, since mapped: a handle-event loop)
 // call back into plaintext code? Method (sanctioned — plaintext neighbors
 // only, the VM is never touched):
 //   - bracket the stub call with two MidHooks (before / after the call) to

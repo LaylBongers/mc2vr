@@ -1,6 +1,6 @@
 # VM stub callbacks (does the opaque stub call plaintext?)
 
-Question: does the render-path packet processing (call site `0x004c99f9` → thunk `0x0050c660` → `0x024F2170`, [securom_vm.md](securom_vm.md)) call plaintext? Boundary rules: [securom_vm.md](securom_vm.md).
+Question: does the protected routine behind call site `0x004c99f9` (thunk `0x0050c660` → `0x024F2170`) call plaintext? It was assumed to be the render-packet processing. It has since been statically mapped as `HandleEvents_DispatchHiNibble`, a handle-event loop that calls the three handle-tree walkers below, not render code ([securom_vm.md](securom_vm.md)). The results stand; "stub window" means that loop.
 
 Tool: the tracer in `src/carrier/debug/stub_trace.cpp` (`mc2vr.conf debug_stub_trace=on`): MidHooks bracket the stub call (phases PRE / STUB / POST) and the entry of ~15 plaintext helpers (pose store, view/camera records, draw-record init, technique/shader constant resolvers); each hit logs phase + caller return address + region (`.text` / `Stext`/`.securom`/... / other). Log lines: `trace: <fn> called from <addr> [<region>] phase=<..>` (one-shot per distinct caller) and a 10s `trace: window` table. A hit with phase STUB and a non-`.text` caller = the stub (or protected code it runs) called plaintext directly.
 
@@ -16,4 +16,4 @@ Tool: the tracer in `src/carrier/debug/stub_trace.cpp` (`mc2vr.conf debug_stub_t
 
 ## Open
 
-- What the stub's plaintext callbacks do (`FUN_0050c106` recursive handle-tree walk, see its Ghidra plate); why `ViewManager_Update` never fired in the traced run.
+- What the handle-tree walkers do semantically (`FUN_0050c106` / `FUN_0050b8b0` / `FUN_0050bcb0` on object `0x00d6bb24`, per `g_HandleEventQueue` high-nibble state change — Ghidra plates); why `ViewManager_Update` never fired in the traced run.

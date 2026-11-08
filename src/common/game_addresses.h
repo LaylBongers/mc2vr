@@ -55,8 +55,8 @@
 // Camera staging block inside the frame-ctx object (RenderQueue_SubmitWorldPackets
 // plate): per active view, a 0x30-byte record staged at this+0xc2110+idx*0x30 —
 // {pos3, serial, rot16=quat @+0x10, lodByte@+0x20} — copied there by the PLAINTEXT
-// staging code (watch-proven: 0x0048EC46/0x0048EC5E) and consumed by the protected
-// packet processing (thunk 0x0050c660) post-walk. Watching it catches the culling consumer's reads.
+// staging code (watch-proven: 0x0048EC46/0x0048EC5E) and consumed post-walk by an
+// unlocated consumer (not thunk 0x0050c660). Watching it catches the culling consumer's reads.
 #define MC2_VIEW_STAGING_OFF ((uintptr_t)0xc2110u)
 #define MC2_VIEW_STAGING_STRIDE ((uintptr_t)0x30u)
 #define MC2_VIEW_STAGING_QUAT_OFF ((uintptr_t)0x10u)
@@ -117,8 +117,8 @@
 #define MC2_QUEUE_COUNTERS_B ((uintptr_t)0x00ff362cu) // packed u16 producer batch
 
 // g_RenderQueue2 (0x00ff3650) — 2D/overlay submissions (docs/reverse_engineering/view_table.md).
-// No plaintext xref: the frame-ctx block hands &g_RenderQueue2 to the protected
-// packet processing (thunk 0x0050c660) (frame-ctx +0x78/+0x90; queue1's counters are at +0x60/+0x6c/+0x9c/+0xa8).
+// No plaintext xref: the frame-ctx block carries &g_RenderQueue2 to an unlocated
+// render-worker consumer (frame-ctx +0x78/+0x90; queue1's counters are at +0x60/+0x6c/+0x9c/+0xa8).
 // Same struct as g_RenderQueue (elem +0x04, cap +0x08, buffer +0x0c, countersA +0x10
 // = low16 consumer-advanced / high16 producer elements, countersB +0x14). HUD
 // timing: the carrier samples these counters at Present + pass boundaries because
@@ -463,3 +463,25 @@
 // GetData(query, 0, 0, D3DGETDATA_FLUSH) (0x0074ab5d); EAX = 1 (S_FALSE)
 // enters the Sleep(0) spin until the GPU is idle, anything else exits.
 #define MC2_LTI_BEGINSUBMIT_DRAIN_CHECK ((uintptr_t)0x0074ab5fu)
+
+// Scene -> draw-record build (docs/reverse_engineering/scene_record_build.md;
+// plates in Ghidra). All plaintext .text MidHook sites, no branch targets
+// inside the patched bytes (checked 2026-11-08). Used by debug/build_census.
+#define MC2_RENDERTASK_BEGINFRAME ((uintptr_t)0x0046a270u)   // task node 0 entry
+#define MC2_RENDERTASK_RENDERFRAME ((uintptr_t)0x0046a290u)  // task node 2 entry (call CheckDevice)
+#define MC2_RENDERTASK_BUILDSCENE ((uintptr_t)0x0046a2c0u)   // task node 3 entry
+#define MC2_RENDERTASK_PUBLISH ((uintptr_t)0x0046a300u)      // task node 4 entry
+// RenderShell_BuildSceneRecords (ESI = g_RenderShell): entry, and the loop-exit
+// block `lea ecx,[esp+8]` before the closing QPC (x87 stack empty there).
+#define MC2_BUILDSCENE_ENTRY ((uintptr_t)0x0085ac50u)
+#define MC2_BUILDSCENE_LOOP_DONE ((uintptr_t)0x0085ad04u)
+// LtiRenderer_PublishIfNewFrame: `call PgPrimitive_PublishFrame` and its successor.
+#define MC2_PUBLISH_CALL ((uintptr_t)0x0074add1u)
+#define MC2_PUBLISH_RETURN ((uintptr_t)0x0074add6u)
+// PgPrimitiveScratchRecord_Submit entry ([esp] = emitter return address).
+#define MC2_PRIM_SCRATCH_SUBMIT ((uintptr_t)0x00854910u)
+#define MC2_G_PRIM_WRITE_COUNT ((uintptr_t)0x00ff36f0u)      // records written this frame (u32)
+#define MC2_G_PRIM_SCRATCH_TYPE ((uintptr_t)0x0116374cu)     // scratch record type byte
+#define MC2_G_SCENE_BUILD_MS ((uintptr_t)0x01175624u)        // engine's own build timer (float ms)
+#define MC2_RS_SUBVIEW_COUNT_OFF ((uintptr_t)0x2b90u)        // g_RenderShell u16 sub-view count
+#define MC2_RS_SUBVIEW_CUR_OFF ((uintptr_t)0x2b92u)          // g_RenderShell u16 current sub-view

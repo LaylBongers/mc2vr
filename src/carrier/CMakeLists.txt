@@ -25,6 +25,7 @@ add_library(mc2vr_carrier SHARED
     debug/render_dump.cpp
     debug/rt_probe.cpp
     debug/stub_trace.cpp
+    debug/build_census.cpp
     debug/stream_capture.cpp
     debug/vm_dump.cpp
     debug/watch.cpp

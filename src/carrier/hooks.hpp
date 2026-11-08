@@ -22,4 +22,8 @@ bool install();
 // diagnostics — the count is only correlated by same-thread callers anyway).
 uint64_t frame_count();
 
+// Thread ID of the last GameShell_FrameTick entry (the update thread); 0
+// before the first frame. For diagnostics that label threads.
+uint32_t update_thread_id();
+
 } // namespace mc2vr::hooks

@@ -27,7 +27,8 @@ const char *const PHASE_NAME[PHASE_COUNT] = {"PRE", "STUB", "POST"};
 volatile uint32_t g_phase = PRE;
 uint64_t g_phase_frame = UINT64_MAX;
 
-// The packet-processing call: `call 0x0050c660` (thunk -> protected 0x024F2170)
+// The bracketed call: `call 0x0050c660` (thunk -> 0x024F2170, a handle-event
+// loop — not packet processing, docs/reverse_engineering/securom_vm.md)
 // at 0x004c99f9 (5 bytes); the next
 // instruction is at 0x004c99fe. Both are plaintext .text.
 constexpr uintptr_t STUB_CALL_SITE = 0x004c99f9u;

@@ -28,6 +28,7 @@ LARGE_INTEGER g_prev_qpc = {};
 LARGE_INTEGER g_window_start = {};
 
 uint64_t g_total_frames = 0;
+volatile DWORD g_update_tid = 0;  // thread running GameShell_FrameTick
 uint64_t g_window_frames = 0;
 double g_window_dt_sum = 0.0;
 double g_window_dt_min = 0.0;
@@ -87,6 +88,7 @@ void frame_tick_hook()
     // Lockstep pacing BEFORE the game's own FrameTick runs: the display-time
     // step fed to the dt governor (docs/pacing.md; the gate itself is on the
     // render thread's pose sample).
+    g_update_tid = GetCurrentThreadId();
     wait_census::mark(wait_census::Mark::FrameEntry);
     pacing::frame_start();
     wait_census::mark(wait_census::Mark::GateDone);
@@ -192,6 +194,11 @@ bool install()
 uint64_t frame_count()
 {
     return g_total_frames;
+}
+
+uint32_t update_thread_id()
+{
+    return g_update_tid;
 }
 
 } // namespace mc2vr::hooks

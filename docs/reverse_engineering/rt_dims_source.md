@@ -39,7 +39,7 @@ Height readers mirror the width readers.
 - It computes the new/old ratios before storing the fields; they go to `FUN_00709900` in XMM0/XMM1.
 - Callees:
   - `RenderShell_SetupViewports` (AX = view mode 1/2, ECX = this);
-  - `FUN_00854da0` ×2: a **SecuROM VM thunk** with opaque register inputs, which is why the function is not reimplemented;
+  - `FUN_00854da0` ×2: `PgPrimitive_PublishFrame` — despite its `jmp [slot]`, a plaintext call gate (input: ZF from `cmp [0x017c5518],0`), [scene_record_build.md](scene_record_build.md). This was the stated reason the function is not reimplemented; that reason no longer holds;
   - `FUN_00609ef0` (1 stack arg, callee-popped);
   - `FUN_00709900`.
 - Epilogue at `0x007494d5` (single branch target).

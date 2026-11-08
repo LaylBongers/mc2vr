@@ -26,7 +26,7 @@ How to work with the Ghidra project safely. Locating/identifying code: [re_metho
 
 ## Host disassembly
 
-For code Ghidra lacks, or to cross-check it: `objdump -D -b binary -m i386 -M intel --adjust-vma=<va>` on bytes from `read-memory` or read straight from the exe (fixed base, no relocations: file offset = section raw offset + VA − section VA). capstone/`cstool` are installed on the host too (not inside PyGhidra).
+For code Ghidra lacks, or to cross-check it: `objdump -D -b binary -m i386 -M intel --adjust-vma=<va>` on bytes from `read-memory` or read straight from the exe (fixed base, no relocations: file offset = section raw offset + VA − section VA). capstone/`cstool` are installed on the host too (not inside PyGhidra). For SecuROM-mutated routines, `tools/securom_trace.py <exe> <va> [--listing]` does recursive descent through junk detours and `push ret; jmp f` / `push ret; push f; ret` calls, and prints the reach, the calls and the absolute refs ([securom_vm.md](securom_vm.md)).
 
 ## Tool-call gotchas
 

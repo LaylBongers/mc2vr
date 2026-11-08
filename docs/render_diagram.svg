@@ -49,9 +49,9 @@
 <text x="372" y="518" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">→ CamPose_FillEntryFov 0x00466615 (fov fields from static 0x00B9B688)</text>
 <polyline points="690.0,526 690.0,546" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
 <rect x="358" y="546" width="664" height="64" rx="8" fill="url(#hatch)" stroke="#111" stroke-width="2"/>
-<text x="372" y="566" text-anchor="start" font-size="13" font-weight="bold" fill="#fff">call 0x004c99f9 → thunk 0x0050c660 → 0x024F2170  (protected packet processing)</text>
-<text x="372" y="584" text-anchor="start" font-size="11" font-weight="normal" fill="#e0e4ee">opaque — only ORCHESTRATES: calls the plaintext builder (thunk 0x00506a26)</text>
-<text x="372" y="600" text-anchor="start" font-size="11" font-weight="normal" fill="#e0e4ee">never hooked; we write the data it reads (g_CameraTable) and the data it produces (records)</text>
+<text x="372" y="566" text-anchor="start" font-size="13" font-weight="bold" fill="#fff">RenderShell_BuildSceneRecords 0x0085ac50  (task node 3, plaintext)</text>
+<text x="372" y="584" text-anchor="start" font-size="11" font-weight="normal" fill="#e0e4ee">per sub-view: gate 0x008591a0 → camera builder; Scene_EmitViewPrimitives → record emitters</text>
+<text x="372" y="600" text-anchor="start" font-size="11" font-weight="normal" fill="#e0e4ee">records published by PgPrimitive_PublishFrame 0x00854da0 (scene_record_build.md)</text>
 <polyline points="690.0,610 690.0,630" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
 <text x="700.0" y="624" text-anchor="start" font-size="10" font-weight="normal" fill="#5b6b8a" font-style="italic">camera entry</text>
 <rect x="358" y="630" width="664" height="94" rx="8" fill="#eaf4ea" stroke="#5b8a5b" stroke-width="1.5"/>

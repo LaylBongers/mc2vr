@@ -17,6 +17,7 @@
 #include "ipc.hpp"
 #include "log.hpp"
 #include "stub_trace.hpp"
+#include "build_census.hpp"
 #include "stream_capture.hpp"
 #include "pacing.hpp"
 #include "view_rewrite.hpp"
@@ -323,6 +324,7 @@ void report_window()
     camera_table::report_window();
     cull_frustum::report_window();
     trace::report_window();
+    build_census::report_window();
     s2c::report_window();
     eye_replay::report_window();
     render_outputs::report_window();
@@ -443,6 +445,9 @@ void install_early()
 
     // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();
+
+    // Optional scene -> draw-record build census (mc2vr.conf debug_build_census=on).
+    build_census::install();
 
     // SubmitToGPU two-pass stereo replay InlineHook (always on).
     s2c::install();

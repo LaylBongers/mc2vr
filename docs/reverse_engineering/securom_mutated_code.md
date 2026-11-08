@@ -2,7 +2,7 @@
 
 Found 2026-10-03 with the stub tracer ([vm_stub_callbacks.md](vm_stub_callbacks.md)); more examples from the 2026-10-06 E1/E1b watch runs. Boundary classification: [securom_vm.md](securom_vm.md).
 
-Protected code is not a closed box: native code in `.securom` (e.g. `0x024f22b6`, inside the packet-processing routine `0x024F2170`) calls plaintext functions directly, and ordinary-looking `.text` addresses can be SecuROM-MUTATED code:
+Protected code is not a closed box: native code in `.securom` (e.g. `0x024f22b6`, inside the handle-event loop `0x024F2170`) calls plaintext functions directly, and ordinary-looking `.text` addresses can be SecuROM-MUTATED code:
 
 - functions split into blocks that share one stack frame (`0x0050c0f0` prologue → `0x00504a95` thunk → body `0x0050c106`),
 - `push ret; jmp target` call sequences (`0x0058f010`) that auto-analysis does not disassemble,
