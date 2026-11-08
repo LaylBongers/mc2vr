@@ -15,6 +15,7 @@
 #include "hooks.hpp"
 #include "log.hpp"
 #include "debug/rt_probe.hpp"
+#include "render_size.hpp"
 
 namespace mc2vr::render_outputs {
 
@@ -109,9 +110,24 @@ bool transfer(void **holder, void *ours)
     return true;
 }
 
-bool create_surface(void *device, size_t slot_index, const D3DSURFACE_DESC &d, void **out,
+// The engine's render size (RenderShell +0x2b98/+0x2b9c) — every engine chain
+// surface is sized from it; the carrier front/depth follow it too. Stock it
+// equals the swapchain size; with render_size=WxH it is the HMD size.
+bool render_dims(uint32_t *w, uint32_t *h)
+{
+    *w = *(volatile const uint32_t *)(MC2_G_RENDERSHELL + MC2_RS_SCREEN_W_OFF);
+    *h = *(volatile const uint32_t *)(MC2_G_RENDERSHELL + MC2_RS_SCREEN_H_OFF);
+    return *w != 0 && *h != 0;
+}
+
+bool create_surface(void *device, size_t slot_index, D3DSURFACE_DESC d, void **out,
                     const char *what)
 {
+    uint32_t rw = 0, rh = 0;
+    if (render_dims(&rw, &rh)) {
+        d.Width = rw; // the swapchain's desc supplies format; size = render size
+        d.Height = rh;
+    }
     const D3DMULTISAMPLE_TYPE ms = g_have_msaa ? g_msaa : d.MultiSampleType;
     const DWORD msq = g_have_msaa ? g_msaa_q : d.MultiSampleQuality;
     void *s = nullptr;
@@ -201,6 +217,19 @@ void take_over(const char *reason)
     // surfaces simply misses the cache and binds.
 
     g_takeovers++;
+    // Consistency check: the engine's main RT must be at the render size (a
+    // creation path that sizes it from the swapchain would render the world
+    // into a mismatched target — black world, live 2026-11-08).
+    {
+        D3DSURFACE_DESC md = {};
+        uint32_t rw = 0, rh = 0;
+        if (render_dims(&rw, &rh) && get_desc(*slot(MC2_RS_RT_TABLE_OFF), &md) &&
+            (md.Width != rw || md.Height != rh)) {
+            MC2VR_LOG("outputs: WARNING engine main RT is %ux%u but the render size is %ux%u "
+                      "(%s) — a chain-creation path is not covered",
+                      md.Width, md.Height, rw, rh, reason);
+        }
+    }
     MC2VR_LOG("outputs: took over engine outputs (%s, frame %llu): front %p -> %p, "
               "auto depth %p -> %p%s",
               reason, (unsigned long long)hooks::frame_count(), old_front, g_front, old_auto,
@@ -271,6 +300,7 @@ void __fastcall setup_hook(void *self, void *edx, uint32_t flag)
 {
     rt_probe::on_setup_enter(self);
     g_setup_hook.fastcall<void>(self, edx, flag);
+    render_size::after_setup(); // the mutated stretch re-snapped aspect
     take_over("SetupRenderTargets");
 }
 
@@ -369,7 +399,11 @@ void on_present(void *device)
     RECT r;
     const bool bars = fit_rect(sd, bd, &r);
     if (sd.MultiSampleType != D3DMULTISAMPLE_NONE && bars) {
-        return; // an MSAA resolve cannot stretch; only the mirror path scales
+        // An MSAA resolve cannot stretch: resolve 1:1 first, then scale.
+        src = resolve_front();
+        if (!src) {
+            return;
+        }
     }
     if (bars) {
         ((ColorFill_t)(*(void ***)device)[DSLOT_ColorFill])(device, bb, nullptr,

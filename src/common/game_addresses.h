@@ -400,3 +400,30 @@
 // BeginSubmit (0x00855766). The carrier sets it before pass 1 to retire the
 // duplicate per-frame Present (render_outputs::skip_next_present).
 #define MC2_G_SUPPRESS_PRESENT ((uintptr_t)0x011755c3u)
+
+// Render-size policy sites (render_size.cpp; docs/render_resolution.md §1).
+// OnScreenResize epilogue: `pop edi` after the last callee — single branch
+// target (from 0x007494c2) on its first byte; the 5-byte patch spans
+// pop edi / pop ebx / mov esp,ebp / pop ebp (ret 4 at 0x007494da).
+#define MC2_ONSCREENRESIZE_EPILOGUE ((uintptr_t)0x007494d5u)
+// SetupRenderTargets' cfg -> fields store (`mov [ebx+0x2b98],ecx`; ECX =
+// cfg W, EAX = cfg H, loaded just before).
+#define MC2_SETUP_FIELD_STORE ((uintptr_t)0x00749500u)
+
+// SetupRenderTargets plaintext tail: the main render chain (main texture,
+// depth copy, scene depth, half-size downsample targets) is sized from the
+// FRONT surface's desc — GetDesc([edi] = +0x3ea4) at 0x0074a2b3 into a stack
+// D3DSURFACE_DESC at [esp+0x18] (Width [esp+0x30], Height [esp+0x34]), NOT
+// from the render fields. MidHook site = `mov ebx,eax` right after the call
+// (EAX = HRESULT; no branch targets in the patched bytes).
+#define MC2_SETUP_CHAIN_DESC ((uintptr_t)0x0074a2c1u)
+#define MC2_SETUP_CHAIN_DESC_ESP_OFF ((uintptr_t)0x18u)
+
+// RenderSystem_CheckDevice body range (true entry 0x0074ce90 — the render
+// task's per-frame call at 0x0046a290; Ghidra's function starts at
+// 0x0074ce9f). Its TestCooperativeLevel call is the only one render_size
+// answers with D3DERR_DEVICENOTRESET to trigger the engine's own device-lost
+// recovery (release -> Reset -> OnScreenResize -> restore) on a render-size
+// switch.
+#define MC2_CHECKDEVICE_BEGIN ((uintptr_t)0x0074ce90u)
+#define MC2_CHECKDEVICE_END ((uintptr_t)0x0074d0ccu)

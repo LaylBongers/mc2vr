@@ -23,8 +23,9 @@ OnScreenResize (and the mutated SetupRenderTargets stretch again) sets the 16:9 
 
 ## Q1 — surface census (static)
 
-Backbuffer-derived (request sizes come from the fields → follow a field change automatically):
-- PgLtiRendererPc.cpp (`PgLtiRendererPc_SetupRenderTargets`): `_MainColorSurf` + `_DepthBufferCopySurface` (full), `_DownsampleColorSurfHDR` + `_DownsampleZBufSurf` (half), scene depth (D24S8, full, only in one depth mode — [render_target_table.md](render_target_table.md)). Created through a SecuROM-mutated stretch (0x007495b3–0x0074a17f).
+Backbuffer-derived:
+- PgLtiRendererPc.cpp (`PgLtiRendererPc_SetupRenderTargets`): `_MainColorSurf` + `_DepthBufferCopySurface` (full), `_DownsampleColorSurfHDR` + `_DownsampleZBufSurf` (half), scene depth (D24S8, full, only in one depth mode — [render_target_table.md](render_target_table.md)). **CORRECTED live 2026-11-08: these are sized from the FRONT's `GetDesc`** (`0x0074a2b3`, the swapchain backbuffer at that point), **not from the fields.** The first native run (`render_size=2016x2240`) left them at 2560×1440 → black world. The render_size MidHook at `0x0074a2c1` rewrites that desc. Created in the plaintext tail after the mutated stretch.
+- Field-derived (follow a field change automatically): the level-load sets below (bloom, clouds, water) — live at native: bloom 1008×1120…, water 672×746.
 - PgLtiBloomPc.cpp (`PgLtiBloom_CreateSurfaces`): `_BlurH/VSurface[i]` = (W×k)/d, d∈{2,4,8,16}.
 - PgCloudsWin32.cpp: `mCloudOutRT` (W×k/2). PgWaterWin32.cpp: `_pReflectionSurf`/`_pReflectionSurfZBuf` (W×k/3), `_pWaterDepthCopySurf` (full W/H).
 
@@ -48,5 +49,11 @@ The only known desc/GetViewport readback is the debug dump `RenderCmd_DumpTarget
 
 - Log CreateTexture/CreateRenderTarget/CreateDepthStencilSurface sizes+callers across gameplay AND menus to catch runtime-created surfaces the static census can't see (movie/HUD textures, menu rebuilds), and verify the classification live.
 - Boot order — ANSWERED live 2026-11-08: `SetupRenderTargets` is entered first. Its leading `FUN_00749270` creates the device and calls `OnScreenResize(cfg)` (stack `0x0074d148<0x0074cdc1<0x0074c849<0x00749287<0x007494f5`). Then Setup copies cfg → fields and creates the chain. After boot: fields 2560×1440, flag169=1, aspect 1.7778, mouse scale 1.0. Reset/res-change order (live, run 3): Reset → `RenderSystem_CheckDevice` → `OnScreenResize(cfg)` (from `0x0074d07d`), with no `SetupRenderTargets`, so the stretch's aspect re-snap only happens at boot. 1920×1080 kept 16:9 (flag 1, aspect 1.7778). A non-16:9 render size remains untested.
-- Calling conventions of OnScreenResize's callees (`FUN_0085a9b0`, `FUN_00854da0`, `FUN_00609ef0`, `FUN_00709900`) — precondition for replacing it ([../render_resolution.md](../render_resolution.md)).
+- ~~OnScreenResize callee conventions~~ ANSWERED 2026-11-08 (Ghidra plates). OnScreenResize itself takes W on the stack (callee-popped), H in EAX and `this` in ESI. Its callees:
+  - `RenderShell_SetupViewports` (`0x0085a9b0`): AX = view mode, ECX = `this`. The 16:9 flag matters only for the split-screen layout.
+  - `FUN_00854da0` (×2): a **SecuROM VM thunk** with opaque register inputs.
+  - `FUN_00609ef0`: 1 stack argument, callee-popped.
+  - `FUN_00709900` (Bink rects): new/old ratios in XMM0/XMM1, computed before the field stores.
+
+  Verdict: don't reimplement OnScreenResize. Rewrite its inputs and post-fix aspect/mouse ([../render_resolution.md](../render_resolution.md) §1).
 - reset_hook counters as the canary for engine-internal rebuild loops once a size change is live.

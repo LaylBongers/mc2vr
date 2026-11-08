@@ -9,6 +9,7 @@
 #include "eye_replay.hpp"
 #include "eye_share.hpp"
 #include "render_outputs.hpp"
+#include "render_size.hpp"
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "ipc.hpp"
@@ -182,6 +183,22 @@ static void load_conf()
             // Retired 2026-11-08: carrier-owned outputs are always on; the
             // eye-RT redirect and the monitor pin are gone (docs/stereo.md).
             MC2VR_LOG("conf: %s is retired (carrier-owned outputs are always on) — ignored", key);
+        } else if (strcmp(key, "render_size") == 0) {
+            // Render size W×H (docs/render_resolution.md §1): the engine's
+            // render chain + the carrier outputs run at W×H; the window and
+            // swapchain stay stock. off = render size = window size.
+            if (!render_size::set_size(value)) {
+                MC2VR_LOG("conf: render_size=%s not recognized (use WxH, e.g. 2016x2240, or off)",
+                          value);
+            }
+        } else if (strcmp(key, "render_size_follow_hmd") == 0) {
+            if (!render_size::set_follow_hmd(value)) {
+                MC2VR_LOG("conf: render_size_follow_hmd=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "render_aspect") == 0) {
+            if (!render_size::set_aspect(value)) {
+                MC2VR_LOG("conf: render_aspect=%s not recognized (use true|snap)", value);
+            }
         } else if (strcmp(key, "eye_pass") == 0) {
             // Deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
             if (!eye_replay::set_pass_enabled(value)) {
@@ -371,6 +388,7 @@ void init()
     render::install_early();
     rt_probe::install_early(); // no-op unless debug_rt_probe=on
     render_outputs::install();  // carrier-owned outputs: setup wrap + restore MidHook
+    render_size::install();     // render_size=WxH: OnScreenResize / setup-store policy
     // Device-hook chain root (vsync patch + device VmtHook at creation):
     // RenderSystem_Init calls Direct3DCreate9 during boot, so this must be in
     // place before the game resumes.

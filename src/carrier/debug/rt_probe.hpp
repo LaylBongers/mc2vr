@@ -19,6 +19,9 @@ void install_early();
 
 // SetupRenderTargets entry (called by render_outputs' wrapper, main thread).
 void on_setup_enter(void *self);
+// OnScreenResize entry with the ENGINE's args (render_size's entry MidHook,
+// before any rewrite).
+void on_osr_enter(uint32_t w, uint32_t h, uintptr_t self, uintptr_t esp);
 
 // Device-hook taps (device.cpp, render thread). `ret` = the device method's
 // return address (the immediate caller).

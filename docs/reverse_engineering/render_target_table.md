@@ -10,7 +10,7 @@ The engine's frame outputs live in a small pointer table on `g_RenderShell` (`0x
 
 ## Lifecycle
 
-- Create: `PgLtiRendererPc_SetupRenderTargets` (vtbl slot 6). The chain itself is created inside the SecuROM-mutated stretch; the front/depth/main fetches are in the plaintext tail after it (`0x0074a1cc..0x0074a45c`).
+- Create: `PgLtiRendererPc_SetupRenderTargets` (vtbl slot 6). The front/depth/main fetches and the chain creation are in the plaintext tail after the mutated stretch (`0x0074a1cc..0x0074a84d`). The chain is sized from the front's `GetDesc`, so the front defines the render size of the whole setup chain ([rt_dims_source.md](rt_dims_source.md)).
 - Release: `LtiRenderer_ReleaseRenderTargets` (`0x0074a850`) — from `LtiRenderer_ReleaseDevice` (vtbl slot 7) and from the device-lost path (`RenderSystem_CheckDevice` → `FUN_0074d1b0`). `LtiRenderer_Shutdown` additionally drops the front ref.
 - Restore order on device restore: release → reset/recreate → `LtiRenderer_OnScreenResize(g_RenderCfg)` → setup.
 

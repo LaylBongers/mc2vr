@@ -14,6 +14,7 @@ add_library(mc2vr_carrier SHARED
     eye_replay.cpp
     eye_share.cpp
     render_outputs.cpp
+    render_size.cpp
     hud_timing.cpp
     ipc.cpp
     log.cpp

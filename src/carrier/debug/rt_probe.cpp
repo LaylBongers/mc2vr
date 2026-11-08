@@ -460,25 +460,8 @@ uint32_t pass_idx()
 
 // ---- attach-time MidHooks ---------------------------------------------------------------
 
-SafetyHookMid g_osr_mid, g_fae0_mid;
+SafetyHookMid g_fae0_mid;
 uint64_t g_osr_calls = 0, g_setup_calls = 0;
-
-void osr_midhook(safetyhook::Context &ctx)
-{
-    g_osr_calls++;
-    const uint32_t w = *(const uint32_t *)(ctx.esp + 4);
-    const uint32_t h = (uint32_t)ctx.eax;
-    Sig sig;
-    stack_sig(ctx.esp, &sig);
-    char s[160];
-    fmt_sig(sig, s, sizeof(s));
-    MC2VR_LOG("rtprobe: OnScreenResize #%llu args=%ux%u this=0x%08x%s frame=%llu | stack %s",
-              (unsigned long long)g_osr_calls, w, h, (unsigned)ctx.esi,
-              ctx.esi == MC2_G_RENDERSHELL ? " (g_RenderShell)" : " (NOT g_RenderShell)",
-              (unsigned long long)hooks::frame_count(), s);
-    log_dims("OnScreenResize-entry");
-    g_pending = "after-OnScreenResize";
-}
 
 // FUN_0074fae0 `mov edx,[edx+0x3e98]`: EDX = g_RenderShell (expected).
 void fae0_midhook(safetyhook::Context &ctx)
@@ -546,8 +529,25 @@ void install_early()
         return;
     }
     QueryPerformanceFrequency(&g_qpc_freq);
-    install_mid(g_osr_mid, MC2_ONSCREENRESIZE, osr_midhook, "OnScreenResize entry");
     install_mid(g_fae0_mid, MC2_FAE0_FRONTREF_READ, fae0_midhook, "FUN_0074fae0 front-ref read");
+}
+
+void on_osr_enter(uint32_t w, uint32_t h, uintptr_t self, uintptr_t esp)
+{
+    if (!g_enabled) {
+        return;
+    }
+    g_osr_calls++;
+    Sig sig;
+    stack_sig(esp, &sig);
+    char s[160];
+    fmt_sig(sig, s, sizeof(s));
+    MC2VR_LOG("rtprobe: OnScreenResize #%llu args=%ux%u this=0x%08x%s frame=%llu | stack %s",
+              (unsigned long long)g_osr_calls, w, h, (unsigned)self,
+              self == MC2_G_RENDERSHELL ? " (g_RenderShell)" : " (NOT g_RenderShell)",
+              (unsigned long long)hooks::frame_count(), s);
+    log_dims("OnScreenResize-entry");
+    g_pending = "after-OnScreenResize";
 }
 
 void on_setup_enter(void *self)

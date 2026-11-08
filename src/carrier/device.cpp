@@ -14,6 +14,7 @@
 #include "hud_timing.hpp"
 #include "init.hpp"
 #include "render_outputs.hpp"
+#include "render_size.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
 #include "debug/rt_probe.hpp"
@@ -31,6 +32,7 @@ namespace {
 // deliverable: Present/EndScene/BeginScene fire exactly once per FrameTick,
 // Reset stays silent unless device params change.
 constexpr size_t SLOT_Release = 2;
+constexpr size_t SLOT_TestCooperativeLevel = 3;
 constexpr size_t SLOT_GetSwapChain = 14;
 constexpr size_t SLOT_Reset = 16;
 constexpr size_t SLOT_Present = 17;
@@ -81,6 +83,7 @@ safetyhook::VmHook *g_present_hook = nullptr;
 safetyhook::VmHook *g_beginscene_hook = nullptr;
 safetyhook::VmHook *g_endscene_hook = nullptr;
 safetyhook::VmHook *g_reset_hook = nullptr;
+safetyhook::VmHook *g_tcl_hook = nullptr;
 safetyhook::VmHook *g_setvsconstf_hook = nullptr;
 safetyhook::VmHook *g_setrt_hook = nullptr;
 safetyhook::VmHook *g_stretchrect_hook = nullptr;
@@ -335,6 +338,7 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
 
     // Monitor mirror: the engine no longer draws into the swapchain —
     // compose the latest LEFT image into it before presenting.
+    render_size::on_present();
     render_outputs::on_present(self);
 
     return g_present_hook->stdcall<HRESULT>(self, src, dst, hwnd, dirty);
@@ -358,6 +362,18 @@ HRESULT __stdcall endscene_hook(void *self)
         burst_log("EndScene", g_endscene.total, "");
     }
     return g_endscene_hook->stdcall<HRESULT>(self);
+}
+
+// TestCooperativeLevel: forwarded, except that a render-size switch
+// (render_size.cpp) answers RenderSystem_CheckDevice's per-frame call ONCE
+// with D3DERR_DEVICENOTRESET — the engine then runs its own device-lost
+// recovery (release -> Reset -> OnScreenResize -> restore) at the new size.
+HRESULT __stdcall tcl_hook(void *self)
+{
+    if (render_size::consume_forced_reset(__builtin_return_address(0))) {
+        return D3DERR_DEVICENOTRESET;
+    }
+    return g_tcl_hook->stdcall<HRESULT>(self);
 }
 
 HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
@@ -617,6 +633,7 @@ bool hook_device(void *device)
         {SLOT_BeginScene, (void *)&beginscene_hook, &g_beginscene_hook, "BeginScene"},
         {SLOT_EndScene, (void *)&endscene_hook, &g_endscene_hook, "EndScene"},
         {SLOT_Reset, (void *)&reset_hook, &g_reset_hook, "Reset"},
+        {SLOT_TestCooperativeLevel, (void *)&tcl_hook, &g_tcl_hook, "TestCooperativeLevel"},
         {SLOT_SetVertexShaderConstantF, (void *)&setvsconstf_hook, &g_setvsconstf_hook,
          "SetVertexShaderConstantF"},
         {SLOT_SetRenderTarget, (void *)&setrendertarget_hook, &g_setrt_hook,
