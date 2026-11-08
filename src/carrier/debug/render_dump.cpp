@@ -413,19 +413,19 @@ void install_early()
     // with the device VmtHook, device.cpp).
     view_rewrite::install();
 
-    // Union HMD injection at g_CameraTable (mc2vr.conf view_table_inject=on;
+    // Union HMD injection at g_CameraTable (always on;
     // handler no-ops unless armed).
     camera_table::install();
 
     // HMD cull frustum in the view-context builder (mc2vr.conf
-    // cull_hmd_fov=on; handler no-ops unless armed).
+    // always on; inert without a tracked HMD).
     cull_frustum::install();
     occluder_boxes::install();
 
     // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();
 
-    // SubmitToGPU frame-replay InlineHook (mc2vr.conf frame_replay=on).
+    // SubmitToGPU two-pass stereo replay InlineHook (always on).
     s2c::install();
 }
 

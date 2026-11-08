@@ -18,10 +18,6 @@
 
 namespace mc2vr::occluder_boxes {
 
-// mc2vr.conf skip_occluder_boxes=on|off (default on). Returns false on
-// unrecognized input. Must be set before install().
-bool set_skip(const char *value);
-
 // Patch both box-emitting calls to NOPs when skipping is enabled. Verifies
 // each site still holds the expected `call 0x46edf0` first.
 void install();

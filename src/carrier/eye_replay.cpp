@@ -40,7 +40,6 @@ using SurfaceDesc_t = HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *);
 using LockRect_t = HRESULT(__stdcall *)(void *, D3DLOCKED_RECT *, const RECT *, DWORD);
 using Release_t = HRESULT(__stdcall *)(void *);
 
-bool g_pass_enabled = false;
 uint32_t g_dump_frames = 0;
 float g_dump_delay_s = 15.0f;
 
@@ -376,7 +375,8 @@ void set_pass(uint32_t pass)
     // Capture: the carrier front holds pass 1's LEFT final at 1->2 and pass
     // 2's RIGHT final at 2->0 (the 0->1 boundary carries no fresh eye — the
     // callee ignores it). Inactive (boot / mid-Reset) -> no capture.
-    mc2vr::eye_share::on_pass_boundary(pass, render_outputs::device(), render_outputs::front());
+    mc2vr::eye_share::on_pass_boundary(pass, render_outputs::device(),
+                                       render_outputs::capture_source());
 
     // Dump window opens on a frame boundary (0 -> 1) so left/right dumps of
     // one frame land as a pair (left at 1->2, right at 2->0).
@@ -418,9 +418,8 @@ void set_pass(uint32_t pass)
     }
 
     g_pass = pass;
-    // Per-pass eye override only when eye_pass=on (hold timer stays in
-    // charge otherwise); pass 1 = LEFT (-1), pass 2 = RIGHT (+1).
-    view_rewrite::set_pass_eye(g_pass_enabled && pass != 0 ? (pass == 1 ? -1 : 1) : 0);
+    // Per-pass eye: pass 1 = LEFT (-1), pass 2 = RIGHT (+1), outside = none.
+    view_rewrite::set_pass_eye(pass != 0 ? (pass == 1 ? -1 : 1) : 0);
 }
 
 void on_reset()
@@ -438,20 +437,6 @@ void report_window()
     }
     g_dump_failures = 0;
     g_dump_empty = 0;
-}
-
-bool set_pass_enabled(const char *value)
-{
-    if (strcmp(value, "on") == 0) {
-        g_pass_enabled = true;
-    } else if (strcmp(value, "off") == 0) {
-        g_pass_enabled = false;
-    } else {
-        return false;
-    }
-    MC2VR_LOG("eye: eye_pass=%s (per-pass deterministic eye: pass1=LEFT pass2=RIGHT)",
-              g_pass_enabled ? "on" : "off");
-    return true;
 }
 
 void set_dump_frames(uint32_t n)

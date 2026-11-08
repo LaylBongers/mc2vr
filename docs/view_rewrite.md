@@ -6,11 +6,10 @@ Code: `src/carrier/view_rewrite.cpp`. The visible view lives in the VS constant 
 
 Exact registers come from the game's own resolver, not shape matching: a MidHook at the upload gate (`0x00855a78`, `cmp [edi+0xd8],0` in `PgPrimitive_SubmitToGPU`, EDI = current technique) publishes the resolved map (`+0xd4`/`+0xd8` viewContextData reg/count, `+0xdc`/`+0xe0` ViewProj reg/count); the device hook runs immediately after on the same thread.
 
-## Modes (`view_row_rewrite`)
+## Modes
 
-- `off`
-- `hmd_delta` (live mode): per-eye OpenXR-FOV projection + per-eye position/rotation delta relative to the same-frame union pose ([camera.md](camera.md)), applied on main-pass VP uploads via `vp_camera::decompose` + `apply_eye` on the register map.
-- `hmd_identity` (oracle): rebuilds the game's own camera and logs the max residual — the one-shot consistency check; also the calibration input for the camtable row-sign measurement.
+- `hmd_delta` (always on since 2026-11-08; `view_row_rewrite` retired): per-eye OpenXR-FOV projection + per-eye position/rotation delta relative to the same-frame union pose ([camera.md](camera.md)), applied on main-pass VP uploads via `vp_camera::decompose` + `apply_eye` on the register map. Without a tracked HMD the uploads pass through.
+- `debug_view_identity=on` (oracle, formerly `hmd_identity`): rebuilds the game's own camera and logs the max residual — the one-shot consistency check; also the calibration input for the camtable row-sign measurement.
 
 Historical verification modes — `on`/`pulse` (row-shift pans), `stereo` (±right·IPD/2 A/B with the right-axis cache, `view_asym` NDC shift, `view_stereo_hold`), `hmd` (full-VP replacement) — were REMOVED 2026-10-07, superseded by the union injection + `hmd_delta` (git history has them). The math below survives as the machinery `hmd_delta` runs on.
 

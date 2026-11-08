@@ -10,6 +10,7 @@
 #include "eye_share.hpp"
 #include "render_outputs.hpp"
 #include "render_size.hpp"
+#include "adaptation.hpp"
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "ipc.hpp"
@@ -84,8 +85,7 @@ static void load_conf()
 
     FILE *f = _wfopen(wpath, L"rb");
     if (f == nullptr) {
-        MC2VR_LOG("conf: no mc2vr.conf next to the DLL — defaults apply "
-                  "(view_row_rewrite=off)");
+        MC2VR_LOG("conf: no mc2vr.conf next to the DLL — defaults apply");
         return;
     }
     char line[512];
@@ -114,40 +114,17 @@ static void load_conf()
                                end[-1] == '\r' || end[-1] == '\n')) {
             *--end = '\0';
         }
-        if (strcmp(key, "view_row_rewrite") == 0) {
-            // The viewContextData camera channel (view_rewrite.cpp).
-            if (!view_rewrite::set_view_row_rewrite(value)) {
-                MC2VR_LOG("conf: view_row_rewrite=%s not recognized "
-                          "(use off|on|pulse|stereo|hmd_delta|hmd_identity) — defaulting to off",
-                          value);
-                view_rewrite::set_view_row_rewrite("off");
-            }
-        } else if (strcmp(key, "view_table_inject") == 0) {
-            // Union HMD injection at g_CameraTable (docs/camera.md
-            // "Decided architecture"): rewrites each just-filled table entry's
-            // camera entry with the game pose composed with the mid-eye HMD
-            // pose — the single upstream point feeding BOTH the draw-camera
-            // builder and the culling/fov readers. Pair with
-            // view_row_rewrite=hmd_delta for the per-eye FOV/position delta.
-            if (!camera_table::set_inject_enabled(value)) {
-                MC2VR_LOG("conf: view_table_inject=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "cull_hmd_fov") == 0) {
-            // HMD cull frustum (docs/culling.md): the engine's
-            // culling/LOD frustum covers the HMD FOV union instead of the
-            // game's widescreen fov. Needs view_table_inject=on.
-            if (!cull_frustum::set_enabled(value)) {
-                MC2VR_LOG("conf: cull_hmd_fov=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "skip_occluder_boxes") == 0) {
-            if (!occluder_boxes::set_skip(value)) {
-                MC2VR_LOG("conf: skip_occluder_boxes=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "cull_fov_margin") == 0) {
+        if (strcmp(key, "cull_fov_margin") == 0) {
             // Degrees added to each HMD half-angle (default 5).
             double v;
             if (parse_double(key, value, &v)) {
                 cull_frustum::set_margin(v);
+            }
+        } else if (strcmp(key, "debug_view_identity") == 0) {
+            // Decomposition oracle (view_rewrite.cpp): rebuild with the game's
+            // own camera instead of the per-eye HMD rewrite.
+            if (!view_rewrite::set_identity_oracle(value)) {
+                MC2VR_LOG("conf: debug_view_identity=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_camtable_probe") == 0) {
             // Transfer-function probe: injects fixed local-axis test
@@ -178,11 +155,6 @@ static void load_conf()
             if (!rt_probe::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_rt_probe=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "own_outputs") == 0 || strcmp(key, "eye_rt") == 0 ||
-                   strcmp(key, "eye_monitor_pin") == 0) {
-            // Retired 2026-11-08: carrier-owned outputs are always on; the
-            // eye-RT redirect and the monitor pin are gone (docs/stereo.md).
-            MC2VR_LOG("conf: %s is retired (carrier-owned outputs are always on) — ignored", key);
         } else if (strcmp(key, "render_size") == 0) {
             // Render size W×H (docs/render_resolution.md §1): the engine's
             // render chain + the carrier outputs run at W×H; the window and
@@ -199,17 +171,6 @@ static void load_conf()
             if (!render_size::set_aspect(value)) {
                 MC2VR_LOG("conf: render_aspect=%s not recognized (use true|snap)", value);
             }
-        } else if (strcmp(key, "eye_pass") == 0) {
-            // Deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
-            if (!eye_replay::set_pass_enabled(value)) {
-                MC2VR_LOG("conf: eye_pass=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "eye_share") == 0) {
-            // Shared-handle: pass-boundary capture of the carrier front into shared-handle RTs +
-            // FRAME_READY publish to the OpenXR host.
-            if (!eye_share::set_enabled(value)) {
-                MC2VR_LOG("conf: eye_share=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "vsync") == 0) {
             // Vsync pacing: off = force D3DPRESENT_INTERVAL_IMMEDIATE at
             // CreateDevice/Reset (the frame's two Presents are vsync-locked
@@ -221,12 +182,6 @@ static void load_conf()
             uint32_t n;
             if (parse_count(key, value, &n)) {
                 eye_replay::set_dump_frames(n);
-            }
-        } else if (strcmp(key, "frame_replay") == 0) {
-            // Second draw pass — re-invoke PgPrimitive_SubmitToGPU after
-            // the original (same eye/RTs; state-safety test, docs/stereo.md).
-            if (!s2c::set_replay_enabled(value)) {
-                MC2VR_LOG("conf: frame_replay=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_stream_dump_frames") == 0) {
             uint32_t n;
@@ -389,6 +344,7 @@ void init()
     rt_probe::install_early(); // no-op unless debug_rt_probe=on
     render_outputs::install();  // carrier-owned outputs: setup wrap + restore MidHook
     render_size::install();     // render_size=WxH: OnScreenResize / setup-store policy
+    adaptation::install();      // exposure continuity across render-size switches
     // Device-hook chain root (vsync patch + device VmtHook at creation):
     // RenderSystem_Init calls Direct3DCreate9 during boot, so this must be in
     // place before the game resumes.

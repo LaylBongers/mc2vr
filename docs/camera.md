@@ -2,8 +2,8 @@
 
 The implemented camera system, live-verified 2026-10-07. Two parts:
 
-1. **Union injection at `g_CameraTable`** (`view_table_inject=on`, `src/carrier/camera_table.cpp`): MidHook at `0x0070AEF8` — the instruction after the fill's `Matrix_Copy3x4` in `CameraTable_FillFromPose` (`0x0070ae50`) — rewriting the JUST-filled entry (keyed by EAX = entry+0x10; table is 5 slots × 0x620, a slot is live iff its `+0x1e0` camera-object ptr exists). Composes the HMD-union pose (mid-point of the two [IPC](ipc.md) eyes, sampled once per game frame). Steers the draw camera + culling + LOD together; ordering guaranteed by construction (after every fill, before every consumer — the VP builder AND the culling/fov readers, `0x0048067E` family).
-2. **Per-eye at the record level** (`view_row_rewrite=hmd_delta`): per-eye projection + position/rotation delta relative to camtable's same-frame union (`camera_table::get_union`), applied on the main-pass VP uploads — [view_rewrite.md](view_rewrite.md).
+1. **Union injection at `g_CameraTable`** (always on, `src/carrier/camera_table.cpp`): MidHook at `0x0070AEF8` — the instruction after the fill's `Matrix_Copy3x4` in `CameraTable_FillFromPose` (`0x0070ae50`) — rewriting the JUST-filled entry (keyed by EAX = entry+0x10; table is 5 slots × 0x620, a slot is live iff its `+0x1e0` camera-object ptr exists). Composes the HMD-union pose (mid-point of the two [IPC](ipc.md) eyes, sampled once per game frame). Steers the draw camera + culling + LOD together; ordering guaranteed by construction (after every fill, before every consumer — the VP builder AND the culling/fov readers, `0x0048067E` family).
+2. **Per-eye at the record level** (`hmd_delta`, always on): per-eye projection + position/rotation delta relative to camtable's same-frame union (`camera_table::get_union`), applied on the main-pass VP uploads — [view_rewrite.md](view_rewrite.md).
 
 ## Entry convention (probe-derived — static analysis could NOT settle this)
 
@@ -60,5 +60,5 @@ Full chain (plates in Ghidra; narrative: [draw_camera_chain.md](reverse_engineer
 
 - **E1**: record census via the upload-gate MidHook (`view: rec` tally): gameplay world-scale records idx 6/12 (same VP row0 = same camera, both bases in parity); the fills are plaintext (`Matrix_Copy3x4` `0x0046718c`, inline fstp `0x004673bf`); record base `g_ViewContextTable` (`0x01169774`) → double-buffered 32×0x70 array at `0x018c45e0`; walk counts cannot discriminate views — upload dominance can.
 - **E1b**: fill-source scratch `0x017D04E0` is written by `ViewContext_BuildCameraConstants` (plaintext VP builder, camera object from ctx+0x28, called ONLY from the VM via the no-xref thunk `0x00506a26`); scratch cadence ~4.4/frame vs record fill ~1.0–1.7/frame.
-- **E2**: inject ±right·sin + serial bumps into ALL 16 matched live views → slope 0.00, refreshes≈injects (copy-back reverts each frame). Requires `hmd_identity`/decompose to be pose-gated live.
+- **E2**: inject ±right·sin + serial bumps into ALL 16 matched live views → slope 0.00, refreshes≈injects (copy-back reverts each frame). Requires the identity oracle (now `debug_view_identity`)/decompose to be pose-gated live.
 - **E2b**: builder-entry layout decoded (0x70 stride: status, rotation rows, position, near, far, fovCos); gameplay instances are STACK-LOCAL (menu uses the static table directly); entry pose clear comes from the static zero template; the LIVE pose comes from `g_CameraTable` via another `Matrix_Copy3x4` — chain closed.

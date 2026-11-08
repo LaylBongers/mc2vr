@@ -51,7 +51,6 @@ constexpr uint32_t RING_SLOTS = 4u; // per eye; >=3 so the host's read window
 constexpr uint32_t SYNC_BUDGET_MS = 8u; // bounded; the next BeginSubmit spin
                                        // waits for the same work anyway
 
-bool g_enabled = false;
 bool g_broken = false;       // resource creation failed — module off this run
 void *g_device = nullptr;
 void *g_bb = nullptr;
@@ -194,7 +193,6 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
     // 2 = 1->2 boundary (LEFT capture); 0 = 2->0 boundary (RIGHT capture).
     // Pass 1 (the 0->1 boundary) carries no fresh eye — the backbuffer still
     // holds the previous frame's already-presented RIGHT — so it is ignored.
-    if (!g_enabled) return;
     if (next_pass != 2u && next_pass != 0u) return;
     if (!ipc::connected()) {
         // No host (permanent for the run — the carrier only connects at
@@ -281,21 +279,6 @@ void report_window()
     g_ring_full = 0;
     g_sync_timeouts = 0;
     g_ipc_skipped = 0;
-}
-
-bool set_enabled(const char *value)
-{
-    if (strcmp(value, "on") == 0) {
-        g_enabled = true;
-    } else if (strcmp(value, "off") == 0) {
-        g_enabled = false;
-    } else {
-        return false;
-    }
-    MC2VR_LOG("share: eye_share=%s (pass-boundary carrier-front capture -> shared "
-              "handles -> host FRAME_READY)",
-              g_enabled ? "on" : "off");
-    return true;
 }
 
 } // namespace mc2vr::eye_share

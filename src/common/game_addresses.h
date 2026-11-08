@@ -249,7 +249,7 @@
 //                takes halfH = fov * 0.375 * aspect (radians, 4:3-normalized)
 //                and tanV = tanH / aspect — LEFT-HANDED pipeline, clip.w =
 //                +z_view; per-eye OpenXR FOV is applied at the record level,
-//                view_row_rewrite=hmd_delta)
+//                view_rewrite hmd_delta)
 //   +0x60.. LOD-ish params (0.1, 100, 300, 0.3)
 // The array base is a self-index (active idx = *(u32*)base). GAMEPLAY
 // instances are STACK-LOCAL (arr ~0x072e9xxx/0x072eadd0, ctx 0x072e9d20/
@@ -269,7 +269,7 @@
 // XMM2 = tanH, XMM0 = tanV, XMM1 = 1.0; everything after (projection at
 // ctx+0xb20, the four frustum-corner vectors at [esp+0x10/0x3c/0x48/0x54] fed
 // to FUN_00857140/FUN_0085a3f0) is derived from XMM2/XMM0 only — the single
-// cull-frustum input. mc2vr cull_hmd_fov rewrites them (cull_frustum.cpp).
+// cull-frustum input. mc2vr rewrites them (cull_frustum.cpp).
 #define MC2_VCCAM_TANS_READY ((uintptr_t)0x0085943bu)
 #define MC2_VCCAM_CTX_TANH_OFF ((uintptr_t)0x30u)
 #define MC2_VCCAM_CTX_TANV_OFF ((uintptr_t)0x34u)
@@ -289,7 +289,7 @@
 // vertical edge |c1-c0| in the controller ([ebx+0x4d0]/[ebx+0x4d4]) — the
 // camera's obstacle clearance. 0x007107F9 = `MOVSS XMM2,[ESP+0x44]` (6 bytes),
 // the first instruction after the copy: the copy is at [ESP+0x18] there.
-// mc2vr cull_hmd_fov rescales that private copy's near corners back to the
+// mc2vr rescales that private copy's near corners back to the
 // game's own extents (the HMD-wide quad made the camera pull in).
 #define MC2_CAMCLEAR_FRUSTUM_COPIED ((uintptr_t)0x007107f9u)
 #define MC2_CAMCLEAR_COPY_ESP_OFF ((uintptr_t)0x18u)
@@ -427,3 +427,13 @@
 // switch.
 #define MC2_CHECKDEVICE_BEGIN ((uintptr_t)0x0074ce90u)
 #define MC2_CHECKDEVICE_END ((uintptr_t)0x0074d0ccu)
+
+// HDR eye adaptation (adaptation.cpp). PgLtiBloom_CreateSurfaces logs each
+// adaptive surface right after creating it; at the log pushes the holder
+// address is in a register: 0x0074e83d `push 0xbd48e8` (ESI =
+// &_AdaptiveLuminanceSurface, bloom +0x22e4), 0x0074e9c3 `push 0xbd4968`
+// (EDI = &_pPrevAdaptiveLuminanceSurface, bloom +0x22c4). Both 5-byte pushes,
+// no branch targets inside. g_pAdaptiveDest: 1x1 RT surface pointer global.
+#define MC2_BLOOM_ADAPTIVE_LOG ((uintptr_t)0x0074e83du)
+#define MC2_BLOOM_PREV_ADAPTIVE_LOG ((uintptr_t)0x0074e9c3u)
+#define MC2_G_ADAPTIVE_DEST ((uintptr_t)0x0117529cu)

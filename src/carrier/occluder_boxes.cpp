@@ -13,7 +13,6 @@ namespace mc2vr::occluder_boxes {
 
 namespace {
 
-bool g_skip = true;
 
 void patch()
 {
@@ -42,23 +41,9 @@ void patch()
 
 } // namespace
 
-bool set_skip(const char *value)
-{
-    if (strcmp(value, "on") == 0) {
-        g_skip = true;
-    } else if (strcmp(value, "off") == 0) {
-        g_skip = false;
-    } else {
-        return false;
-    }
-    return true;
-}
-
 void install()
 {
-    if (g_skip) {
-        patch();
-    }
+    patch();
 }
 
 } // namespace mc2vr::occluder_boxes

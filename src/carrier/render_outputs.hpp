@@ -30,6 +30,9 @@ bool active();
 // The carrier front (capture source; MSAA as the engine requested), or
 // nullptr when not active (boot before setup, mid-Reset).
 void *front();
+// The eye-capture source for this pass boundary: front(), or nullptr during
+// the post-Reset transition frame (its HDR exposure is invalid — white).
+void *capture_source();
 // The engine's D3D device (g_LtiRenderer->dx9State), or nullptr.
 void *device();
 // The resolved LEFT image of the current frame (valid after 1->2), or nullptr.

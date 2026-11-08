@@ -28,18 +28,13 @@
 // a tracked HMD the rewrite is a no-op.
 //
 // NOT per-eye and NOT a projection change: the per-eye projection (OpenXR FOV)
-// + per-eye delta is view_row_rewrite=hmd_delta's job at the record level —
-// the intended pairing. stereo/hmd_identity are also compatible (the old
-// `hmd` full-VP-replacement mode was removed 2026-10-07 — it double-applied
-// the pose on top of this union).
+// + per-eye delta is view_rewrite's (hmd_delta) job at the record level —
+// the intended pairing. Always on; without a tracked HMD it is a no-op.
 #pragma once
 
 #include "vec_math.hpp"
 
 namespace mc2vr::camera_table {
-
-// mc2vr.conf view_table_inject=on|off. Returns false on unrecognized input.
-bool set_inject_enabled(const char *value);
 
 // mc2vr.conf debug_camtable_probe=on|off: transfer-function probe. Replaces
 // the union rewrite with a fixed +10° rotation about one entry-local axis,

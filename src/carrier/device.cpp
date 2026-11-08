@@ -15,6 +15,7 @@
 #include "init.hpp"
 #include "render_outputs.hpp"
 #include "render_size.hpp"
+#include "adaptation.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
 #include "debug/rt_probe.hpp"
@@ -411,6 +412,9 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
         copy_back_params(pp, used);
     }
     render_outputs::on_reset(false, (long)hr);
+    if (SUCCEEDED(hr)) {
+        adaptation::on_reset_done();
+    }
     rt_probe::on_reset(false, (long)hr);
     return hr;
 }

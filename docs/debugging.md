@@ -6,7 +6,7 @@ The agent implements/logs; the human runs `./launch.sh` into GAMEPLAY (SteamVR u
 
 ## Deployed conf steady state
 
-`frame_replay=on eye_pass=on eye_share=on view_table_inject=on view_row_rewrite=hmd_delta vsync=off` (in-tree defaults stay host-less + vsync=on). The deployed `mc2vr.conf` is never overwritten by `launch.sh` — edit it in place. Env: `MC2VR_NO_HOST`, `MC2VR_IPC_NAME`.
+`render_size=hmd vsync=off` (the VR pipeline itself has no keys since 2026-11-08 — it is always on and passes through without a host). The deployed `mc2vr.conf` is never overwritten by `launch.sh` — edit it in place. Env: `MC2VR_NO_HOST`, `MC2VR_IPC_NAME`.
 
 ## Healthy-run signatures
 

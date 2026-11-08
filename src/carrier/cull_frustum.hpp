@@ -24,18 +24,15 @@
 // game's own extents — without it the ~3x larger quad pulls the camera in.
 //
 // Side effects (all in the game's own projection, which the HMD never shows —
-// view_row_rewrite=hmd_delta re-projects every main-pass upload with the
+// view_rewrite (hmd_delta) re-projects every main-pass upload with the
 // per-eye OpenXR FOV): the decomposed `view: gameproj` line reports the HMD
 // angles; shadow cascades are fitted to the wider frustum (coarser shadow
 // texels); screen-size LOD metrics see the wider projection.
 //
-// Requires view_table_inject=on and a tracked HMD; otherwise inert.
+// Always on; inert without a tracked HMD (the camera-table union is absent).
 #pragma once
 
 namespace mc2vr::cull_frustum {
-
-// mc2vr.conf cull_hmd_fov=on|off. Returns false on unrecognized input.
-bool set_enabled(const char *value);
 
 // mc2vr.conf cull_fov_margin=<degrees> — added to each HMD half-angle
 // (default 5). Returns false out of range [0,30].

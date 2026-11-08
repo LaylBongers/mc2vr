@@ -81,6 +81,10 @@ typedef struct Mc2IpcState {
 #define MC2VR_MSG_SESSION_STATE 1u  // a=state b=recenterCount
 #define MC2VR_MSG_EXIT         2u  // runtime wants the app to quit
 #define MC2VR_MSG_RECENTER     3u  // user recentered
+#define MC2VR_MSG_VIEW_SIZE    4u  // a=width b=height: the runtime's recommended
+                                   // per-eye image size (OpenXR
+                                   // recommendedImageRect*, eye 0) — the
+                                   // carrier's render_size=hmd source
 
 // Carrier -> host commands.
 #define MC2VR_CMD_SHUTDOWN     1u  // clean host shutdown (host exits 0)

@@ -20,7 +20,6 @@ namespace mc2vr::cull_frustum {
 
 namespace {
 
-bool g_enabled = false;
 float g_margin_deg = 5.0f;
 SafetyHookMid g_mid, g_clear_mid;
 
@@ -41,9 +40,6 @@ constexpr float MAX_HALF = 85.0f * DEG;  // tan pole guard
 
 void tans_midhook(safetyhook::Context &ctx)
 {
-    if (!g_enabled) {
-        return;
-    }
     g_builds++;
 
     // EBX = the view render-ctx; [ctx+0x28] = camera object, a self-indexed
@@ -102,9 +98,6 @@ void tans_midhook(safetyhook::Context &ctx)
 // while the cull keeps the HMD frustum. Only the private copy is touched.
 void camclear_midhook(safetyhook::Context &ctx)
 {
-    if (!g_enabled) {
-        return;
-    }
     const float out_th = g_pub_out_th.load(std::memory_order_relaxed);
     const float out_tv = g_pub_out_tv.load(std::memory_order_relaxed);
     const float game_th = g_pub_game_th.load(std::memory_order_relaxed);
@@ -148,35 +141,12 @@ void camclear_midhook(safetyhook::Context &ctx)
     g_clear_restored++;
 }
 
-bool parse_on_off(const char *value, bool *on)
-{
-    if (strcmp(value, "on") == 0) {
-        *on = true;
-    } else if (strcmp(value, "off") == 0) {
-        *on = false;
-    } else {
-        return false;
-    }
-    return true;
-}
-
 double deg(float tan_value)
 {
     return std::atan(std::fabs((double)tan_value)) * 57.29577951;
 }
 
 } // namespace
-
-bool set_enabled(const char *value)
-{
-    bool on;
-    if (!parse_on_off(value, &on)) {
-        return false;
-    }
-    g_enabled = on;
-    MC2VR_LOG("cullfov: HMD cull frustum %s", on ? "ARMED" : "disabled");
-    return true;
-}
 
 bool set_margin(double degrees)
 {
@@ -201,8 +171,7 @@ void install()
         return;
     }
     g_mid = std::move(*mid);
-    MC2VR_LOG("cullfov: installed builder MidHook @ %p (%s)",
-              (void *)MC2_VCCAM_TANS_READY, g_enabled ? "ARMED" : "idle");
+    MC2VR_LOG("cullfov: installed builder MidHook @ %p", (void *)MC2_VCCAM_TANS_READY);
 
     auto cmid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(MC2_CAMCLEAR_FRUSTUM_COPIED),
                                       camclear_midhook);
@@ -219,9 +188,6 @@ void install()
 
 void report_window()
 {
-    if (!g_enabled) {
-        return;
-    }
     // Oracles: widened > 0 every window while the HMD is tracked; game vs
     // out angles show the extension (game ~36.7°/22.7° stock widescreen).
     // widened == 0 with otherView > 0 = the union-camera match failed.

@@ -8,7 +8,7 @@ Premises (proven, do not re-litigate; RE detail: [draw_camera_chain.md](reverse_
 - No fixed-function projection (`SetTransform` is never called); the projection is folded into the `viewContextData` VP rows, so per-eye asymmetric projection is an edit to the same rows.
 - `LtiRenderer_EndSubmit` already StretchRects RT0 → backbuffer (`LtiRenderer+0x3ea4`) whenever they differ — an existing RT→backbuffer copy seam.
 
-## Second draw pass (`frame_replay`)
+## Second draw pass (always on; `frame_replay` retired 2026-11-08)
 
 Streams carry no draws, so the per-eye pass re-invokes `PgPrimitive_SubmitToGPU` wholesale (InlineHook at entry — the record walk re-runs state + draws; VCD uploads re-issue through the slot-94 rewrite, which `eye_pass` keys on). Code: `src/carrier/debug/stream_capture.cpp` (stream tap + replay hook), `src/carrier/eye_replay.cpp`. Replay must use copied pointers (dedupe global `0x011697b8`). Pass 1 = LEFT, pass 2 = RIGHT; the replay happens after the frame's GPU-sync point (event-query spin in `LtiRenderer_BeginSubmit`) and costs ~3.2 ms.
 

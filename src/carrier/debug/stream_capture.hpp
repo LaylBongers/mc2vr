@@ -30,14 +30,8 @@ void set_dump_frames(uint32_t n);
 // before the dump window arms (default 15.0 — let the game reach gameplay).
 void set_dump_delay(float seconds);
 
-// mc2vr.conf frame_replay=off|on (default off): invoke
-// PgPrimitive_SubmitToGPU a second time after the original returns (same
-// eye, same RTs — the "replay unchanged" state-safety test; docs/stereo.md).
-bool set_replay_enabled(const char *value);
-
-// Install the frame-replay InlineHook on PgPrimitive_SubmitToGPU
-// (no-op unless frame_replay=on was set first; the hook itself is installed
-// unconditionally and cheap). Call after conf load.
+// Install the two-pass stereo replay InlineHook on PgPrimitive_SubmitToGPU
+// (always on — pass 1 = LEFT, pass 2 = RIGHT). Call after conf load.
 void install();
 
 // Called from render_dump.cpp's RenderCmd_ExecuteStream opcode MidHook (main

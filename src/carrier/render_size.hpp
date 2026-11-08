@@ -26,15 +26,19 @@
 // fields, so they follow automatically.
 namespace mc2vr::render_size {
 
-// mc2vr.conf render_size=WxH (e.g. 2016x2240) | off (default: stock — render
-// size = window size).
+// mc2vr.conf render_size=hmd | WxH (e.g. 2016x2240) | off (default: stock —
+// render size = window size). hmd = the runtime's recommended per-eye size,
+// sent by the host (MC2VR_MSG_VIEW_SIZE); implies following the HMD.
 bool set_size(const char *value);
+// ipc.cpp event drain: the host's recommended per-eye size (render_size=hmd).
+void on_hmd_view_size(uint32_t w, uint32_t h);
 // mc2vr.conf render_aspect=true|snap (default true: the real W/H ratio;
 // snap = keep the engine's 4:3/16:9 snapping).
 bool set_aspect(const char *value);
 // mc2vr.conf render_size_follow_hmd=on|off (default on): render_size applies
-// only while the HMD is in use (host session VISIBLE/FOCUSED + tracked, 1 s
-// debounce); otherwise the game renders at window size, exactly as unmodded.
+// only while the HMD is in use (host session VISIBLE/FOCUSED — the runtime's
+// own lifecycle signal, no extra debounce); otherwise the game renders at
+// window size, exactly as unmodded.
 // A switch runs through the engine's own device-lost recovery.
 bool set_follow_hmd(const char *value);
 

@@ -6,6 +6,7 @@
 #include "game_addresses.h"
 #include "eye_replay.hpp"
 #include "render_outputs.hpp"
+#include "adaptation.hpp"
 #include "hooks.hpp"
 #include "log.hpp"
 
@@ -42,7 +43,6 @@ float g_dump_delay_s = 15.0f;
 
 // ---- frame replay ----------------------------------------------------
 
-bool g_replay_enabled = false;
 SafetyHookInline g_submit_hook;   // InlineHook on PgPrimitive_SubmitToGPU
 uint64_t g_replays = 0;          // extra passes this window
 double g_replay_ms_sum = 0.0;
@@ -52,17 +52,11 @@ double g_replay_ms_max = 0.0;
 // Original first, side effects after (same discipline as FrameTick).
 void submit_togpu_hook()
 {
-    eye_replay::set_pass(1); // pass 1 = LEFT eye (override applies only if eye_pass=on)
+    adaptation::on_frame_begin(); // exposure restore after a render-size switch
+    eye_replay::set_pass(1); // pass 1 = LEFT eye
     // Two passes -> two present-prevs per frame; skip pass 1's (duplicate).
-    if (g_replay_enabled) {
-        render_outputs::begin_present_skip();
-    }
+    render_outputs::begin_present_skip();
     g_submit_hook.call<void>();
-
-    if (!g_replay_enabled) {
-        eye_replay::set_pass(0);
-        return;
-    }
 
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
@@ -80,8 +74,7 @@ void submit_togpu_hook()
     if (ms > g_replay_ms_max) {
         g_replay_ms_max = ms;
     }
-    eye_replay::set_pass(0); // pass 2 = RIGHT eye (set below), back to none after
-    (void)0;
+    eye_replay::set_pass(0); // back to "outside a submit"
 }
 
 // ---- per-frame state (main thread only) -------------------------------------
@@ -483,20 +476,6 @@ void set_dump_delay(float seconds)
     MC2VR_LOG("stream: debug_dump_delay=%.1fs", (double)seconds);
 }
 
-bool set_replay_enabled(const char *value)
-{
-    if (strcmp(value, "on") == 0) {
-        g_replay_enabled = true;
-    } else if (strcmp(value, "off") == 0) {
-        g_replay_enabled = false;
-    } else {
-        return false;
-    }
-    MC2VR_LOG("stream: frame_replay=%s (second draw pass, same eye/RTs)",
-              g_replay_enabled ? "on" : "off");
-    return true;
-}
-
 void install()
 {
     if (g_submit_hook) {
@@ -508,15 +487,14 @@ void install()
         reinterpret_cast<uint8_t *>(&submit_togpu_hook));
     if (!result) {
         MC2VR_LOG("stream: warning — SubmitToGPU InlineHook failed @ %p (error %u) "
-                  "— frame replay disabled, capture unaffected",
+                  "— NO second (RIGHT eye) pass this run",
                   (void *)MC2_PGPRIMITIVE_SUBMITTOGPU,
                   (unsigned)result.error().type);
         return;
     }
     g_submit_hook = std::move(*result);
-    MC2VR_LOG("stream: installed SubmitToGPU InlineHook @ %p (replay %s)",
-              (void *)MC2_PGPRIMITIVE_SUBMITTOGPU,
-              g_replay_enabled ? "ARMED" : "idle");
+    MC2VR_LOG("stream: installed SubmitToGPU InlineHook @ %p (two-pass stereo replay)",
+              (void *)MC2_PGPRIMITIVE_SUBMITTOGPU);
 }
 
 } // namespace mc2vr::s2c

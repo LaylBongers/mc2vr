@@ -1,9 +1,8 @@
 // Per-eye draw passes (docs/stereo.md).
 //
-// With frame_replay=on the frame is submitted twice. This module makes the
-// two passes a stereo pair:
-//   - eye_pass=on: pass 1 renders LEFT, pass 2 renders RIGHT — deterministic
-//     per-frame eye selection via view_rewrite::set_pass_eye().
+// The frame is submitted twice (stream_capture.cpp's replay hook). This
+// module makes the two passes a stereo pair:
+//   - Pass 1 renders LEFT, pass 2 renders RIGHT (view_rewrite::set_pass_eye).
 //   - Pass boundaries drive the eye captures: the engine's final frame of each
 //     pass lands in the carrier-owned front surface (render_outputs.cpp),
 //     captured into the shared ring at 1->2 (LEFT) and 2->0 (RIGHT). Pass 2
@@ -24,9 +23,6 @@
 
 namespace mc2vr::eye_replay {
 
-// mc2vr.conf eye_pass=off|on (default off — hold-timer A/B stays in charge).
-bool set_pass_enabled(const char *value);
-
 // mc2vr.conf debug_eye_dump_frames=N (0 = never).
 void set_dump_frames(uint32_t n);
 
@@ -35,7 +31,7 @@ void set_dump_delay(float seconds);
 
 // Pass tracking — called from stream_capture's SubmitToGPU hook around each
 // invoke (0 = not inside a submit). Sets the per-pass eye-sign override
-// (pass 1 = LEFT/-1, pass 2 = RIGHT/+1) when eye_pass=on.
+// (pass 1 = LEFT/-1, pass 2 = RIGHT/+1).
 void set_pass(uint32_t pass);
 // Current pass: 0 = outside a submit, 1/2 while the passes run (render thread).
 uint32_t current_pass();

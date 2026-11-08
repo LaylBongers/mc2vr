@@ -257,6 +257,8 @@ bool create_swapchains(State& s) {
         }
         hostlog::write("openxr: eye %d swapchain %ux%u, %u images", e, ey.w, ey.h, ni);
     }
+    // The carrier renders at this size while the HMD is in use (render_size=hmd).
+    ipc::push_event(MC2VR_MSG_VIEW_SIZE, s.eye[0].w, s.eye[0].h);
     return true;
 }
 
@@ -366,7 +368,7 @@ bool frame(State& s, unsigned n) {
             wi.timeout = XR_INFINITE_DURATION;
             XR_TRY(xrWaitSwapchainImage(ey.swapchain, &wi));
             // Submit the carrier's shared image when we have one; the
-            // test pattern stays as the pre-carrier / eye_share=off fallback
+            // test pattern stays as the pre-carrier / no-shared-images fallback
             // (pulsing in the headset = carrier pipeline not talking).
             seyes::LatestImage img;
             if (sub::ready() && seyes::latest(e, img)) {

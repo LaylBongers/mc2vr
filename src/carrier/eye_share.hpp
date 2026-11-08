@@ -16,16 +16,13 @@
 // command buffer is never submitted (probe-proven — without it the copies
 // never land).
 //
-// eye_share=off|on. Everything degrades silently: no host -> no publish
-// (blits still happen; cheap), creation failure -> module off for the run.
+// Always on. Everything degrades silently: no host -> no capture (the ring
+// is never allocated), creation failure -> module off for the run.
 #pragma once
 
 #include <cstdint>
 
 namespace mc2vr::eye_share {
-
-// mc2vr.conf eye_share=off|on (default off — monitor stereo path unchanged).
-bool set_enabled(const char *value);
 
 // Called from eye_replay::set_pass at the pass boundaries with the live
 // device + the carrier front (nullptr when not owned yet — skipped).

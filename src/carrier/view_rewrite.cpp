@@ -36,8 +36,8 @@ constexpr uint32_t VS_ROWS = 256;  // vs_3_0 float constant registers (plus head
 // `hmd` full-VP-replacement mode and the early verification modes (on/pulse/
 // stereo row-shift pans) were REMOVED 2026-10-07 — superseded by
 // view_table_inject + hmd_delta (live-verified).
-enum class RewriteMode { Off, HmdDelta, HmdIdentity };
-RewriteMode g_mode = RewriteMode::Off;
+enum class RewriteMode { HmdDelta, HmdIdentity };
+RewriteMode g_mode = RewriteMode::HmdDelta;
 
 // ---- live technique constant map (published by the upload-gate MidHook) ------
 // Register bases slide per technique and different techniques reuse the same
@@ -192,22 +192,6 @@ void vcd_midhook(safetyhook::Context &ctx)
     }
 }
 
-RewriteMode parse_rewrite_mode(const char *value, bool *ok)
-{
-    *ok = true;
-    if (strcmp(value, "off") == 0) {
-        return RewriteMode::Off;
-    }
-    if (strcmp(value, "hmd_delta") == 0) {
-        return RewriteMode::HmdDelta;
-    }
-    if (strcmp(value, "hmd_identity") == 0) {
-        return RewriteMode::HmdIdentity;
-    }
-    *ok = false;
-    return RewriteMode::Off;
-}
-
 // ---- HMD camera channel (per-eye complement to the camtable union) ---------
 // The VP block is fully decomposable (D3D clip = [a x_v + c z_v, b y_v + d z_v,
 // A z_v + B, z_v] with x_v/y_v/z_v = dot(R/U/F, p - C), R/U/F orthonormal):
@@ -338,7 +322,7 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
             g_delta_no_union++;
             if (g_delta_warn_logged++ < 8) {
                 MC2VR_LOG("view/hmd: delta upload passed through — no camtable union "
-                          "this frame (view_table_inject=on and HMD tracked?)");
+                          "this frame (HMD tracked?)");
             }
             return data;
         }
@@ -380,15 +364,19 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
 
 } // namespace
 
-bool set_view_row_rewrite(const char *value)
+bool set_identity_oracle(const char *value)
 {
-    bool ok;
-    const RewriteMode mode = parse_rewrite_mode(value, &ok);
-    if (!ok) {
+    if (strcmp(value, "on") == 0) {
+        g_mode = RewriteMode::HmdIdentity;
+    } else if (strcmp(value, "off") == 0) {
+        g_mode = RewriteMode::HmdDelta;
+    } else {
         return false;
     }
-    g_mode = mode;
-    MC2VR_LOG("view: rewrite mode = %s", value);
+    MC2VR_LOG("view: debug_view_identity=%s (%s)", value,
+              g_mode == RewriteMode::HmdIdentity
+                  ? "rebuild with the game's own camera — output must equal input"
+                  : "per-eye HMD rewrite");
     return true;
 }
 
@@ -438,11 +426,7 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     }
     g_vs_vec4s += vec4_count;
 
-    if (g_mode == RewriteMode::HmdDelta || g_mode == RewriteMode::HmdIdentity) {
-        return pass_is_main() ? hmd_rewrite(start_register, data, vec4_count) : data;
-    }
-
-    return data;  // no rewrite for this mode — pass the upload through
+    return pass_is_main() ? hmd_rewrite(start_register, data, vec4_count) : data;
 }
 
 uint64_t rewrite_count()
@@ -452,9 +436,7 @@ uint64_t rewrite_count()
 
 void report_window()
 {
-    const char *mode = g_mode == RewriteMode::HmdDelta     ? "hmd_delta"
-                       : g_mode == RewriteMode::HmdIdentity ? "hmd_identity"
-                                                            : "off";
+    const char *mode = g_mode == RewriteMode::HmdDelta ? "hmd_delta" : "hmd_identity";
     MC2VR_LOG("view: uploads calls=%llu vec4s=%llu | rewritten rows=%llu (mode=%s)",
               (unsigned long long)g_vs_calls, (unsigned long long)g_vs_vec4s,
               (unsigned long long)g_rows_rewritten, mode);
@@ -467,7 +449,7 @@ void report_window()
                   std::atan(1.0 / (double)g_game_cam.a) * 180.0 / 3.14159265,
                   std::atan(1.0 / (double)g_game_cam.b) * 180.0 / 3.14159265);
     }
-    if (g_mode == RewriteMode::HmdDelta || g_mode == RewriteMode::HmdIdentity) {
+    {
         if (g_mode == RewriteMode::HmdDelta && g_delta_no_union > 0) {
             MC2VR_LOG("view/hmd: deltaNoUnion=%llu (uploads passed through — the "
                       "camtable union was missing for that frame)",

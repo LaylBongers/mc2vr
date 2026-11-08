@@ -58,6 +58,13 @@ bool g_mirror_valid = false;
 // Window counters (main thread writes; poller reads approximately).
 uint64_t g_takeovers = 0, g_monitor_blits = 0, g_mirror_updates = 0, g_failures = 0;
 uint64_t g_present_skips = 0;
+// Transition frame after a device Reset: its HDR adaptation step runs on the
+// freshly re-created (empty) luminance chain and comes out fully exposed — a
+// single white frame (live 2026-11-08). It is not shown: no eye capture (the
+// host keeps presenting the previous pair, reprojected) and a black monitor
+// frame. Armed at Reset END, cleared at the end of that frame's pass 2.
+bool g_transition_frame = false;
+uint64_t g_transition_frames = 0;
 bool g_skip_armed = false; // we set g_SuppressPresent for the current pass 1
 
 SafetyHookInline g_setup_hook;
@@ -350,6 +357,11 @@ void *front()
     return active() ? g_front : nullptr;
 }
 
+void *capture_source()
+{
+    return g_transition_frame ? nullptr : front();
+}
+
 void *device()
 {
     return engine_device();
@@ -387,6 +399,14 @@ void on_present(void *device)
         return;
     }
 
+    if (g_transition_frame) {
+        // Reset transition frame: black (SwapEffect DISCARD — the backbuffer
+        // must still be written before this Present).
+        ((ColorFill_t)(*(void ***)device)[DSLOT_ColorFill])(device, bb, nullptr,
+                                                           D3DCOLOR_XRGB(0, 0, 0));
+        return;
+    }
+
     // Source: the LEFT mirror while the stereo passes run (refreshed at 1->2);
     // otherwise (no passes) the front itself holds the latest final frame.
     const uint64_t frame = hooks::frame_count();
@@ -419,7 +439,12 @@ void on_present(void *device)
 
 void on_pass_boundary(uint32_t next_pass)
 {
-    if (next_pass != 2 || !active()) {
+    if (next_pass == 0 && g_transition_frame) {
+        g_transition_frame = false; // pass 2 of the transition frame is done
+        g_transition_frames++;
+        return;
+    }
+    if (next_pass != 2 || !active() || g_transition_frame) {
         return;
     }
     void *device = engine_device();
@@ -482,6 +507,7 @@ void on_reset(bool before, long hr)
         if (!held) {
             g_retired_front = g_retired_depth = nullptr;
         }
+        g_transition_frame = SUCCEEDED(hr); // next frame: not shown (see above)
         MC2VR_LOG("outputs: Reset END hr=%08lx%s — retake at the next setup/Present",
                   (unsigned long)hr, held ? " (engine slots still name released surfaces!)" : "");
     }
@@ -513,10 +539,11 @@ void end_present_skip()
 void report_window()
 {
     MC2VR_LOG("outputs: window active=%d takeovers=%llu monitorBlits=%llu mirrorUpdates=%llu "
-              "presentSkips=%llu failures=%llu",
+              "presentSkips=%llu transitionFrames=%llu failures=%llu",
               (int)active(), (unsigned long long)g_takeovers,
               (unsigned long long)g_monitor_blits, (unsigned long long)g_mirror_updates,
-              (unsigned long long)g_present_skips, (unsigned long long)g_failures);
+              (unsigned long long)g_present_skips, (unsigned long long)g_transition_frames,
+              (unsigned long long)g_failures);
     g_monitor_blits = g_mirror_updates = g_present_skips = 0;
 }
 

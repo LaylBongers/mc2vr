@@ -28,7 +28,6 @@ using math::Vec3;
 
 namespace {
 
-bool g_enabled = false;
 SafetyHookMid g_mid;
 
 // ---- pose (sampled once per game frame) ----------------------------------
@@ -294,9 +293,6 @@ void try_measure_frame(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2)
 
 void fill_midhook(safetyhook::Context &ctx)
 {
-    if (!g_enabled && !g_probe) {
-        return;  // neither the union rewrite nor the probe is active
-    }
     g_fills++;
 
     // EAX = Matrix_Copy3x4 destination = the just-filled entry+0x10. The fill
@@ -433,7 +429,7 @@ void fill_midhook(safetyhook::Context &ctx)
 bool get_union(math::Quat *rot, math::Vec3 *pos)
 {
     const uint64_t frame = hooks::frame_count();
-    if (!g_enabled || !g_pose_valid || g_pose_frame != frame ||
+    if (!g_pose_valid || g_pose_frame != frame ||
         g_rewrite_frame != frame) {
         return false;
     }
@@ -494,24 +490,6 @@ bool is_union_camera(const float *rows, const float *pos)
     return false;
 }
 
-bool set_inject_enabled(const char *value)
-{
-    bool on;
-    if (strcmp(value, "on") == 0) {
-        on = true;
-    } else if (strcmp(value, "off") == 0) {
-        on = false;
-    } else {
-        return false;
-    }
-    if (on == g_enabled) {
-        return true; // idempotent
-    }
-    g_enabled = on;
-    MC2VR_LOG("camtable: union injection %s", on ? "ARMED" : "disabled");
-    return true;
-}
-
 bool set_probe_enabled(const char *value)
 {
     bool on;
@@ -543,15 +521,12 @@ void install()
         return;
     }
     g_mid = std::move(*mid);
-    MC2VR_LOG("camtable: installed fill-site MidHook @ %p (g_CameraTable union injection%s)",
-              (void *)MC2_CAMTABLE_FILL_COPY_END, g_enabled ? ", ARMED" : ", idle");
+    MC2VR_LOG("camtable: installed fill-site MidHook @ %p (g_CameraTable union injection)",
+              (void *)MC2_CAMTABLE_FILL_COPY_END);
 }
 
 void report_window()
 {
-    if (!g_enabled && !g_probe) {
-        return;
-    }
     MC2VR_LOG("camtable: window: fills=%llu rewritten=%llu noPose=%llu badEntry=%llu "
               "badRows=%llu frameWaits=%llu poseId=%u%s | poseMiss read=%llu "
               "untracked=%llu insane=%llu held=%llu",

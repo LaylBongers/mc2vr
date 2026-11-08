@@ -2,14 +2,14 @@
 // docs/camera.md): the camtable union injection puts the
 // HMD-union pose into the game's camera table upstream; this module taps the
 // SetVertexShaderConstantF uploads of the technique's viewContextData and
-// applies the per-eye complement (hmd_delta) or the decompose/rebuild
-// self-check (hmd_identity):
+// applies the per-eye complement (hmd_delta; always on) or, with
+// debug_view_identity=on, the decompose/rebuild self-check:
 //   - install(): MidHook at the upload gate that publishes the current
 //     technique's exact viewContextData register map.
 //   - on_set_vs_constant(): the device VmtHook tap that applies the rewrite.
 //   - on_set_render_target(): pass gate (RT0 size == engine render size) — only the main
 //     scene pass is rewritten (shadow-map/reflection/offscreen passes are not).
-//   - set_view_row_rewrite()/set_view_world_scale(): mc2vr.conf controls.
+//   - set_identity_oracle()/set_view_world_scale(): mc2vr.conf controls.
 #pragma once
 
 #include <cstdint>
@@ -28,19 +28,18 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
                                 uint32_t vec4_count);
 
 // Render-target tracking (device.cpp's SetRenderTarget observer). The rewrite
-// applies only while RT0 has the main scene size (the backbuffer size).
+// applies only while RT0 has the engine's render size (the main scene size).
 // w=h=0 means no RT0.
 void on_set_render_target(uint32_t w, uint32_t h);
 
-// mc2vr.conf view_row_rewrite=off|hmd_delta|hmd_identity (hmd_delta = I1,
-// the pairing with view_table_inject=on — per-eye projection from the
-// OpenXR FOV + per-eye position delta, pose already in the records from the
-// table union; hmd_identity = decompose/rebuild self-check, output must
-// equal input, and the clean pass-through channel for probe runs; off =
-// pass-through). The old `hmd` full-VP mode and the early verification modes
-// (on/pulse/stereo) were REMOVED 2026-10-07 — superseded by
-// view_table_inject + hmd_delta. Returns false on unrecognized values.
-bool set_view_row_rewrite(const char *value);
+// The rewrite is always hmd_delta: per-eye projection from the OpenXR FOV +
+// per-eye position delta, the pose already in the records from the camera
+// table union (camera_table.cpp). Without a tracked HMD it passes through.
+// mc2vr.conf debug_view_identity=on: rebuild every main-pass VP with the
+// game's OWN camera (output must equal input — the decomposition self-check;
+// also the clean pass-through channel for debug_camtable_probe). Default off
+// = the per-eye HMD rewrite (hmd_delta).
+bool set_identity_oracle(const char *value);
 
 // mc2vr.conf view_world_scale=<float>: game world units per metre for the HMD
 // camera (default 1.0 — VERIFIED 2026-10-07: units are metres; see
@@ -57,7 +56,7 @@ float world_scale();
 uint32_t current_pose_id();
 
 // The RAW (pre-rewrite) game camera decomposed from the most recent
-// viewContextData/ViewProj upload (hmd_delta/hmd_identity modes, main pass
+// viewContextData/ViewProj upload (main pass
 // only). Input for the camtable row-sign calibration and the transfer probe;
 // valid for ~1s after the last main-pass upload.
 bool get_game_camera(vp_camera::Camera *out);

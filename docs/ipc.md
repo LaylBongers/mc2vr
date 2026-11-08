@@ -4,7 +4,7 @@ Carrier ↔ host link. Header: `src/common/mc2vr_ipc.h`; implementations `src/ho
 
 - One section created by the HOST (refuses if one exists), name `mc2vr_ipc_v1` (env `MC2VR_IPC_NAME`).
 - `Mc2IpcState` seqlock (host writer): pose/FOV per eye (OpenXR **angles in radians, not tangents**), IPD, session state, recenter counter, `hostFrame` (`poseId = hostFrame+1`).
-- SPSC rings: **events** host→carrier (session state, exit, recenter); **commands** carrier→host (`CONFIG`, `FRAME_READY{x=frameId, y=handle, a=slot, b=eye, c=w, d=h, e=poseId}`, `SHUTDOWN`).
+- SPSC rings: **events** host→carrier (session state, exit, recenter, `VIEW_SIZE{a=w, b=h}` = the runtime's recommended per-eye size, pushed after swapchain creation — `render_size=hmd`); **commands** carrier→host (`CONFIG`, `FRAME_READY{x=frameId, y=handle, a=slot, b=eye, c=w, d=h, e=poseId}`, `SHUTDOWN`).
 - Both sides watch each other's process (carrier pid in the section header; `hostExiting` flag). The host exits on carrier `Shutdown` or game exit.
 - Carrier connects at attach (non-fatal); a 250 ms monitor thread logs state transitions; the render thread only does lock-free seqlock reads.
 - Events are drained at the slot-5 `PostUpdateHook` call site in `GameShell_FrameTick` (MidHook `0x00630ee7`) on the main thread, once per frame (`ipc::drain_events()`); the monitor thread never pops (SPSC, one consumer). `SESSION_STATE` transitions are logged; `RECENTER` is logged only — nothing to apply (the camera consumes live poses, so a reference-space change propagates at the next pass-1 sample by construction).

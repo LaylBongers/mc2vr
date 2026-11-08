@@ -18,6 +18,7 @@
 #include "log.hpp"
 #include "mc2vr_ipc.h"
 #include "render_outputs.hpp"
+#include "adaptation.hpp"
 #include "debug/rt_probe.hpp"
 
 namespace mc2vr::render_size {
@@ -30,6 +31,7 @@ namespace {
 // size only while the HMD is in use, else stock — so with the HMD on standby
 // the game renders exactly as unmodded (mouse mapping included).
 uint32_t g_cfg_w = 0, g_cfg_h = 0;
+bool g_cfg_hmd = false; // render_size=hmd: g_cfg_* come from the host (VIEW_SIZE)
 uint32_t g_w = 0, g_h = 0;
 bool g_true_aspect = true;
 bool g_follow_hmd = true;
@@ -39,11 +41,9 @@ bool g_follow_hmd = true;
 bool g_switch_armed = false;
 uint32_t g_pending_w = 0, g_pending_h = 0;
 bool g_hmd_active_seen = false;      // debounced state
-bool g_hmd_candidate = false;        // raw state being debounced
-LARGE_INTEGER g_candidate_since = {};
-LARGE_INTEGER g_qpc_freq = {};
+
 uint64_t g_switches = 0;
-constexpr double HMD_DEBOUNCE_SEC = 1.0;
+
 
 // Targets established by the last OnScreenResize epilogue / setup.
 float g_target_aspect = 0.0f;
@@ -187,7 +187,16 @@ bool set_size(const char *value)
 {
     if (strcmp(value, "off") == 0) {
         g_cfg_w = g_cfg_h = g_w = g_h = 0;
+        g_cfg_hmd = false;
         MC2VR_LOG("rsize: render_size=off (render size = window size)");
+        return true;
+    }
+    if (strcmp(value, "hmd") == 0) {
+        // Size arrives from the host (MC2VR_MSG_VIEW_SIZE). Implies follow:
+        // without an HMD size there is nothing else to render at.
+        g_cfg_hmd = true;
+        g_cfg_w = g_cfg_h = g_w = g_h = 0;
+        MC2VR_LOG("rsize: render_size=hmd (the runtime's recommended eye size, while in use)");
         return true;
     }
     unsigned w = 0, h = 0;
@@ -196,6 +205,7 @@ bool set_size(const char *value)
         h > 8192) {
         return false;
     }
+    g_cfg_hmd = false;
     g_cfg_w = w;
     g_cfg_h = h;
     g_w = g_follow_hmd ? 0 : w; // follow mode starts stock; the HMD switches it
@@ -221,6 +231,25 @@ bool set_follow_hmd(const char *value)
     return true;
 }
 
+void on_hmd_view_size(uint32_t w, uint32_t h)
+{
+    if (!g_cfg_hmd || w < 64 || h < 64 || w > 8192 || h > 8192) {
+        return;
+    }
+    if (w == g_cfg_w && h == g_cfg_h) {
+        return;
+    }
+    g_cfg_w = w;
+    g_cfg_h = h;
+    MC2VR_LOG("rsize: render size from the runtime: %ux%u (aspect %.4f)", w, h,
+              (double)w / (double)h);
+    // If the HMD is already in use at the old size, the follow logic sees the
+    // mismatch and switches (g_hmd_active_seen stays; target compare below).
+    if (g_hmd_active_seen && (g_w != 0) && (g_w != w || g_h != h)) {
+        g_hmd_active_seen = false; // re-evaluate -> switch to the new size
+    }
+}
+
 bool consume_forced_reset(void *ret)
 {
     const uintptr_t r = (uintptr_t)ret;
@@ -228,6 +257,7 @@ bool consume_forced_reset(void *ret)
         return false;
     }
     g_switch_armed = false;
+    adaptation::save(); // auto-exposure state survives the reset (no bright flash)
     g_w = g_pending_w;
     g_h = g_pending_h;
     g_target_aspect = 0.0f;
@@ -254,11 +284,10 @@ bool set_aspect(const char *value)
 
 void install()
 {
-    const bool configured = g_cfg_w != 0 && g_cfg_h != 0;
+    const bool configured = (g_cfg_w != 0 && g_cfg_h != 0) || g_cfg_hmd;
     if (!configured && !rt_probe::enabled()) {
         return;
     }
-    QueryPerformanceFrequency(&g_qpc_freq);
     install_mid(g_osr_entry, MC2_ONSCREENRESIZE, osr_entry_midhook, "OnScreenResize entry");
     if (configured) {
         install_mid(g_osr_exit, MC2_ONSCREENRESIZE_EPILOGUE, osr_exit_midhook,
@@ -277,36 +306,30 @@ void after_setup()
 
 namespace {
 
-// HMD in use = host connected, session VISIBLE/FOCUSED and the pose tracked —
-// the same condition under which the camera rewrite is live (else the game
-// runs with camera pass-through).
+// HMD in use = host connected and the session VISIBLE/FOCUSED — the OpenXR
+// lifecycle signal (the runtime already debounces it: proximity sensor /
+// standby). Deliberately NOT the per-frame tracked flag: a brief tracking
+// loss must not trigger a device reset (the camera falls back to
+// pass-through meanwhile).
 bool hmd_in_use()
 {
     Mc2IpcState st;
     if (!ipc::connected() || !ipc::read_state(&st)) {
         return false;
     }
-    const bool visible = st.sessionState == MC2VR_XR_SESSION_VISIBLE ||
-                         st.sessionState == MC2VR_XR_SESSION_FOCUSED;
-    return visible && (st.flags & MC2VR_IPC_STF_TRACKED);
+    return st.sessionState == MC2VR_XR_SESSION_VISIBLE ||
+           st.sessionState == MC2VR_XR_SESSION_FOCUSED;
 }
 
 void evaluate_follow()
 {
-    if (!g_follow_hmd || g_cfg_w == 0 || g_switch_armed || !render_outputs::active()) {
+    // render_size=hmd always follows (it has no size without the HMD).
+    if ((!g_follow_hmd && !g_cfg_hmd) || g_cfg_w == 0 || g_switch_armed ||
+        !render_outputs::active()) {
         return;
     }
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
     const bool raw = hmd_in_use();
-    if (raw != g_hmd_candidate) {
-        g_hmd_candidate = raw;
-        g_candidate_since = now;
-        return;
-    }
-    const double held = (double)(now.QuadPart - g_candidate_since.QuadPart) /
-                        (double)g_qpc_freq.QuadPart;
-    if (held < HMD_DEBOUNCE_SEC || raw == g_hmd_active_seen) {
+    if (raw == g_hmd_active_seen) {
         return;
     }
     g_hmd_active_seen = raw;
@@ -356,7 +379,7 @@ void on_present()
 
 void report_window()
 {
-    if (g_cfg_w == 0) {
+    if (g_cfg_w == 0 && !g_cfg_hmd) {
         return;
     }
     MC2VR_LOG("rsize: window target=%s fields=%ux%u aspect=%.4f switches=%llu osrRewrites=%llu "

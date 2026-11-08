@@ -7,6 +7,7 @@
 
 #include "game_addresses.h"
 #include "log.hpp"
+#include "render_size.hpp"
 
 namespace mc2vr {
 namespace ipc {
@@ -174,6 +175,10 @@ void drain_events()
                 MC2VR_LOG("session: state -> %s (recenter=%u)",
                           session_state_name(ev.a), ev.b);
             }
+            break;
+        case MC2VR_MSG_VIEW_SIZE:
+            MC2VR_LOG("session: runtime recommends %ux%u per eye", ev.a, ev.b);
+            render_size::on_hmd_view_size(ev.a, ev.b);
             break;
         case MC2VR_MSG_RECENTER:
             // Nothing to apply: the hmd camera consumes live HMD poses, so a

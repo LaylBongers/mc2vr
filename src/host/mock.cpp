@@ -103,6 +103,7 @@ int run(int frames) {
     // synthetic session ramp so the event ring has realistic content.
     hostlog::write("mc2vr_host: ready (mock mode; no OpenXR runtime — synthetic "
                    "pose, %ux%u eye textures)", kW, kH);
+    ipc::push_event(MC2VR_MSG_VIEW_SIZE, kW, kH);
     ipc::push_event(MC2VR_MSG_SESSION_STATE, MC2VR_XR_SESSION_VISIBLE, 0);
 
     uint32_t sessionState = MC2VR_XR_SESSION_VISIBLE;

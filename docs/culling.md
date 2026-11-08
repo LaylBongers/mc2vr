@@ -3,7 +3,7 @@
 Goal: the engine's culling (and the LOD/shadow work tied to it) covers what the HMD sees instead of the game's 16:9 frustum — no pop-in when turning or looking up/down. Both halves live-verified (2026-10-07/08); the third-person camera behaves as stock.
 
 - **Rotation**: union HMD pose written into `g_CameraTable` ([camera.md](camera.md)) — culling follows the head.
-- **FOV** (`cull_hmd_fov=on`, `src/carrier/cull_frustum.cpp`): HMD frustum extents written at the view-context builder.
+- **FOV** (always on, `src/carrier/cull_frustum.cpp`; the `cull_hmd_fov` key was retired 2026-11-08): HMD frustum extents written at the view-context builder.
 
 ## The builder mechanism
 
@@ -27,7 +27,7 @@ Found by (2026-10-08): A/B (no pull-in with `cull_hmd_fov=off`); `debug_watch` o
 
 ## Regression checks
 
-Conf `view_table_inject=on view_row_rewrite=hmd_delta cull_hmd_fov=on`, HMD tracked, gameplay.
+HMD tracked, gameplay (the camera/culling stages are always on since 2026-11-08).
 
 1. Boot: `cullfov: installed builder MidHook @ 0085943b (ARMED)` + `cullfov: installed camera-clearance MidHook @ 007107f9`.
 2. Per 10 s `cullfov: window:` — `widened` ≈ one per frame; `game 36.7°/22.7° -> cull 62.0°/59.7°`; `camClear restored` ≈ widened/2 with `stock≈0`. Failure signatures: `widened=0, otherView>0` (union-camera match failed — tolerances in `camera_table.cpp` `is_union_camera`); `camClear stock>0` while widened (copy match failed, pull-in returns); `noFov>0` (no tracked pose in the last second).
