@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-// Carrier-owned frame outputs (docs/render_resolution.md §2 / track 3).
+// Carrier-owned frame outputs (docs/render_outputs.md).
 //
 // The engine draws its final frame (gameplay composite via render-command
 // op 6, menus/loading via LtiRenderer_EndSubmit) into the "front" surface of

@@ -401,7 +401,7 @@
 // duplicate per-frame Present (render_outputs::skip_next_present).
 #define MC2_G_SUPPRESS_PRESENT ((uintptr_t)0x011755c3u)
 
-// Render-size policy sites (render_size.cpp; docs/render_resolution.md §1).
+// Render-size policy sites (render_size.cpp; docs/render_resolution.md).
 // OnScreenResize epilogue: `pop edi` after the last callee — single branch
 // target (from 0x007494c2) on its first byte; the 5-byte patch spans
 // pop edi / pop ebx / mov esp,ebp / pop ebp (ret 4 at 0x007494da).

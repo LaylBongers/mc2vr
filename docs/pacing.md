@@ -2,7 +2,7 @@
 
 ## The vsync lock (found, live-log-proven 2026-10-05)
 
-The frame did two Presents — a present-prev at each `LtiRenderer_BeginSubmit` (each submit also waits on all prior GPU work: event-query spin). Vsync-locked 60 Hz capped the game at ~30 Hz with the two passes (~600 Presents vs ~300 frames per 10 s). Since 2026-11-08 pass 1's present-prev is skipped through the engine's own `g_SuppressPresent` ([render_resolution.md](render_resolution.md) §3), so there is one Present per frame (live-confirmed: Present = frames per 10 s window).
+The frame did two Presents — a present-prev at each `LtiRenderer_BeginSubmit` (each submit also waits on all prior GPU work: event-query spin). Vsync-locked 60 Hz capped the game at ~30 Hz with the two passes (~600 Presents vs ~300 frames per 10 s). Since 2026-11-08 pass 1's present-prev is skipped through the engine's own `g_SuppressPresent` ([render_outputs.md](render_outputs.md)), so there is one Present per frame.
 
 ## Fix: `vsync=off`
 

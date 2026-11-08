@@ -2,9 +2,8 @@
 
 #include <cstdint>
 
-// Render-target / render-size instrumentation for the resolution-decoupling
-// plan (docs/render_resolution.md track 2; open items in
-// docs/reverse_engineering/render_target_table.md + rt_dims_source.md).
+// Render-target / render-size instrumentation
+// (docs/reverse_engineering/render_target_table.md, rt_dims_source.md).
 // LOG-ONLY: every handler observes and forwards; nothing is altered.
 // mc2vr.conf: debug_rt_probe=on (off by default; when off, no extra hooks are
 // installed and every tap returns immediately).

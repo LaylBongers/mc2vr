@@ -149,14 +149,15 @@ static void load_conf()
                 MC2VR_LOG("conf: debug_stream_capture=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_rt_probe") == 0) {
-            // Render-target / render-size probe (log-only; docs/render_resolution.md
-            // track 2): table snapshots, backbuffer-bind signatures, creation +
-            // getter census, OnScreenResize/Setup order.
+            // Render-target / render-size probe (log-only;
+            // docs/reverse_engineering/render_target_table.md): table snapshots,
+            // backbuffer-bind signatures, creation + getter census,
+            // OnScreenResize/Setup order.
             if (!rt_probe::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_rt_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "render_size") == 0) {
-            // Render size W×H (docs/render_resolution.md §1): the engine's
+            // Render size W×H (docs/render_resolution.md): the engine's
             // render chain + the carrier outputs run at W×H; the window and
             // swapchain stay stock. off = render size = window size.
             if (!render_size::set_size(value)) {

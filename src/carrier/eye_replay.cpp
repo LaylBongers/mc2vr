@@ -369,14 +369,18 @@ void set_pass(uint32_t pass)
     // pass-1 start, 2 = pass 1 done, 0 = pass 2 done). Main thread.
     hud_timing::on_boundary(pass);
 
-    // Carrier-owned outputs: refresh the LEFT monitor mirror at 1->2.
-    render_outputs::on_pass_boundary(pass);
-
     // Capture: the carrier front holds pass 1's LEFT final at 1->2 and pass
     // 2's RIGHT final at 2->0 (the 0->1 boundary carries no fresh eye — the
-    // callee ignores it). Inactive (boot / mid-Reset) -> no capture.
+    // callee ignores it). Inactive (boot / mid-Reset) or the post-Reset
+    // transition frame -> no capture. Must run BEFORE render_outputs sees the
+    // boundary: its 2->0 handling ends the transition frame, and capturing
+    // after that published the white RIGHT eye (live 2026-11-08).
     mc2vr::eye_share::on_pass_boundary(pass, render_outputs::device(),
                                        render_outputs::capture_source());
+
+    // Carrier-owned outputs: refresh the LEFT monitor mirror at 1->2 (before
+    // the dumps below read it); end the transition frame at 2->0.
+    render_outputs::on_pass_boundary(pass);
 
     // Dump window opens on a frame boundary (0 -> 1) so left/right dumps of
     // one frame land as a pair (left at 1->2, right at 2->0).

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-// Render-size policy (docs/render_resolution.md §1, track 4).
+// Render-size policy (docs/render_resolution.md).
 //
 // The engine keeps two size authorities: display = g_RenderCfg (window,
 // present params, mode lookup) and render = RenderShell +0x2b98/+0x2b9c

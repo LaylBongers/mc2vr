@@ -1,13 +1,13 @@
 // Render-target / render-size probe (log-only). See rt_probe.hpp.
 //
-// Questions this run answers (docs/render_resolution.md track 2):
-//   Q1 who binds the backbuffer for the gameplay composite (bind/stretch
-//      signatures per pass, the FUN_0074fae0 front-ref read, getter callers);
-//   Q2 the depth mode (g_LtiRenderer+0x594) and the live table contents;
-//   Q3 the surface registries' vtables (for static follow-up);
-//   Q4 boot/reset order of OnScreenResize vs SetupRenderTargets and whether
-//      the aspect state is re-snapped after OnScreenResize;
-//   Q5 the DEFAULT-pool creation census (sizes + callers) across menus.
+// What it logs:
+//   - who binds the backbuffer/front (bind/stretch signatures per pass, the
+//     FUN_0074fae0 front-ref read, device getter callers);
+//   - the depth mode (g_LtiRenderer+0x594) and the live table contents;
+//   - the surface registries' vtables;
+//   - the order of OnScreenResize vs SetupRenderTargets with the size and
+//     aspect state around each;
+//   - the DEFAULT-pool creation census (sizes + callers).
 // Every line is prefixed "rtprobe:". Game code addresses print as raw VAs
 // (paste straight into Ghidra); stacks are heuristic return-address scans.
 

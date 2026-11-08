@@ -1,7 +1,8 @@
 #pragma once
 
 // HDR eye-adaptation continuity across carrier-driven device resets
-// (render-size switches, docs/render_resolution.md track 4).
+// (render-size switches, docs/render_resolution.md;
+// RE: docs/reverse_engineering/hdr_adaptation.md).
 //
 // The engine's auto-exposure state lives in GPU surfaces of the bloom object
 // (PgLtiBloom_CreateSurfaces): _AdaptiveLuminanceSurface /
