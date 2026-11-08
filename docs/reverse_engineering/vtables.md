@@ -4,7 +4,7 @@ Goal: virtual calls decompile as `obj->vftable->Method()` instead of `(**(code *
 
 ## Recipe
 
-1. **Address-less vtables**: if the vtable is only known through an object pointer held in a typed global (e.g. runtime-installed, ctor unfound — see `Dx9StateWrapper`), you do NOT need the vtable address. Define the `_vtbl` struct with named members anyway (unknowns = `slotNN`), define the object struct `{ X_vtbl *vftable; }`, and put the object pointer at the right offset in the parent struct (e.g. `LtiRenderer` + 0x5bc). Type the parent global — decompiles then read `g_LtiRenderer->dx9State->vftable->SetRenderState(...)`. To MODIFY an existing minimal struct: `delete-structure` (force — references re-resolve by name) then re-create via `parse-c-header` with pad members. Finding the vtable address later is a bonus (applies the struct at the data, xrefs remaining slots).
+1. **Address-less vtables**: if the vtable is only known through an object pointer held in a typed global (e.g. runtime-installed, ctor unfound — see `Dx9StateWrapper`), you do NOT need the vtable address. Define the `_vtbl` struct with named members anyway (unknowns = `slotNN`), define the object struct `{ X_vtbl *vftable; }`, and put the object pointer at the right offset in the parent struct (e.g. `LtiRenderer` + 0x5bc). Type the parent global — decompiles then read `g_LtiRenderer->dx9State->vftable->SetRenderState(...)`. To change an existing struct, re-run `parse-c-structure` with the full new definition — it replaces the struct in place ([ghidra-reva.md](ghidra-reva.md)). Finding the vtable address later is a bonus (applies the struct at the data, xrefs remaining slots).
 2. **Extent**: scan slots until a non-pointer entry (garbage/string data). Check `vtable[-1]` for RTTI — always 0 in this binary (no Pangea RTTI; only Havok classes have it). Class names come from symbols/ctors (`RenderShell_Init` installs `RenderShell_vtable`).
 3. **Define slots**: slots that read as "not a function" are undefined code — `create-function` them. Create functions for all slots before structuring.
 4. **Structs** via one `parse-c-header` (category `/ClassName`):
@@ -17,11 +17,11 @@ Goal: virtual calls decompile as `obj->vftable->Method()` instead of `(**(code *
    - object global → `ClassName`; pointer global → `ClassName *`.
 6. **Verify**: re-decompile a consumer; ECX/`this` disappears from output by design — document the calling convention (`this` in ECX) in slot EOL comments instead.
 
-Renaming functions: `set-function-prototype` also rejects `__thiscall` and changing the prototype can mangle decompilation of register-arg (`unaff_`) functions — prefer `create-label` with `setAsPrimary: true` at the entry to rename without touching the signature.
+Renaming slot functions: [ghidra-reva.md](ghidra-reva.md) § Editing.
 
 ## Comments to leave
 
 - Plate on the vtable: install chain (which ctor), slot count, no-RTTI note.
 - EOL per interesting slot: semantics, callers, default target.
 
-ReVa tool-call gotchas: `ghidra-reva.md`.
+ReVa tool-call gotchas: [ghidra-reva.md](ghidra-reva.md).

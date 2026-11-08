@@ -10,7 +10,6 @@ The VM is not a closed box: native glue in `Stext` (e.g. `0x024f22b6`) calls pla
 
 Mutated plaintext IS statically analyzable (it is not bytecode): merge the blocks into one function, fix the push/jmp sites, re-decompile. A `.text` return address therefore does not prove "ordinary game code"; classify by behavior. Protected routines also call plaintext helpers all the time outside the stub (`.securom` callers of `PoseStore_GetPoseByHandle`, `Pose_Copy`, `PgMaterial_ctor`).
 
-More examples (2026-10-06, E1/E1b watch runs):
+Another example:
 
-- (a) The viewContext-record fill lives in a MUTATED, UNDEFINED `.text` block `~0x004671xx-0x004674xx` with no static callers — a static decompiler-text hunt for its writer returned nothing; `debug_watch=addr:` on the target found it in one run (decode the hit EIP's bytes by hand). **Check such regions by WATCHING, not by text search.**
-- (b) A no-xref 11-byte thunk (`0x00506a26`) is the VM's only entry into `ViewContext_BuildCameraConstants` (`0x008591ac`) — plain thunks with zero static callers are the VM's call-gate signature ([draw_camera_chain.md](draw_camera_chain.md)).
+- A no-xref 11-byte thunk (`0x00506a26`) is the VM's only entry into `ViewContext_BuildCameraConstants` (`0x008591ac`) — plain thunks with zero static callers are the VM's call-gate signature ([draw_camera_chain.md](draw_camera_chain.md)).

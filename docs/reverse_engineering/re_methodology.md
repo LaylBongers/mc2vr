@@ -24,4 +24,6 @@ How functions/systems in this binary were found and named. Identification oracle
 
 ## When static search fails
 
-SecuROM-mutated regions have no defined functions and no static callers — decompiler-text hunts return nothing. Probe with `debug_watch=addr:` on the target address, watch the EIP + surrounding bytes, then decode by hand ([securom_mutated_code.md](securom_mutated_code.md); proven: the record-fill writer, [draw_camera_chain.md](draw_camera_chain.md)).
+- Code Ghidra shows as undefined or caller-less may just be missing from the listing: a direct `E8 rel32` call to it in the raw bytes says so ([ghidra-reva.md](ghidra-reva.md)).
+- `debug_watch=addr:` on a data address gives the writing EIPs in one live run (how the record-fill writer was found, [draw_camera_chain.md](draw_camera_chain.md)).
+- Mutated plaintext (split blocks, `push ret; jmp` call sites) is still static code — [securom_mutated_code.md](securom_mutated_code.md).

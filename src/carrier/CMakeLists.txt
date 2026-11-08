@@ -7,6 +7,7 @@ add_library(mc2vr_carrier SHARED
     cull_frustum.cpp
     occluder_boxes.cpp
     hooks.cpp
+    pacing.cpp
     device.cpp
     view_rewrite.cpp
     camera_table.cpp
@@ -27,6 +28,7 @@ add_library(mc2vr_carrier SHARED
     debug/stream_capture.cpp
     debug/vm_dump.cpp
     debug/watch.cpp
+    debug/wait_census.cpp
     sha256.c
 )
 

@@ -22,7 +22,7 @@ Proven cases: `GetD3DDevice` `0x0047f2f0` → `GetD3DDevice_Impl` `0x00403160` (
 
 (c) The junk counters (`dec [ebp+off]; je` that reloads a constant and jumps back) are harmless noise.
 
-## Flow modeling (`tools/ghidra/VmThunkFlowFix.py`, 2026-10-03)
+## Flow modeling (`VmThunkFlowFix.py`, in git history: `git show 90f5205^:tools/ghidra/VmThunkFlowFix.py`)
 
 The obfuscated call idioms hide the callee and return point from Ghidra, so decompiles stop at the first one.
 

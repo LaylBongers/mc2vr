@@ -17,9 +17,11 @@
 #include "log.hpp"
 #include "stub_trace.hpp"
 #include "stream_capture.hpp"
+#include "pacing.hpp"
 #include "view_rewrite.hpp"
 #include "camera_table.hpp"
 #include "watch.hpp"
+#include "debug/wait_census.hpp"
 
 namespace mc2vr::render {
 
@@ -310,6 +312,8 @@ void report_window()
     g_queue_changed_polls = 0;
 
     view_rewrite::report_window();
+    pacing::report_window();
+    wait_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
     trace::report_window();

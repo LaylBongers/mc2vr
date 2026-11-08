@@ -58,28 +58,38 @@ struct State {
     Eye eye[2];
     // Submission stats (10s window; the log is the acceptance evidence)
     uint64_t subLast[2] = {0, 0};  // last submitted carrier frameId per eye
-    uint64_t subFresh = 0, subReused = 0, subPattern = 0;
+    uint64_t subFresh = 0, subLate = 0, subStale = 0, subPattern = 0;
     ULONGLONG subNext = 0;
+    ULONGLONG lastPairMs = 0;  // last time a new carrier pair was submitted
+    // Lockstep wait (xrBeginFrame -> pair rendered from this frame's pose).
+    double waitSumMs = 0.0, waitMaxMs = 0.0;
+    uint64_t waitN = 0;
     // History of the published views, keyed by poseId (= hostFrame+1).
     // The carrier echoes the id of the pose it rendered with in FRAME_READY;
-    // the projection layer is submitted with that pose+FOV so the compositor
-    // reprojects from what the image actually contains.
-    struct PoseRec { uint32_t id = 0; XrTime time = 0; XrPosef pose[2]; XrFovf fov[2]; };
+    // the projection layer is submitted with that pose+FOV. In lockstep that
+    // is this frame's own pose; the history covers the timeout fallback.
+    struct PoseRec {
+        uint32_t id = 0;
+        XrPosef pose[2];
+        XrFovf fov[2];
+    };
     static constexpr uint32_t kHist = 256;
     PoseRec hist[kHist];
     uint64_t poseHit = 0, poseMiss = 0, poseNone = 0;
-    // Warp the compositor has to cover per submitted pair: submit-frame
-    // display time minus the display time the pair's pose was predicted for
-    // (ms; ~0 = the image shows exactly the pose the display needs).
-    double warpSumMs = 0.0, warpMaxMs = 0.0;
-    uint64_t warpN = 0;
 };
 
-// The published (render) pose is predicted this many display periods past the
-// current frame's predictedDisplayTime: a pair rendered from a pose published
-// in host frame N is complete before frame N+1's xrWaitFrame returns (game
-// ~135 Hz > HMD 120 Hz) and is submitted — and displayed — in frame N+1.
-constexpr int kPoseLeadFrames = 1;
+// LOCKSTEP (docs/pacing.md): every frame the host publishes the pose located
+// for this frame's predictedDisplayTime, the carrier renders exactly one
+// pair from it (its pass-1 gate waits for the publish), and the host submits
+// that pair in the SAME frame's xrEndFrame — the OpenXR app model, with the
+// game as the renderer. A slow game makes the frame late; the runtime sees
+// the real cadence and handles it (throttling / its own reprojection).
+// The wait is bounded so a game hitch (loading, Reset) cannot starve the
+// session: on timeout the newest pair goes out with its own pose (`late`).
+constexpr double kPairTimeoutMs = 100.0;
+// Only wait while the carrier is actually delivering pairs (startup, no
+// game, non-stereo screens: submit immediately).
+constexpr ULONGLONG kPairActiveMs = 500;
 
 // Distance between the two eye positions (the runtime's IPD), meters.
 float eye_separation(const XrView views[2]) {
@@ -346,16 +356,26 @@ bool locate(State& s, XrTime t, XrView views[2], bool* poseOk) {
     return true;
 }
 
+double qpc_ms() {
+    static LARGE_INTEGER f = {};
+    if (f.QuadPart == 0) QueryPerformanceFrequency(&f);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
+}
+
+// True when the newest complete pair is new (not yet submitted) and was
+// rendered from pose `want` (or carries no pose id: non-HMD frames).
+bool pair_ready(const State& s, uint32_t want) {
+    seyes::LatestImage img;
+    if (!seyes::latest(0, img) || img.frameId == s.subLast[0]) return false;
+    return img.poseId == 0 || (int32_t)(img.poseId - want) >= 0;
+}
+
 bool frame(State& s, unsigned n) {
     XrFrameState fs = {XR_TYPE_FRAME_STATE};
     XR_TRY(xrWaitFrame(s.session, nullptr, &fs));
     XR_TRY(xrBeginFrame(s.session, nullptr));
-
-    // Late latch: take the carrier's FRAME_READYs only now. xrWaitFrame
-    // blocks for most of the display period; pairs completed during that
-    // block would otherwise wait one more host frame (draining before the
-    // wait = 1-2 frames of image age, jittering with the game/HMD beat).
-    drain_commands(s);
 
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW},
                                               {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
@@ -366,19 +386,30 @@ bool frame(State& s, unsigned n) {
     bool poseOk = false;
 
     if (fs.shouldRender) {
-        // This frame's views (layer fallback for frames without a pose id).
+        // This frame's views = the render pose, published at once so the
+        // carrier's pass-1 gate releases.
         if (!locate(s, fs.predictedDisplayTime, views, &poseOk)) return false;
+        publish_frame(s, fs.predictedDisplayTime, views, poseOk);
+        const uint32_t want = s.pubFrame;  // == the id just published
 
-        // Render pose for the carrier, predicted for the display time its
-        // image will actually reach (see kPoseLeadFrames), published NOW —
-        // before the blits and xrEndFrame — so the game's next pass-1 sample
-        // already sees it.
-        const XrTime pubTime =
-            fs.predictedDisplayTime + (XrTime)kPoseLeadFrames * fs.predictedDisplayPeriod;
-        XrView pub[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
-        bool pubOk = false;
-        if (!locate(s, pubTime, pub, &pubOk)) return false;
-        publish_frame(s, pubTime, pub, pubOk);
+        // Wait for the pair rendered from it (bounded; see kPairTimeoutMs).
+        drain_commands(s);
+        bool late = false;
+        if (GetTickCount64() - s.lastPairMs < kPairActiveMs) {
+            const double t0 = qpc_ms();
+            while (!pair_ready(s, want) && !s.exiting) {
+                if (qpc_ms() - t0 > kPairTimeoutMs) {
+                    late = true;
+                    break;
+                }
+                Sleep(0);
+                drain_commands(s);
+            }
+            const double w = qpc_ms() - t0;
+            s.waitSumMs += w;
+            if (w > s.waitMaxMs) s.waitMaxMs = w;
+            s.waitN++;
+        }
 
         if (n % 90 == 0) {
             hostlog::write("openxr: frame %u valid=%d L=(%.3f %.3f %.3f) q=(%.3f %.3f %.3f %.3f) "
@@ -391,7 +422,8 @@ bool frame(State& s, unsigned n) {
                            views[0].fov.angleDown, fs.predictedDisplayPeriod / 1e6);
         }
 
-        // Layer pose/FOV (separate from `views`, which is what gets published).
+        // Layer pose/FOV: the pose the submitted pair was rendered with (this
+        // frame's own views in lockstep), else the runtime's current views.
         XrPosef lpose[2] = {views[0].pose, views[1].pose};
         XrFovf lfov[2] = {views[0].fov, views[1].fov};
         for (int e = 0; e < 2; ++e) {
@@ -415,21 +447,15 @@ bool frame(State& s, unsigned n) {
                 sub::draw(s.d3d.ctx, img.srv, ey.rtvs[idx], img.w, img.h, ey.w,
                           ey.h, pr != nullptr);
                 if (pr) {
-                    // Layer = the rendered pose/FOV (both eyes share one pose id).
                     lpose[e] = pr->pose[e];
                     lfov[e] = pr->fov[e];
-                    if (e == 0) {
-                        const double w = (fs.predictedDisplayTime - pr->time) / 1e6;
-                        s.warpSumMs += w;
-                        if (std::fabs(w) > std::fabs(s.warpMaxMs)) s.warpMaxMs = w;
-                        s.warpN++;
-                    }
                 }
                 if (img.frameId != s.subLast[e]) {
                     s.subLast[e] = img.frameId;
-                    s.subFresh++;
+                    if (late) s.subLate++; else s.subFresh++;
+                    s.lastPairMs = GetTickCount64();
                 } else {
-                    s.subReused++;  // no newer complete pair: re-submit newest
+                    s.subStale++;  // no new pair (timeout / carrier idle)
                 }
             } else {
                 eyes::draw_pattern(s.d3d.ctx, ey.rtvs[idx], e, n);
@@ -442,9 +468,6 @@ bool frame(State& s, unsigned n) {
             pv[e].subImage.swapchain = ey.swapchain;
             pv[e].subImage.imageRect = {{0, 0}, {(int32_t)ey.w, (int32_t)ey.h}};
         }
-        // pv[] pose/fov: the carrier-rendered pose when the frame carried a
-        // poseId found in the history, else the runtime's current views
-        // (static-pan frames: nominally head-locked).
         layer.space = s.space;
         layer.viewCount = 2;
         layer.views = pv;
@@ -456,29 +479,27 @@ bool frame(State& s, unsigned n) {
             s.subNext = now + 10000;
         } else if (now > s.subNext) {
             s.subNext = now + 10000;
-            // fresh/reused/pattern count per-EYE blits (2 per host frame).
-            hostlog::write("submit: window fresh=%llu reused=%llu pattern=%llu "
-                           "(eye blits ~%.0f/s, host frames ~%.0f Hz)",
-                           (unsigned long long)s.subFresh,
-                           (unsigned long long)s.subReused,
-                           (unsigned long long)s.subPattern,
-                           (s.subFresh + s.subReused + s.subPattern) / 10.0,
-                           (s.subFresh + s.subReused + s.subPattern) / 20.0);
+            // Counts are per-EYE blits (2 per host frame).
+            const uint64_t blits = s.subFresh + s.subLate + s.subStale + s.subPattern;
+            hostlog::write("submit: window fresh=%llu late=%llu stale=%llu pattern=%llu "
+                           "(host frames ~%.0f Hz) | lockstep wait avg=%.2fms max=%.2fms",
+                           (unsigned long long)s.subFresh, (unsigned long long)s.subLate,
+                           (unsigned long long)s.subStale, (unsigned long long)s.subPattern,
+                           blits / 20.0, s.waitN ? s.waitSumMs / s.waitN : 0.0, s.waitMaxMs);
             hostlog::write("submit: pose ids hit=%llu miss=%llu none=%llu (miss = "
-                           "id aged out of the %u-entry history) | warp avg=%.2fms "
-                           "max=%.2fms (display time - pose prediction time; ~0 ideal)",
+                           "id aged out of the %u-entry history)",
                            (unsigned long long)s.poseHit, (unsigned long long)s.poseMiss,
-                           (unsigned long long)s.poseNone, State::kHist,
-                           s.warpN ? s.warpSumMs / s.warpN : 0.0, s.warpMaxMs);
+                           (unsigned long long)s.poseNone, State::kHist);
             s.poseHit = s.poseMiss = s.poseNone = 0;
-            s.subFresh = s.subReused = s.subPattern = 0;
-            s.warpSumMs = s.warpMaxMs = 0.0;
-            s.warpN = 0;
+            s.subFresh = s.subLate = s.subStale = s.subPattern = 0;
+            s.waitSumMs = s.waitMaxMs = 0.0;
+            s.waitN = 0;
         }
     } else {
         // Not rendering (not VISIBLE): keep the carrier's state current with
-        // an untracked publish.
+        // an untracked publish (the carrier gate is off outside VISIBLE).
         publish_frame(s, fs.predictedDisplayTime, views, false);
+        drain_commands(s);
     }
 
     XrFrameEndInfo ei = {XR_TYPE_FRAME_END_INFO};
@@ -507,7 +528,6 @@ void publish_frame(State& s, XrTime displayTime, const XrView views[2], bool pos
     const float ipd = eye_separation(views);
     State::PoseRec& r = s.hist[(s.pubFrame + 1) % State::kHist];
     r.id = s.pubFrame + 1;  // == the poseId the carrier derives from hostFrame
-    r.time = displayTime;
     for (int e = 0; e < 2; ++e) {
         r.pose[e] = views[e].pose;
         r.fov[e] = views[e].fov;

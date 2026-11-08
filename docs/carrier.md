@@ -10,7 +10,7 @@
 - **Device creation** (`device.cpp` `createdevice_hook`): `Direct3DCreate9` → IDirect3D9 VmtHook → `CreateDevice` → the device VmtHook is installed before the engine receives the pointer. Device creation happens inside the first `SetupRenderTargets` ([reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md)), so this is the only race-free point. A re-created device is re-hooked.
 - **First Present** (`init.cpp` `on_engine_running`): SecuROM pre-probes (one CALLS the `GetD3DDevice` VM-slot thunk — safe only after the loader patched it), `render::install_late` (queue poller thread), vmdump. (The g_RenderShell slot 4/5 hooks used to be a vtable claim here; they are now attach-time MidHooks at the FrameTick call sites — [hooks.md](hooks.md).) Logs `init complete`.
 
-Superseded 2026-11-08: a second "stage" thread polled `g_LtiRenderer->dx9State` and hooked the device from the init thread. It raced the main thread: live, the hooks landed ~200 ms before the setup tail's device calls, by luck. GOTCHA kept from that era: the frame counter `0x011755bc` is not a device-ready signal (it spins ~1400 Hz pre-D3D).
+Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races the main thread's setup-tail device calls. The frame counter `0x011755bc` is not a device-ready signal (it spins ~1400 Hz pre-D3D).
 
 ## Design rules
 

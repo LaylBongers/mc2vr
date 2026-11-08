@@ -26,6 +26,8 @@
 #include "camera_table.hpp"
 #include "debug/vm_dump.hpp"
 #include "sha256.h"
+#include "debug/wait_census.hpp"
+#include "pacing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -133,6 +135,17 @@ static void load_conf()
             // still in gameplay; no HMD needed).
             if (!camera_table::set_probe_enabled(value)) {
                 MC2VR_LOG("conf: debug_camtable_probe=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_keep_replay_drain") == 0) {
+            // A/B: keep LtiRenderer_BeginSubmit's GPU drain in the replay pass.
+            if (!pacing::set_keep_replay_drain(value)) {
+                MC2VR_LOG("conf: debug_keep_replay_drain=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_wait_census") == 0) {
+            // Main-thread wait census + per-frame phase split (log-only;
+            // debug/wait_census.hpp).
+            if (!wait_census::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_wait_census=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_stub_trace") == 0) {
             if (!trace::set_enabled(value)) {
@@ -341,6 +354,7 @@ void init()
     ipc::connect();
 
     hooks::install();
+    pacing::install();  // replay-pass GPU drain skip (plaintext BeginSubmit)
     render::install_early();
     rt_probe::install_early(); // no-op unless debug_rt_probe=on
     render_outputs::install();  // carrier-owned outputs: setup wrap + restore MidHook
@@ -370,6 +384,9 @@ void on_engine_running()
 
     // Read-only live dump of the VM chain behind RenderTask_RenderFrame.
     vmdump::install();
+
+    // debug_wait_census: game IAT wrappers (the loader has filled the IAT).
+    wait_census::install();
 
     MC2VR_LOG("init complete"); // launcher waits for this before dumping the log
 }

@@ -1,8 +1,12 @@
 #include "hooks.hpp"
+#include "pacing.hpp"
+#include "debug/wait_census.hpp"
 
 #include <safetyhook.hpp>
 
 #include <windows.h>
+
+#include <cmath>
 
 #include <cstdint>
 
@@ -28,6 +32,8 @@ uint64_t g_window_frames = 0;
 double g_window_dt_sum = 0.0;
 double g_window_dt_min = 0.0;
 double g_window_dt_max = 0.0;
+double g_window_jit_sum = 0.0;  // sum |dt - previous dt| (frame-to-frame jitter)
+double g_prev_dt_ms = 0.0;
 
 // ---- LtiRenderer_BeginSubmit MidHook probe --------------------------------
 // BeginSubmit is thiscall via virtual dispatch — a plain inline hook can't
@@ -61,9 +67,12 @@ void beginsubmit_midhook(safetyhook::Context &ctx)
 void log_report(double window_sec)
 {
     double avg_ms = g_window_dt_sum / (double)g_window_frames;
-    MC2VR_LOG("FrameTick: %llu frames / %.1fs | dt avg %.2fms min %.2fms max %.2fms | total %llu",
+    MC2VR_LOG("FrameTick: %llu frames / %.1fs | dt avg %.2fms min %.2fms max %.2fms "
+              "jitter %.2fms (mean |dt - prev dt|) | total %llu",
               (unsigned long long)g_window_frames, window_sec, avg_ms,
-              g_window_dt_min, g_window_dt_max, (unsigned long long)g_total_frames);
+              g_window_dt_min, g_window_dt_max,
+              g_window_jit_sum / (double)g_window_frames, (unsigned long long)g_total_frames);
+    g_window_jit_sum = 0.0;
 
     g_window_frames = 0;
     g_window_dt_sum = 0.0;
@@ -75,6 +84,12 @@ void log_report(double window_sec)
 // and so is this handler: cdecl and stdcall are identical for () on i386.
 void frame_tick_hook()
 {
+    // Lockstep pacing BEFORE the game's own FrameTick runs: the gate, and the
+    // display-time delta fed to the dt governor (docs/pacing.md).
+    wait_census::mark(wait_census::Mark::FrameEntry);
+    pacing::frame_start();
+    wait_census::mark(wait_census::Mark::GateDone);
+
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
 
@@ -96,6 +111,10 @@ void frame_tick_hook()
         if (dt_ms > g_window_dt_max) {
             g_window_dt_max = dt_ms;
         }
+        if (g_prev_dt_ms > 0.0) {
+            g_window_jit_sum += std::fabs(dt_ms - g_prev_dt_ms);
+        }
+        g_prev_dt_ms = dt_ms;
     }
 
     g_prev_qpc = now;
@@ -104,6 +123,7 @@ void frame_tick_hook()
 
     // ---- original game logic first, instrumentation side effects after ----
     g_frame_tick_hook.call<void>();
+    wait_census::mark(wait_census::Mark::FrameExit);
 
     if (g_window_start.QuadPart != 0) {
         double window_sec =

@@ -437,3 +437,29 @@
 #define MC2_BLOOM_ADAPTIVE_LOG ((uintptr_t)0x0074e83du)
 #define MC2_BLOOM_PREV_ADAPTIVE_LOG ((uintptr_t)0x0074e9c3u)
 #define MC2_G_ADAPTIVE_DEST ((uintptr_t)0x0117529cu)
+
+// ---- frame timing (docs/pacing.md; host-disassembled 2026-11-08) ----------
+// g_FrameDeltaSec: float seconds, written at the END of GameShell_FrameTick
+// (0x00630f79) as the FrameTick BODY time (QPC at entry -> after the update),
+// read at the START of the next FrameTick by GameTime_ComputeDt 0x004c1690
+// (0x004c169d) as the governor input, and by AdaptiveFramerate_Govern
+// (0x004f5b9e). Lockstep overwrites it at FrameTick entry with the display
+// time delta.
+#define MC2_G_FRAMEDELTASEC ((uintptr_t)0x01175048u)
+// g_Dt: float seconds, the governed simulation step (policy+0x1c copied by
+// GameTime_ComputeDt at 0x004c170a); 17 readers across the game.
+#define MC2_G_DT ((uintptr_t)0x01174a90u)
+// dt governor 0x004f5720 (unnamed) mode: (byte [0x00dfad75] ? dword [0x01750870] :
+// dword [0x0175086c]) — 0 = raw clamped [1e-4, 0.1] s; 1 = fixed substeps of
+// 1/rate (count via FUN_004f4db0); 2 = one step quantized to the smallest
+// multiple of 1/rate STRICTLY greater than the input. rate = float
+// [0x01750874]. All runtime-set (.bss zero in the image).
+#define MC2_FRAMERATE_MODE_SEL ((uintptr_t)0x00dfad75u)
+#define MC2_FRAMERATE_MODE_A ((uintptr_t)0x01750870u)
+#define MC2_FRAMERATE_MODE_B ((uintptr_t)0x0175086cu)
+#define MC2_FRAMERATE_RATE ((uintptr_t)0x01750874u)
+
+// LtiRenderer_BeginSubmit GPU drain: `cmp eax,1` right after the first
+// GetData(query, 0, 0, D3DGETDATA_FLUSH) (0x0074ab5d); EAX = 1 (S_FALSE)
+// enters the Sleep(0) spin until the GPU is idle, anything else exits.
+#define MC2_LTI_BEGINSUBMIT_DRAIN_CHECK ((uintptr_t)0x0074ab5fu)

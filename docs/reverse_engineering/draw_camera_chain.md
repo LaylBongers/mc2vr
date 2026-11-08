@@ -59,6 +59,6 @@ These could NOT be settled by static analysis (sign-blind probe evidence, runtim
 - **Cadences**: scratch ~4.4 writes/frame (builder runs per active view) vs record fill ~1.0–1.7/frame — the builder runs more often than records refresh (consumption is change-gated).
 - **Consequences**: record-level per-eye rewrites at pass boundaries are interference-free (the fill is once per frame, before the passes; the frame-replay pass re-reads unchanged records — consistent with its proven state-safety).
 
-## Methodology lesson
+## Where the fill lives
 
-The fill code lives in SecuROM-mutated `.text` (~0x004671xx–0x004674xx) with NO defined function and no static callers — invisible to decompiler-text static hunts (why the 2026-10-03 static writer hunt was negative). `debug_watch=addr:` on the target address is the probe that finds writers in such regions; watch the EIP + surrounding bytes, then decode by hand ([re_methodology.md](re_methodology.md)).
+`FUN_00466da0` (~0x004671xx–0x004674xx, caller `FUN_0085ac50`); first located with `debug_watch=addr:` on the record address ([re_methodology.md](re_methodology.md)).

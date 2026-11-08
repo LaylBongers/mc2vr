@@ -13,6 +13,7 @@
 
 #include "game_addresses.h"
 #include "ipc.hpp"
+#include "pacing.hpp"
 #include "log.hpp"
 #include "vec_math.hpp"
 #include "camera_table.hpp"
@@ -208,6 +209,7 @@ struct HmdSnapshot {
     vp_camera::EyePose eye[2];
 };
 HmdSnapshot g_hmd;
+
 ULONGLONG g_hmd_ms = 0;  // last successful pass-1 pose sample
 float g_world_scale = 1.0f;  // game world units per metre (VERIFIED: metres — gravity 9.81, docs/reverse_engineering/world_units.md)
 
@@ -534,10 +536,15 @@ bool get_game_camera(vp_camera::Camera *out)
 void set_pass_eye(int sign)
 {
     // Pass 1 start (-1 = LEFT): sample the HMD pose ONCE for the whole frame —
-    // both eyes render with it and the id travels in FRAME_READY.
+    // both eyes render with it and the id travels in FRAME_READY. In lockstep
+    // the frame-start gate (pacing::frame_start) already waited for this publish.
     if (sign < 0 && g_mode == RewriteMode::HmdDelta) {
         Mc2IpcState st;
-        const bool sane = ipc::read_state(&st) && (st.flags & MC2VR_IPC_STF_TRACKED) &&
+        const bool have = ipc::read_state(&st);
+        if (have) {
+            pacing::on_pose_sampled(st.hostFrame + 1);  // next frame's gate waits past it
+        }
+        const bool sane = have && (st.flags & MC2VR_IPC_STF_TRACKED) &&
                           eye_is_sane(st.eye[0]) && eye_is_sane(st.eye[1]);
         // On a miss keep the previous snapshot for a short window (same hold as
         // camtable's sample_pose) so the frame still renders with a head pose.

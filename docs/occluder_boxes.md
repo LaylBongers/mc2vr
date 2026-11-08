@@ -14,6 +14,6 @@ What the boxes are (hardware occlusion queries): the emitter frustum-tests the o
 
 (a) the replayed per-eye pass re-issues the same ring ids before their results are read; or (b) `PgOcclusionVP` carries no `viewContextData` register map, so its boxes use the un-rewritten game camera (union pose, widened game projection) while the scene is drawn with the per-eye projection → boxes land at the wrong screen position → 0 visible pixels → wrongly occluded objects. (b) is testable by logging that technique's constant map. A proper fix (per-eye queries, or the box projection rewritten per eye) is not worth it unless draw-call cost becomes a problem.
 
-Consequence: skipping the boxes (always on since 2026-11-08; the `skip_occluder_boxes` key was retired) == disabling occlusion culling (extra draw calls only), which is why nothing else changed when it was introduced. Lives in `src/carrier/occluder_boxes.{cpp,hpp}`.
+Consequence: skipping the boxes (always on) == disabling occlusion culling (extra draw calls only), which is why nothing else changed when it was introduced. Lives in `src/carrier/occluder_boxes.{cpp,hpp}`.
 
 The `debug_terrain_cull_probe` / `debug_zstate_probe` diagnostics were removed after the fix (git history has them; terrain-pass facts are in the Ghidra plates on `Terrain_BuildFrustumPlaneSet` / `Terrain_QuadtreeWalk`).

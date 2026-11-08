@@ -68,6 +68,12 @@ void *g_query = nullptr; // event query for the pre-publish GPU sync
 
 uint32_t g_ring = 0;     // ring index for the frame being built
 uint64_t g_frame_id = 0; // published (complete) frame ids
+// LEFT captured this frame, its FRAME_READY deferred to the RIGHT capture:
+// the host consumes complete pairs only, so ONE GPU sync after pass 2 covers
+// both eyes (a sync at 1->2 would stall the CPU on pass 1's GPU work before
+// it could queue pass 2).
+bool g_left_pending = false;
+uint32_t g_left_pose_id = 0;
 
 // ---- window counters (render thread writes; poller reads+resets) ----------
 uint64_t g_captures[2] = {0, 0};
@@ -75,6 +81,21 @@ uint64_t g_publishes = 0;
 uint64_t g_sync_timeouts = 0;
 uint64_t g_ring_full = 0;
 uint64_t g_ipc_skipped = 0; // captures while no host
+// CPU time stalled in gpu_sync (Issue -> query done): the cost of having no
+// cross-process fence — a native OpenXR app would not wait here.
+uint64_t g_sync_n = 0;
+double g_sync_sum_ms = 0.0, g_sync_max_ms = 0.0;
+
+double qpc_ms()
+{
+    static LARGE_INTEGER f = {};
+    if (f.QuadPart == 0) {
+        QueryPerformanceFrequency(&f);
+    }
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
+}
 
 bool ensure_resources(void *device, void *bb)
 {
@@ -168,20 +189,28 @@ bool ensure_resources(void *device, void *bb)
 bool gpu_sync()
 {
     if (g_query == nullptr) return true;
+    const double t0 = qpc_ms();
     ((QueryIssue_t)(*(void ***)g_query)[QSLOT_Issue])(g_query, D3DISSUE_END);
     const ULONGLONG deadline = GetTickCount64() + SYNC_BUDGET_MS;
+    bool done = true;
     for (;;) {
         DWORD data = 0;
         const HRESULT hr =
             ((QueryGetData_t)(*(void ***)g_query)[QSLOT_GetData])(
                 g_query, &data, sizeof data, D3DGETDATA_FLUSH);
-        if (hr != S_FALSE) return true; // S_OK (done) or error (logged by count)
+        if (hr != S_FALSE) break; // S_OK (done) or error (logged by count)
         if (GetTickCount64() > deadline) {
             g_sync_timeouts++;
-            return false;
+            done = false;
+            break;
         }
         Sleep(0);
     }
+    const double ms = qpc_ms() - t0;
+    g_sync_n++;
+    g_sync_sum_ms += ms;
+    if (ms > g_sync_max_ms) g_sync_max_ms = ms;
+    return done;
 }
 
 } // namespace
@@ -210,6 +239,9 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
         g_config_pending = false;
     }
 
+    if (eye == 0) {
+        g_left_pending = false;
+    }
     if (!device::blit_surfaces(bb, slot.surf)) {
         // Counted by eye_replay's window as blit failures there; nothing else
         // to do — publishing a half-copied slot is worse than skipping.
@@ -217,18 +249,31 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
     }
     g_captures[eye]++;
 
+    if (eye == 0) {
+        g_left_pending = true;
+        g_left_pose_id = view_rewrite::current_pose_id();
+        return;  // published together with RIGHT, after one GPU sync
+    }
+    if (!g_left_pending) {
+        return;  // no LEFT this frame: a lone RIGHT can never complete a pair
+    }
+    g_left_pending = false;
+
     gpu_sync();
 
-    if (ipc::send_frame_ready(g_frame_id, (uint64_t)(uintptr_t)slot.handle, g_ring,
-                              eye, g_w, g_h, view_rewrite::current_pose_id())) {
-        // Publish only on a successful push — a dropped message would leave
-        // the host pairing a stale right eye against a new left (the host
-        // pairs by frameId and shows the newest complete pair).
-        if (eye == 1) { // both eyes published for this ring slot
-            g_publishes++;
-            g_frame_id++;
-            g_ring = (g_ring + 1) % RING_SLOTS;
-        }
+    const Slot &left = g_slots[0][g_ring];
+    const bool ok_l = ipc::send_frame_ready(g_frame_id, (uint64_t)(uintptr_t)left.handle,
+                                            g_ring, 0u, g_w, g_h, g_left_pose_id);
+    const bool ok_r = ok_l && ipc::send_frame_ready(g_frame_id,
+                                                    (uint64_t)(uintptr_t)slot.handle, g_ring,
+                                                    1u, g_w, g_h,
+                                                    view_rewrite::current_pose_id());
+    if (ok_r) {
+        // Advance only on a fully pushed pair (the host pairs by frameId; a
+        // half-pushed pair is superseded by the next frame's same-id retry).
+        g_publishes++;
+        g_frame_id++;
+        g_ring = (g_ring + 1) % RING_SLOTS;
     } else {
         g_ring_full++;
     }
@@ -255,6 +300,7 @@ void on_reset()
         }
     }
     g_slots_ok = false;
+    g_left_pending = false;
     g_broken = false; // retry after Reset — the probe is cheap to re-run
     g_config_pending = false; // new ring -> config re-sent on next boundary
     MC2VR_LOG("share: Reset — shared RT ring dropped");
@@ -265,13 +311,16 @@ void report_window()
     if (g_captures[0] || g_captures[1] || g_publishes || g_ring_full ||
         g_sync_timeouts || g_ipc_skipped) {
         MC2VR_LOG("share window: capturesL=%llu capturesR=%llu published=%llu "
-                  "ringFull=%llu syncTimeouts=%llu noHostSkips=%llu",
+                  "ringFull=%llu syncTimeouts=%llu noHostSkips=%llu | sync stall "
+                  "avg=%.2fms max=%.2fms (n=%llu)",
                   (unsigned long long)g_captures[0],
                   (unsigned long long)g_captures[1],
                   (unsigned long long)g_publishes,
                   (unsigned long long)g_ring_full,
                   (unsigned long long)g_sync_timeouts,
-                  (unsigned long long)g_ipc_skipped);
+                  (unsigned long long)g_ipc_skipped,
+                  g_sync_n ? g_sync_sum_ms / (double)g_sync_n : 0.0, g_sync_max_ms,
+                  (unsigned long long)g_sync_n);
     }
     g_captures[0] = 0;
     g_captures[1] = 0;
@@ -279,6 +328,8 @@ void report_window()
     g_ring_full = 0;
     g_sync_timeouts = 0;
     g_ipc_skipped = 0;
+    g_sync_n = 0;
+    g_sync_sum_ms = g_sync_max_ms = 0.0;
 }
 
 } // namespace mc2vr::eye_share

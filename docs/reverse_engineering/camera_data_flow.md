@@ -15,7 +15,7 @@ Zero VM-section accessors anywhere in the watched pose chain (entry fields AND s
 
 ## The staging is a ROUND-TRIP
 
-(stagingquat rerun with register capture, live view idx13): `Pose_Copy`'s caller at the staged slot is the producer walk's MUTATED TAIL (call at `0x0048F72D`, undefined split-block region past the walk loop; an inlined fld/fstp + `add [esi+0xc],eax` serial-bump variant right above) with SRC = staged slot, DEST = `ViewEntry+0x7c4` — the staged camera pose is copied BACK into the entry, serial+1.
+(stagingquat rerun with register capture, live view idx13): `Pose_Copy`'s caller at the staged slot is the tail of `ViewManager_UpdateViewPose` (`0x0048f5c0`; call at `0x0048F72D`, past the walk loop; an inlined fld/fstp + `add [esi+0xc],eax` serial-bump variant right above) with SRC = staged slot, DEST = `ViewEntry+0x7c4` — the staged camera pose is copied BACK into the entry, serial+1.
 
 - New pose VALUES originate in the VM'd consumer (post-walk deref of the staged block `ctx+0xc2110+idx*0x30`) and reach the plaintext ViewEntry only through this copy-back — there is no plaintext writer of camera-pose VALUES; the plaintext chain only relays (explains the long-negative static writer hunt of 2026-10-03).
 - Consequence proven by E2: every external write to the entry fields (injection + serial bump) is reverted within one frame — the fields are OUTPUT channels ([draw_camera_chain.md](draw_camera_chain.md)). Injection implication: write the entry's pose/slot/fov fields directly and bump the serials — the relay pipeline (staging round-trip + Pose_Copy chain + DeriveCullTask) propagates on change; no VM fight needed.

@@ -4,7 +4,7 @@ Eye images cross carrier→host as shared-handle textures (probe `tools/probe/ru
 
 - DXVK D3D9 legacy `pSharedHandle` textures open in DXVK D3D11 (`OpenSharedResource`) cross-process (D3D9Ex/plain × A8R8G8B8/X8R8G8B8; → DXGI 87 / 88 with alpha 0xFF).
 - Ring = 4 RT-usage slots per eye (StretchRect needs RT surfaces) at the current render size; handles travel as plain integers; recreated lazily after device Reset, and the new size reaches the host through `CONFIG`.
-- Cross-process sync = producer event-query flush only (no fence on legacy handles): **`GetData` must pass `D3DGETDATA_FLUSH`**; bounded 8 ms (`syncTimeouts` few/run, benign).
+- Cross-process sync = producer event-query flush only (no fence on legacy handles): **`GetData` must pass `D3DGETDATA_FLUSH`**; bounded 8 ms (`syncTimeouts`; in lockstep the host blits at once, so a timeout can mean an incomplete image). One sync per pair, after the RIGHT capture — both FRAME_READYs go out together. The CPU stalls in it (~2.7 ms at HMD size, `share window: … sync stall`); a native OpenXR app would hand a fence to the runtime instead.
 - Raw-vtable slots that bit us: texture GetSurfaceLevel=18, query Issue=6 / GetData=7, device CreateTexture=23.
 - The host mirror must `CopyResource` into staging before `Map`; the handle cache is reserved (64) so `Entry*` stay stable.
 

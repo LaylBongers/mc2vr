@@ -1,25 +1,32 @@
 # Frame pacing
 
-## The vsync lock (found, live-log-proven 2026-10-05)
+## `vsync=off`
 
-The frame did two Presents — a present-prev at each `LtiRenderer_BeginSubmit` (each submit also waits on all prior GPU work: event-query spin). Vsync-locked 60 Hz capped the game at ~30 Hz with the two passes (~600 Presents vs ~300 frames per 10 s). Since 2026-11-08 pass 1's present-prev is skipped through the engine's own `g_SuppressPresent` ([render_outputs.md](render_outputs.md)), so there is one Present per frame.
+The engine Presents once per frame (pass 1's present-prev is skipped through its own `g_SuppressPresent`, [render_outputs.md](render_outputs.md)); with vsync on, the desktop refresh would cap the game. `vsync=off` forces `D3DPRESENT_INTERVAL_IMMEDIATE` in the CreateDevice params: attach-time InlineHook of the game's `Direct3DCreate9` IAT thunk (`0x00a4e892`, single caller `RenderSystem_Init` `0x0074c7a0`) + VmtHook on the returned `IDirect3D9` (`CreateDevice` slot 16); the device-level `Reset` hook re-patches on Reset. Done at the D3D boundary because the engine's own CreateDevice call site is VM-gated (`FUN_0074c9b0` → ptr `0x024cd09c`) and the carrier loads before the device exists ([carrier.md](carrier.md)). Default off = hook not installed.
 
-## Fix: `vsync=off`
+## Lockstep with the host
 
-Force `D3DPRESENT_INTERVAL_IMMEDIATE` in the CreateDevice params: attach-time InlineHook of the game's `Direct3DCreate9` IAT thunk (`0x00a4e892`, single caller `RenderSystem_Init` `0x0074c7a0`) + VmtHook on the returned `IDirect3D9` (`CreateDevice` slot 16); the device-level `Reset` hook re-patches on Reset. Why at the D3D boundary: the engine's own CreateDevice call site is VM-gated (`FUN_0074c9b0` → ptr `0x024cd09c`, never hooked), and the carrier loads before the device exists ([carrier.md](carrier.md)). Conf key `vsync=off` (default off = hook not installed).
+The host runs the OpenXR app loop with the game as the renderer: `xrWaitFrame` → `xrBeginFrame` → locate + publish the pose for that frame's `predictedDisplayTime` → wait for the pair rendered from it → submit it in the same `xrEndFrame` ([host.md](host.md)). One game frame per host frame, no re-submits: a game slower than the display makes frames late, and the runtime's own timing and throttling handle it. (Free-running and re-submitting the newest pair hid the game's real cadence and latency from the runtime.)
 
-Live result: ~135 Hz gameplay (dt avg ~7.4 ms; pass 2 costs 3.2 ms — the wait was the cost, not the GPU), steady under full VR load; host ~120 Hz with `pose ids miss=0`. Adaptive-framerate bypass (`g_FrameratePolicy` / `AdaptiveFramerate_Govern`) stayed unneeded — no dt instability at ~135 Hz.
+Carrier side, `src/carrier/pacing.cpp`, at the `GameShell_FrameTick` entry hook while the session is VISIBLE/FOCUSED:
 
-## Decision: FREE-RUN (closed 2026-10-06)
+- **Gate:** the frame starts only once the host has published a pose newer than the one the last frame rendered with. The pass-1 pose sample then reads that publish.
+- **Simulation dt = display delta:** `g_FrameDeltaSec` is overwritten with `predictedDisplayTime[n] − [n−1]`. The engine's own value is the FrameTick *body* time, not the frame interval, so any wait outside it (the gate) desyncs the simulation clock from the display; its dt governor can also quantize to whole frames of a target rate with a strict `>` (plates on `0x01175048`, `0x004c1690`, `0x004f5720`). In that quantizing mode the fed value is 0.25 ms short so the governor rounds to the true frame count. Time scale, pause and clamps still apply.
 
-At ~135 Hz (window render size — at HMD size it is ~71 Hz, see below) the game outpaces the ~120 Hz host; the host consumes the newest pair and the runtime reprojects.
+Both waits are bounded so neither side can hang the other: carrier gate 50 ms, host pair wait 100 ms (the host only waits while pairs arrived in the last 500 ms). Log lines: `pace:` (gate waits, fed dt vs `g_Dt`, governor mode/rate), `submit:` (fresh/late/stale, wait times).
 
-## Head-turn judder — FIXED (live-verified 2026-11-08, "very strong improvement")
+The stereo replay pass skips `LtiRenderer_BeginSubmit`'s per-submit GPU drain (MidHook on its drain check `0x0074ab5f`), so the CPU queues the right eye while the GPU still draws the left; DXVK's own hazard tracking covers buffer reuse. `debug_keep_replay_drain=on` restores the drain.
 
-Symptom: head turns choppy while frame rate fine and still-head image smooth. Root cause (carrier): the engine builds each frame's VP from the PREVIOUS frame's camtable fill (`camtable: VP union age` = 100% age 1, [camera.md](camera.md)), but the per-eye delta was taken against the current frame's union — the rendered eye was one game frame of head motion off the tagged pose, uncorrectable by the compositor. Fix: the delta uses the union the VP actually carries (`camera_table::union_for_camera`, matched by basis).
+Head-pose consistency of the rendered pair: [camera.md](camera.md).
 
-Host loop defects fixed in the same audit ([host.md](host.md)): FRAME_READY drained before `xrWaitFrame` (now late-latched after `xrBeginFrame`); render pose predicted for the current frame (now `+1 period`); per-eye newest images mixing two game frames (now complete pairs only, `unpaired=0`); blocking full-res mirror readback in the HMD loop (now ≤5 Hz non-blocking, `mirrorMax` ~2 ms).
+## Half rate = double image on moving objects
 
-## OPEN — residual warp at HMD resolution
+Below the display rate SteamVR runs the game at half rate (60 on a 120 Hz panel) and flashes each frame twice; moving objects the eyes follow then show a back-and-forth double image (desktop monitors smear instead, so the mirror looks clean). Confirmed: at 20% render resolution and 80 Hz the game ran near full rate and the double image was gone. SteamVR motion smoothing is not available on Linux, so the fix is frame rate.
 
-At HMD render size (2016×2240/eye, two passes) gameplay runs ~71 Hz (dt avg ~14 ms), NOT the ~135 Hz measured at window size — the `+1 period` lead assumes a game faster than the HMD. `submit: warp avg` 10–13 ms, max 25 ms; fresh pairs on ~60% of host frames. Next: (1) adaptive lead — predict the published pose by the measured warp (EMA) instead of a fixed period; (2) profile the 71 Hz (GPU at HMD res?) and decide between speed-up and throttling the game to a stable HMD divisor via slot-4 `EndOfFrameHook` ([hooks.md](hooks.md)); (3) timewarp inputs (depth/motion vectors) for the translational residue.
+## OPEN — frame-time headroom
+
+At HMD render size a frame takes ~11.5 ms (needs 8.3 at 120 Hz, 11.1 at 90). The engine does not limit the frame rate (governor mode 0 `Variable`, no `Sleep(n)`/QPC spin, `debug_wait_census`); the time is the render worker plus the GPU: prep ~2.6 ms → pass 1 ~1.8 → pass 2 ~1.6 → end-of-frame GPU sync ~3–4.5, while the update thread waits for the render task ([render_threading.md](reverse_engineering/render_threading.md)). Lower resolution barely helps (~10–11 ms at 20%). Next lever: gate the render thread's pose sample instead of the update thread, so the next frame's update and render prep overlap the host wait — possible now that the simulation step comes from display time.
+
+Remaining hitches at 80 Hz: missed frames (~6% 25 ms steps — headroom), and rare 100 ms host waits for a pair (cause unknown; render-thread stall such as a DXVK shader compile is a candidate).
+
+The game's camera motion blur (`Mercs2.ini MotionBlur`) smears moving objects in VR.

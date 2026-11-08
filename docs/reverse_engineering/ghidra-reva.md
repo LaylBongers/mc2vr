@@ -1,27 +1,37 @@
-# Ghidra / ReVa MCP notes
+# Ghidra / ReVa notes
 
-- Renaming a function that already has a custom primary name: use `set-function-prototype` with the new name in the signature (`createIfNotExists: false`) as the FIRST call — `create-label` + `setAsPrimary: true` can silently leave the label secondary, and that leftover secondary label then blocks `set-function-prototype` with "symbol already exists at this address" (no MCP tool deletes labels; recovery requires deleting the label in the GUI and re-running `set-function-prototype`).
-- `parse-c-structure` on an existing name replaces the struct in place (fields rebuilt, dependent structs/typed globals keep working) — the way to correct a wrong layout. `set-comment` replaces the whole comment of that type at the address, so re-read it first and resend the full text.
-- `run-script` (Python) only works if Ghidra was launched through PyGhidra (`pyghidra /opt/ghidra`; plain `ghidra`/`ghidraRun` gives "Ghidra was not started with PyGhidra"). `write-script` saves into `~/ghidra_scripts`; keep project scripts in `tools/ghidra/` and delete the home copy. Scripts must open their own transaction (`currentProgram.startTransaction`). Whole-block reads: `getBytes` has no (Address,long) overload — use jpype `JArray(JByte)([0]*size)` as the buffer (2026-10-06, `find_fov_region_callers.py`: scans .text for E8 rel32 calls into a VA range; it found ViewEntry_DeriveCullTask's entry — now in `tools/ghidra/`). More scan-safety notes (2026-10-07, world-scale sweep): `ghidra.app.script.FlatProgramAPI` is NOT importable — build buffers with `JArray(JByte)(int(n))` + `mem.getBytes(addr, buf, 0, n)` (a Java `long` size breaks the array ctor, cast to int); `AddressFactory.getAddress` takes a STRING (pass `hex(off)`), and `SymbolTable` has `getPrimarySymbol(addr)` (single arg), not `getPrimarySymbolAt`. CAUTION: wrapping `getBytes` in `try/except: pass` silently turns a whole-memory scan into "0 hits" — assert a canary read (e.g. `MZ` at the image base) before trusting scan results.
-- Flow overrides: verify AFTER commit, not inside the transaction. Ghidra's post-commit analysis clears the fall-through override on a CALL-overridden `jmp` within ~1 s (a RET with CALL override keeps it) — see [vm_thunk_patches.md](vm_thunk_patches.md) and `tools/ghidra/VmThunkFlowFix.py`. Polling `Instruction.isFallThroughOverridden()` for a few seconds after commit is the check.
-- Host disassembly: capstone 5 is installed on the host (`python3 -I -c 'import capstone'`, CLI `cstool x32 <hex> <va>`) but NOT importable inside `run-script` (PyGhidra's env) — read bytes with `read-memory`, disassemble on the host. objdump works too.
-- Struct-offset uses (`[reg+0x3ea4]`): `find-constant-uses` silently truncates (`instructionLimitReached: true`, 0 results). Reliable fallback: a `run-script` walking `listing.getInstructions(True)` up to `0x01a48000` and matching `'0x3ea4]' in str(ins)` — ~50 s for the whole image (used 2026-11-07 for [render_target_table.md](render_target_table.md)). Only covers disassembled code; SecuROM-mutated stretches may hide uses.
-- `read-memory` takes `addressOrSymbol` (not `address`); `get-functions`/`get-symbols` have no `query` param; `get-undefined-function-candidates` takes no address range. Host disassembly of dumped bytes: `objdump -D -b binary -m i386 -M intel --adjust-vma=<va>` (see [vtables.md](vtables.md)).
+How to work with the Ghidra project safely. Locating/identifying code: [re_methodology.md](re_methodology.md).
 
-## Tool-call gotchas (arg names differ between tools)
+## Project state
 
-- `get-decompilation`: `functionNameOrAddress` (not `addressOrSymbol`); supports `offset`/`maxLines` against `totalLines`.
-- `find-cross-references`: `location` (not `addressOrSymbol`).
-- `create-label`: `addressOrSymbol` + `labelName` (+ `setAsPrimary: true` to rename a function entry without touching its prototype — preferred over `set-function-prototype`, which can mangle register-arg decompilation).
-- `read-memory`: `length` param (16 bytes if omitted) — fetch chunks, then disassemble on the host: `objdump -D -b binary -m i386 -M intel --adjust-vma=<va>`.
-- `apply-data-type`: `dataTypeString` (not `typeName`).
-- `search-decompilation` over the whole program refuses when >1000 functions — use the cross-ref / constant-use tools instead.
-- `get-decompilation` on an address inside a SecuROM-mutated/undefined region returns "No instruction at
-  address ... may need to be disassembled first" — don't force it: `read-memory` a chunk around the address and
-  disassemble on the host (`objdump -D -b binary -m i386 -M intel --adjust-vma=<va>`); the E-series record-fill
-  and camera-entry blocks (~0x00466xxx) were decoded this way after watchpoint hits gave the entry EIPs.
-- `get-data` on function CODE addresses returns "No data found" (it is for data items); `set-comment`
-  accepts a SYMBOL name where an address lookup is awkward (`set-comment` on `Matrix_Copy3x4` by name worked
-  when its address form had no data item).
-- Reference-site `fromAddress` from xref tools = start of the referencing instruction; align host disassembly there.
-- Ghidra VAs vs carrier-log caller offsets: the log prints `module+0xoffset` — add `0x00400000` before querying Ghidra (an early audit initially queried the raw offset and got "not in any memory block").
+- `/Mercenaries2.exe` is under Ghidra version control; check-ins are restore points. `checkin-program` reports "Attempted to release domain object with unknown consumer" yet succeeds — confirm via `getDomainFile().getVersionHistory()`. Old versions open read-only with `getDomainFile().getReadOnlyDomainObject(consumer, version, monitor)` (release them afterwards) — useful to diff or recover lost work.
+- The "Non-Returning Functions – Discovered" analyzer is disabled for this program. It once took a one-instruction `CALL [EnterCriticalSection]` at `0x0084af34` for a thunk, flagged it no-return (propagating to the API), and its "Repair Flow Damage" cleared the code after every call site; `Float_Sqrt` followed the same way. The listing was rebuilt from version history, but older notes may still call some code "undefined" or "without static callers" because of it.
+- Undefined code or a missing caller is not by itself evidence of protection: check the raw bytes for a direct `E8 rel32` call before concluding the code is VM-only or mutated.
+- Auto-analysis runs after each commit and can undo or re-derive a change within seconds (it clears fall-through overrides on CALL-overridden `jmp`s, [vm_thunk_patches.md](vm_thunk_patches.md)). Check results once it is idle (`AutoAnalysisManager.getAnalysisManager(prog).isAnalyzing()`).
+
+## Editing
+
+- Precise or bulk edits: `run-script` with its own transaction (`prog.startTransaction(msg)` … `prog.endTransaction(tx, ok)`; `ok=False` rolls back).
+- Rename a function without touching its signature: `run-script` → `f.setName(name, SourceType.USER_DEFINED)`. (`create-label` + `setAsPrimary` can leave the label secondary on an already-named function; `set-function-prototype` rewrites the prototype, mangling register-arg `unaff_` decompiles, and rejects `__thiscall`.)
+- `set-comment` replaces the whole comment of that type — read it first, resend the full text.
+- `parse-c-structure` on an existing name replaces the struct in place; dependents keep working.
+
+## Scripting (`run-script`)
+
+- Needs Ghidra started through PyGhidra (`pyghidra /opt/ghidra`). Script-object field names (e.g. `state`) cannot be reused as Python globals.
+- `listing.getDataAt` returns an `undefined` placeholder for undefined bytes — use `getDefinedDataAt`. `FunctionManager` has no `getFunctionBefore`: `fm.getFunctions(addr, False).next()`.
+- Byte scans: `mem.getBytes(addr, buf, 0, n)` with `buf = JArray(JByte)(int(n))`; `AddressFactory.getAddress` takes a string. Assert a canary (`MZ` at `0x00400000`) first — a `try/except`-wrapped read silently turns a scan into "0 hits".
+- Struct-offset uses (`[reg+0x3ea4]`): `find-constant-uses` silently truncates; walk `listing.getInstructions(True)` matching `'0x3ea4]' in str(ins)` (~50 s, disassembled code only).
+- `write-script` saves to `~/ghidra_scripts`. Earlier project scripts are in git history (`git show 90f5205^:tools/ghidra/<name>`).
+
+## Host disassembly
+
+For code Ghidra lacks, or to cross-check it: `objdump -D -b binary -m i386 -M intel --adjust-vma=<va>` on bytes from `read-memory` or read straight from the exe (fixed base, no relocations: file offset = section raw offset + VA − section VA). capstone/`cstool` are installed on the host too (not inside PyGhidra).
+
+## Tool-call gotchas
+
+- Argument names differ: `get-decompilation` `functionNameOrAddress` (+ `offset`/`limit`); `find-cross-references` `location`; `read-memory` `addressOrSymbol` + `length` (default 16); `apply-data-type` `dataTypeString`. `get-functions`/`get-symbols` have no query parameter.
+- `search-decompilation` refuses on more than 1000 functions — use cross-references / constant uses.
+- `get-data` is for data items; on code it returns "No data found".
+- Xref `fromAddress` = start of the referencing instruction.
+- Carrier logs print `module+0xoffset`: add `0x00400000` for the Ghidra VA.
