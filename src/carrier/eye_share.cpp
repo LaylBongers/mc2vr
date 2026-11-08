@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "device.hpp"
+#include "debug/gpu_census.hpp"
 #include "ipc.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
@@ -368,7 +369,10 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
             wait_slot_free(g_ring);  // never overwrite a pair still in flight
         }
     }
-    if (!device::blit_surfaces(bb, slot.surf)) {
+    gpu_census::carrier_begin();
+    const bool blitted = device::blit_surfaces(bb, slot.surf);
+    gpu_census::carrier_end();
+    if (!blitted) {
         // Counted by eye_replay's window as blit failures there; nothing else
         // to do — publishing a half-copied slot is worse than skipping.
         return;

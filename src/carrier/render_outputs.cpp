@@ -1,6 +1,7 @@
 // Carrier-owned frame outputs. See render_outputs.hpp.
 
 #include "render_outputs.hpp"
+#include "debug/gpu_census.hpp"
 
 #include <safetyhook.hpp>
 
@@ -429,8 +430,11 @@ void on_present(void *device)
         ((ColorFill_t)(*(void ***)device)[DSLOT_ColorFill])(device, bb, nullptr,
                                                            D3DCOLOR_XRGB(0, 0, 0));
     }
-    if (device::stretch_surfaces(src, nullptr, bb, &r,
-                                 bars ? D3DTEXF_LINEAR : D3DTEXF_NONE)) {
+    gpu_census::carrier_begin();
+    const bool shown = device::stretch_surfaces(src, nullptr, bb, &r,
+                                                bars ? D3DTEXF_LINEAR : D3DTEXF_NONE);
+    gpu_census::carrier_end();
+    if (shown) {
         g_monitor_blits++;
     } else {
         g_failures++;
@@ -451,7 +455,10 @@ void on_pass_boundary(uint32_t next_pass)
     if (!device || !create_resolved(device, &g_mirror, "mirror")) {
         return;
     }
-    if (device::blit_surfaces(g_front, g_mirror)) {
+    gpu_census::carrier_begin();
+    const bool mirrored = device::blit_surfaces(g_front, g_mirror);
+    gpu_census::carrier_end();
+    if (mirrored) {
         g_mirror_updates++;
         g_mirror_frame = hooks::frame_count();
         g_mirror_valid = true;

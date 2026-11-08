@@ -29,6 +29,8 @@ add_library(mc2vr_carrier SHARED
     debug/vm_dump.cpp
     debug/watch.cpp
     debug/wait_census.cpp
+    debug/gpu_census.cpp
+    debug/ps_census.cpp
     sha256.c
 )
 

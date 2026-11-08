@@ -1,5 +1,7 @@
 #include "device.hpp"
 #include "eye_share.hpp"
+#include "debug/gpu_census.hpp"
+#include "debug/ps_census.hpp"
 
 #include <safetyhook.hpp>
 
@@ -148,9 +150,16 @@ D3DPRESENT_PARAMETERS apply_param_policy(const D3DPRESENT_PARAMETERS &engine, co
                   p.FullScreen_RefreshRateInHz, p.PresentationInterval);
         p.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
     }
-    render_outputs::note_requested_msaa((uint32_t)p.MultiSampleType, p.MultiSampleQuality);
+    // The game's AA option only ever multisamples the swapchain, i.e. the final
+    // composite + HUD (the 3D scene renders into a non-MSAA texture — a port
+    // bug, docs/msaa.md), and with it on, depth-tested composited icons fail to
+    // draw (also without the mod). So the request is dropped entirely: neither
+    // the swapchain nor the carrier front gets MSAA (~0.5 ms/frame of 8x
+    // composite/resolve bandwidth at HMD size, and the icons render).
+    render_outputs::note_requested_msaa((uint32_t)D3DMULTISAMPLE_NONE, 0);
     if (p.MultiSampleType != D3DMULTISAMPLE_NONE) {
-        MC2VR_LOG("outputs: %s swapchain MSAA %u/%lu -> none (moved to the carrier front)",
+        MC2VR_LOG("outputs: %s swapchain MSAA %u/%lu requested -> none (ignored: composite/HUD "
+                  "only, hides composited icons)",
                   what, (unsigned)p.MultiSampleType, (unsigned long)p.MultiSampleQuality);
         p.MultiSampleType = D3DMULTISAMPLE_NONE;
         p.MultiSampleQuality = 0;
@@ -406,6 +415,8 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
     }
 
     eye_replay::on_reset(); // the shared eye ring is dropped (re-created lazily)
+    gpu_census::on_reset();
+    ps_census::on_reset();
 
     // A Reset carries NEW present params (resolution etc.) — the same policy
     // as CreateDevice (vsync unlock, MSAA move), on a copy.
@@ -462,8 +473,49 @@ HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
             }
         }
         view_rewrite::on_set_render_target(w, h);
+        gpu_census::on_set_rt(w, h);
+        ps_census::on_set_rt(w, h);
     }
     return hr;
+}
+
+// debug_ps_census: pixel-shader binds (installed only when enabled).
+constexpr size_t SLOT_SetPixelShader = 107;
+safetyhook::VmHook *g_setps_hook = nullptr;
+HRESULT __stdcall setps_hook(void *self, void *ps)
+{
+    ps_census::on_set_ps(ps);
+    return g_setps_hook->stdcall<HRESULT>(self, ps);
+}
+
+// debug_gpu_census / debug_ps_census: draw-call counting (installed only when enabled).
+constexpr size_t SLOT_DrawPrimitive = 81, SLOT_DrawIndexedPrimitive = 82,
+                 SLOT_DrawPrimitiveUP = 83, SLOT_DrawIndexedPrimitiveUP = 84;
+safetyhook::VmHook *g_draw_hooks[4] = {};
+HRESULT __stdcall draw_hook(void *self, DWORD a, DWORD b, DWORD c)
+{
+    gpu_census::on_draw();
+    ps_census::on_draw();
+    return g_draw_hooks[0]->stdcall<HRESULT>(self, a, b, c);
+}
+HRESULT __stdcall drawindexed_hook(void *self, DWORD a, INT b, UINT c, UINT d, UINT e, UINT f)
+{
+    gpu_census::on_draw();
+    ps_census::on_draw();
+    return g_draw_hooks[1]->stdcall<HRESULT>(self, a, b, c, d, e, f);
+}
+HRESULT __stdcall drawup_hook(void *self, DWORD a, UINT b, const void *c, UINT d)
+{
+    gpu_census::on_draw();
+    ps_census::on_draw();
+    return g_draw_hooks[2]->stdcall<HRESULT>(self, a, b, c, d);
+}
+HRESULT __stdcall drawindexedup_hook(void *self, DWORD a, UINT b, UINT c, UINT d, const void *e,
+                                     DWORD f, const void *g, UINT h)
+{
+    gpu_census::on_draw();
+    ps_census::on_draw();
+    return g_draw_hooks[3]->stdcall<HRESULT>(self, a, b, c, d, e, f, g, h);
 }
 
 HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UINT count)
@@ -664,6 +716,35 @@ bool hook_device(void *device)
         }
         *spec.storage = new safetyhook::VmHook(std::move(*hook)); // leaked by design
         MC2VR_LOG("D3D: hooked %s (slot %u) via cloned vtable", spec.name, (unsigned)spec.slot);
+    }
+
+    if (ps_census::enabled()) {
+        auto hook = g_vmt_hook->hook_method(SLOT_SetPixelShader, (void *)&setps_hook);
+        if (hook) {
+            g_setps_hook = new safetyhook::VmHook(std::move(*hook)); // leaked by design
+            MC2VR_LOG("ps: SetPixelShader hook installed (debug_ps_census)");
+        } else {
+            MC2VR_LOG("ps: hook_method(SetPixelShader) failed — no per-shader census");
+        }
+    }
+    if (gpu_census::enabled() || ps_census::enabled()) {
+        const SlotSpec draw_slots[] = {
+            {SLOT_DrawPrimitive, (void *)&draw_hook, &g_draw_hooks[0], "DrawPrimitive"},
+            {SLOT_DrawIndexedPrimitive, (void *)&drawindexed_hook, &g_draw_hooks[1],
+             "DrawIndexedPrimitive"},
+            {SLOT_DrawPrimitiveUP, (void *)&drawup_hook, &g_draw_hooks[2], "DrawPrimitiveUP"},
+            {SLOT_DrawIndexedPrimitiveUP, (void *)&drawindexedup_hook, &g_draw_hooks[3],
+             "DrawIndexedPrimitiveUP"},
+        };
+        for (const SlotSpec &spec : draw_slots) {
+            auto hook = g_vmt_hook->hook_method(spec.slot, spec.destination);
+            if (!hook) {
+                MC2VR_LOG("gpu: hook_method(%s) failed — draw counts incomplete", spec.name);
+                continue;
+            }
+            *spec.storage = new safetyhook::VmHook(std::move(*hook)); // leaked by design
+        }
+        MC2VR_LOG("gpu: draw-call hooks installed (debug_gpu_census / debug_ps_census)");
     }
 
     if (rt_probe::enabled()) {

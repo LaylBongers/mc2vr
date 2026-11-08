@@ -5,7 +5,7 @@ Mod-side hooking rules + inventory. SecuROM background: [securom_vm.md](reverse_
 ## Rules (proven, do not re-litigate)
 
 - SecuROM enforcement is inert under everything we do (live `.text` inline patches, in-process `.data` writes, direct VM-stub thunk calls, DLL injection, cross-process reads; multi-minute runs, zero reaction). Still: never attach a debugger/ptrace; the carrier is the only sanctioned probe.
-- Plaintext `.text` only. Never hook anything at `0x01a48000+` or VM-stub thunks (interpreter stub `0x0050f660`, pose-getter thunk `0x0048bf00` — use plaintext call sites). CALLING stubs is fine (e.g. `GetD3DDevice`, proven).
+- Plaintext `.text` only. Never hook anything at `0x01a48000+` or SecuROM thunks themselves (packet-processing thunk `0x0050c660`, pose getter `0x0048bf00` — use plaintext call sites). CALLING stubs is fine (e.g. `GetD3DDevice`, proven).
 - The device vtable is the one sanctioned vtable patch (via clone). Device-vtable hooks that only observe/forward are safe (the game's state caches are caller-side in the `Dx9_*` functions); ALTERING values at the device level would desync them (`g_RenderStateCache`, texture/sampler/RT caches) — alter at the `Dx9_*` function level instead, or rewrite scratch copies as `view_rewrite.cpp` does.
 - Hook handlers must match the original convention; zero-arg void functions are convention-agnostic on i386.
 - Function replacement is sanctioned: a plaintext engine function may be reimplemented in the carrier (InlineHook to our implementation, calling back into game functions), within reason and gradually — RE the callees' conventions first, and prefer replacing the smallest function that owns the decision. Example: the render-size policy at `OnScreenResize`'s boundary ([render_resolution.md](render_resolution.md)) — which also shows the limit: a callee with opaque (VM) register inputs rules out reimplementation, so the inputs are set instead.
@@ -43,4 +43,4 @@ Mod-side hooking rules + inventory. SecuROM background: [securom_vm.md](reverse_
 
 - Reuse the game's own timing (`g_FrameDeltaSec`, `g_Dt`); VR pacing bypasses/neutralizes the adaptive framerate path (`g_FrameratePolicy` / `AdaptiveFramerate_Govern`) — so far unneeded, see [pacing.md](pacing.md).
 - Never hook via the SecuROM wrapper pointers (runtime-only) or inside `0x01a48000+`.
-- The ring/packet interpreter is VM-protected — probe it by bracketing plaintext call sites, never by hooking the stub.
+- The packet processing (thunk `0x0050c660` → protected `0x024F2170`, [reverse_engineering/securom_vm.md](reverse_engineering/securom_vm.md)) — probe it by bracketing its plaintext call site `0x004c99f9`, never by hooking inside it.

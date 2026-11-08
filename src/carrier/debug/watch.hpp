@@ -2,8 +2,8 @@
 // culling inputs; docs/reverse_engineering/camera_data_flow.md).
 //
 // The doc records two unproven assumptions:
-//   1. The culling/draw-record build happens inside the SecuROM-VM'd packet
-//      interpreter (stub 0x0050f660) — proposed evidence: watch a live
+//   1. The culling/draw-record build happens inside the protected packet
+//      processing (thunk 0x0050c660) — proposed evidence: watch a live
 //      camera field and log WHO touches it (the proposed next step, never run).
 //   2. ViewEntry's derived copies "feed streaming/culling" — likewise
 //      unproven; the reader set of these fields has never been observed.
@@ -20,7 +20,7 @@
 // Watch mode "full" (RW=3, default) catches readers AND writers in one run:
 // writer EIPs answer "is the camera-field producer VM or plaintext?", reader
 // EIPs answer "is the culling consumer VM or plaintext?" — e.g. repeated
-// reader EIPs inside Stext/Sitext (the VM interpreter loop) are direct
+// reader EIPs inside Stext/Sitext/.securom (protected code) are direct
 // evidence the consumer reads camera data from inside the VM.
 //
 // Self-instrumentation note: render_dump's whole-ViewEntry dumps run on the

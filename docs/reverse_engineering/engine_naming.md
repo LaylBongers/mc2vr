@@ -7,5 +7,5 @@
 
 ## Name hashing (two distinct mechanisms — don't confuse them)
 
-- `Lti_LazyNameHash` (`0x008244a0`, ~139 callers): per-site FNV-1a hash of `"Class::Method"` cached in `.bss`, read only by VM'd code — inert telemetry, NOT feature/device checks.
+- `Lti_LazyNameHash` (`0x008244a0`, ~139 callers): per-site FNV-1a hash of `"Class::Method"` cached in `.bss`, read only by protected code — inert telemetry, NOT feature/device checks.
 - Inline FNV-1a for **object names** (e.g. `PgMaterial::nameHash64`): basis `0x811c9dc5`, prime `0x1000193`, case-insensitive (`c | 0x20`), NUL terminator hashed as `0x2a`.

@@ -385,6 +385,11 @@ bool set_identity_oracle(const char *value)
     return true;
 }
 
+bool is_main_size(uint32_t w, uint32_t h)
+{
+    return w == render_w() && h == render_h();
+}
+
 void on_set_render_target(uint32_t w, uint32_t h)
 {
     g_rt_w = w;

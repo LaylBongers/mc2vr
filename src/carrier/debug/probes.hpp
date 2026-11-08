@@ -3,7 +3,7 @@
 // only sanctioned probe — no debugger, no ptrace):
 //   (a) the carrier can write+restore game .data in-process — logic modding
 //       writes game structures constantly, so this must be routine;
-//   (b) mod code may CALL a SecuROM-virtualized function (VM-stub thunk) —
+//   (b) mod code may CALL a SecuROM thunk —
 //       the counterpart of "never HOOK a VM stub".
 // Both run on the carrier init thread before any hook is installed, so any
 // crash is attributable to the probe itself, not to hook machinery.

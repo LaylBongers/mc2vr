@@ -22,6 +22,8 @@
 #include "view_rewrite.hpp"
 #include "camera_table.hpp"
 #include "watch.hpp"
+#include "debug/gpu_census.hpp"
+#include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
 
 namespace mc2vr::render {
@@ -316,6 +318,8 @@ void report_window()
     view_rewrite::report_window();
     pacing::report_window();
     wait_census::report_window();
+    gpu_census::report_window();
+    ps_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
     trace::report_window();

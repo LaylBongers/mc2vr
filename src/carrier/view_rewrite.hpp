@@ -32,6 +32,10 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
 // w=h=0 means no RT0.
 void on_set_render_target(uint32_t w, uint32_t h);
 
+// True when a render target of w x h is the engine's live render size (the
+// main scene / per-eye chain size).
+bool is_main_size(uint32_t w, uint32_t h);
+
 // The rewrite is always hmd_delta: per-eye projection from the OpenXR FOV +
 // per-eye position delta, the pose already in the records from the camera
 // table union (camera_table.cpp). Without a tracked HMD it passes through.

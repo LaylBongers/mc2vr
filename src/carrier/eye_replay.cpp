@@ -16,6 +16,8 @@
 #include "render_outputs.hpp"
 #include "view_rewrite.hpp"
 #include "debug/wait_census.hpp"
+#include "debug/gpu_census.hpp"
+#include "debug/ps_census.hpp"
 
 // Stereo pass boundaries (docs/stereo.md). Pass 1 renders LEFT, pass 2
 // RIGHT; the engine's final frame of each pass lands in the carrier-owned
@@ -365,6 +367,8 @@ void set_pass(uint32_t pass)
     if (pass == g_pass) {
         return;
     }
+    gpu_census::on_pass(pass);
+    ps_census::on_pass(pass);
     wait_census::mark(pass == 1 ? wait_census::Mark::Pass1
                       : pass == 2 ? wait_census::Mark::Pass2
                                   : wait_census::Mark::PassEnd);

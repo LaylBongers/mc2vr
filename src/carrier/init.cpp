@@ -26,6 +26,8 @@
 #include "camera_table.hpp"
 #include "debug/vm_dump.hpp"
 #include "sha256.h"
+#include "debug/gpu_census.hpp"
+#include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
 #include "pacing.hpp"
 
@@ -152,6 +154,18 @@ static void load_conf()
             // thread, each one a visible hitch).
             if (!render::set_view_dumps(value)) {
                 MC2VR_LOG("conf: debug_view_dumps=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_ps_census") == 0) {
+            // Per-pixel-shader GPU time + pixel counts (log-only;
+            // debug/ps_census.hpp). Must precede CreateDevice.
+            if (!ps_census::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_ps_census=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_gpu_census") == 0) {
+            // Per-pass / per-render-target GPU + CPU + draw-call census
+            // (log-only; debug/gpu_census.hpp). Must precede CreateDevice.
+            if (!gpu_census::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_gpu_census=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_wait_census") == 0) {
             // Main-thread wait census + per-frame phase split (log-only;

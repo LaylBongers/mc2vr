@@ -55,8 +55,8 @@
 // Camera staging block inside the frame-ctx object (RenderQueue_SubmitWorldPackets
 // plate): per active view, a 0x30-byte record staged at this+0xc2110+idx*0x30 —
 // {pos3, serial, rot16=quat @+0x10, lodByte@+0x20} — copied there by the PLAINTEXT
-// staging code (watch-proven: 0x0048EC46/0x0048EC5E) and consumed by the VM'd
-// packet interpreter post-walk. Watching it catches the culling consumer's reads.
+// staging code (watch-proven: 0x0048EC46/0x0048EC5E) and consumed by the protected
+// packet processing (thunk 0x0050c660) post-walk. Watching it catches the culling consumer's reads.
 #define MC2_VIEW_STAGING_OFF ((uintptr_t)0xc2110u)
 #define MC2_VIEW_STAGING_STRIDE ((uintptr_t)0x30u)
 #define MC2_VIEW_STAGING_QUAT_OFF ((uintptr_t)0x10u)
@@ -117,8 +117,8 @@
 #define MC2_QUEUE_COUNTERS_B ((uintptr_t)0x00ff362cu) // packed u16 producer batch
 
 // g_RenderQueue2 (0x00ff3650) — 2D/overlay submissions (docs/reverse_engineering/view_table.md).
-// No plaintext xref: the frame-ctx block hands &g_RenderQueue2 to the SecuROM-VM'd
-// interpreter (frame-ctx +0x78/+0x90; queue1's counters are at +0x60/+0x6c/+0x9c/+0xa8).
+// No plaintext xref: the frame-ctx block hands &g_RenderQueue2 to the protected
+// packet processing (thunk 0x0050c660) (frame-ctx +0x78/+0x90; queue1's counters are at +0x60/+0x6c/+0x9c/+0xa8).
 // Same struct as g_RenderQueue (elem +0x04, cap +0x08, buffer +0x0c, countersA +0x10
 // = low16 consumer-advanced / high16 producer elements, countersB +0x14). HUD
 // timing: the carrier samples these counters at Present + pass boundaries because

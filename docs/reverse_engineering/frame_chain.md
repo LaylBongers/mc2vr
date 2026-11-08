@@ -7,9 +7,9 @@ InGameShellState_FramePipeline (producer side, no D3D):
   ... RenderPackets_ResetViewFlags, RenderQueue_SubmitWorldPackets (0x0048e620: walks the
   ACTIVE-view linked list, stages one 96-byte {size,ptr} element per type-2/4 view, bulk-
   publishes to g_RenderQueue) ...
-  0x004c99f9 -> SecuROM VM stub 0x0050f660: SUSPECTED packet interpreter (static analysis: no plaintext
-  code reads the ring / frame-ctx 0xd29xx fields; it builds the draw-records + command
-  streams consumed below)
+  0x004c99f9 -> thunk 0x0050c660 (jmp [0x024d6940]; runtime slot -> 0x024F2170 in .securom:
+  SecuROM-mutated native code, securom_vm.md): the packet processing that builds the
+  draw-records + command streams consumed below
 PgPrimitive_SubmitToGPU (0x00855690, entered via vtable slot03 = RenderFrameTimed 0x0085abd0)
   RenderShell_InitDrawRecordTables (0x00853ee0, called from LtiRenderer-side FUN_007494e0)
   zeroes/allocates the draw-record tables + pools. SubmitToGPU walks the 0x58 PgPrimitive

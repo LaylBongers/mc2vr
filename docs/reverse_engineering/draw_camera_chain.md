@@ -17,7 +17,7 @@ camera entity pose (quat + pos, heap record; values originate in game logic/VM)
      from g_CameraPoseClearBlock (0x00DFBBD0, static zero template), then a Matrix_Copy3x4
      copies the live pose from g_CameraTable -> stack entry, then CamPose_FillEntryFov
      (0x00466615) fills fov from static 0x00B9B688
-  -> VM'd packet interpreter (orchestrates only)
+  -> protected packet processing (thunk 0x0050c660, orchestrates only)
   -> VMThunk_ViewContext_BuildCameraConstants (0x00506a26, no static xref = VM-called)
   -> ViewContext_BuildCameraConstants (0x008591ac):
        camera object = *(ctx+0x28)          (null -> identity defaults)

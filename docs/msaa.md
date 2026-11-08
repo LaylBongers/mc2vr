@@ -5,7 +5,7 @@ OPEN track: add working MSAA for the 3D scene.
 ## Problem
 
 The PC port's MSAA option has no effect on the 3D scene. This is a known port bug; forcing MSAA in the driver reportedly works. The engine's HDR scene renders into the fp16 main texture (`g_RT_MainColorSurf`, `+0x3e90`), and D3D9 textures cannot be multisampled. The MSAA setting (`g_LtiRenderer+0x594`, the sample count) only reaches:
-- the swapchain backbuffer and its auto depth, and therefore only the composite and HUD drawn there (render-command op 6). The carrier front keeps that MSAA ([render_outputs.md](render_outputs.md));
+- the swapchain backbuffer and its auto depth, and therefore only the composite and HUD drawn there (render-command op 6). With it on, depth-tested composited icons (world markers) fail to draw — reproducible without the mod. The carrier ignores the request ([render_outputs.md](render_outputs.md)): at HMD size the 8× composite + resolve cost ~0.5 ms/frame for HUD edges only;
 - the choice of a separate non-MSAA scene depth (`+0x3ea0`).
 
 RE: [reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md).

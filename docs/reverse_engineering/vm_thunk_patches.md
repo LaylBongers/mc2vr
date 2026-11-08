@@ -12,7 +12,7 @@ The file image of a `jmp [slot]` thunk names a `.securom` VM stub, but the SecuR
 - 155 patched to another address still in the SecuROM range (target role unknown),
 - **406 patched into `.text`** (distinct, native, SecuROM-mutated plaintext: junk-counter prologue `lea ebp/eax,[X]; dec [..]; je`, `push ret; jmp` call sites).
 
-Proven cases: `GetD3DDevice` `0x0047f2f0` → `GetD3DDevice_Impl` `0x00403160` (`return g_LtiRenderer ? g_LtiRenderer->dx9State : NULL`); `RenderTask_RenderFrame`'s follow-up thunk `0x0046ab80` → `NodeArray_DecrementChildRefs` `0x00518fa0`. Not covered by the census: non-slot stubs like `0x0050f660` (`push esi; ...; push 0x50f677; jmp 0x0085d760`, target is `.text`, untraced). Unaligned thunks are real too (mid-function VM calls, e.g. `0x0048bf06`).
+Proven cases: `GetD3DDevice` `0x0047f2f0` → `GetD3DDevice_Impl` `0x00403160` (`return g_LtiRenderer ? g_LtiRenderer->dx9State : NULL`); `RenderTask_RenderFrame`'s follow-up thunk `0x0046ab80` → `NodeArray_DecrementChildRefs` `0x00518fa0`. Some runtime targets are themselves mutated native code: `0x0050f660` (target of thunk `0x005a0360`) is `push esi; …; push 0x50f677; jmp 0x0085d760` — a mutated call into Lua's `index2adr`, i.e. a copy of `lua_insert` ([securom_vm.md](securom_vm.md)). Unaligned thunks are real too (mid-function VM calls, e.g. `0x0048bf06`).
 
 ## Rules
 
