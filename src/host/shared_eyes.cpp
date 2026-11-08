@@ -38,6 +38,20 @@ struct Latest {
     bool fresh = false;
 };
 Latest g_latest[2];
+// Per-eye arrivals not yet matched to their partner. The carrier publishes
+// LEFT at the 1->2 boundary and RIGHT ~one eye pass later, both with the
+// same frameId; g_latest only advances on a COMPLETE pair, so the OpenXR
+// loop never submits eyes from two different game frames.
+Latest g_pending[2];
+uint64_t g_pairs = 0, g_unpaired = 0;  // window counters
+
+// Mirror pacing: the mirror is diagnostic, its readback must never cost the
+// HMD loop a frame. At most one GPU->CPU copy per interval, mapped without
+// waiting on a later pump.
+constexpr ULONGLONG MIRROR_INTERVAL_MS = 200;
+ULONGLONG g_mirror_next = 0;
+Entry* g_mirror_pending[2] = {nullptr, nullptr};  // copied, not yet mapped
+double g_mirror_max_ms = 0.0;  // worst pump draw cost in the window
 
 std::vector<uint8_t> g_scratch;  // packed BGRA row buffer (GDI wants tight rows)
 uint64_t g_zero_handles = 0;
@@ -70,18 +84,19 @@ LRESULT CALLBACK wnd_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 namespace {
 
-// Draw one pane: staging-read the shared texture and StretchDIBits it scaled
-// into the pane rect. GDI 32bpp BI_RGB is BGRA with alpha ignored — the shared
+// Draw one pane: map the staging copy of the shared texture and StretchDIBits
+// it scaled into the pane rect (false = copy not finished yet). GDI 32bpp BI_RGB is BGRA with alpha ignored — the shared
 // textures are B8G8R8A8/B8G8R8X8 UNORM (X8R8G8B8 opens as the latter,
 // probe-proven), so the rows pass through untouched. GDI assumes tight rows;
 // re-pack only when the staging pitch is padded.
-void draw_pane_impl(HDC dc, const RECT& pane, const Entry& e) {
-    // Shared texture -> staging (the copy I managed to forget in the first
-    // live run: Map on a never-copied staging texture reads its zero-init
-    // contents — the black-mirror bug) ...
-    g_ctx->CopyResource(e.stg, e.tex);
+bool draw_pane_impl(HDC dc, const RECT& pane, const Entry& e) {
+    // The CopyResource into staging was issued on an earlier pump (the copy I
+    // once forgot entirely: Map on a never-copied staging texture reads its
+    // zero-init contents — the black-mirror bug). DO_NOT_WAIT: a copy still in
+    // flight is retried next pump instead of stalling the HMD loop.
     D3D11_MAPPED_SUBRESOURCE m;
-    if (FAILED(g_ctx->Map(e.stg, 0, D3D11_MAP_READ, 0, &m))) return;
+    if (g_ctx->Map(e.stg, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m) != S_OK)
+        return false;
 
     const size_t tight = (size_t)e.w * 4;
     const uint8_t* src = (const uint8_t*)m.pData;
@@ -106,6 +121,7 @@ void draw_pane_impl(HDC dc, const RECT& pane, const Entry& e) {
                   pane.bottom - pane.top, 0, 0, e.w, e.h, bits, &bi,
                   DIB_RGB_COLORS, SRCCOPY);
     g_ctx->Unmap(e.stg, 0);
+    return true;
 }
 
 }  // namespace
@@ -234,10 +250,20 @@ void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
                        (unsigned long long)handle, eye, w, h, d.Format, g_cache.size());
     }
 
-    g_latest[eye].e = e;
-    g_latest[eye].frameId = frameId;
-    g_latest[eye].poseId = poseId;
-    g_latest[eye].fresh = true;
+    Latest& p = g_pending[eye];
+    if (p.e != nullptr) g_unpaired++;  // superseded before its partner came
+    p.e = e;
+    p.frameId = frameId;
+    p.poseId = poseId;
+    p.fresh = true;
+    Latest& o = g_pending[eye ^ 1u];
+    if (o.e != nullptr && o.frameId == frameId) {
+        g_latest[eye] = p;
+        g_latest[eye ^ 1u] = o;
+        p = Latest();
+        o = Latest();
+        g_pairs++;
+    }
 }
 
 void pump() {
@@ -251,7 +277,6 @@ void pump() {
     }
 
     if (!g_hwnd) return;  // user closed it — keep the pipes open, just stop drawing
-    if (!g_latest[0].fresh && !g_latest[1].fresh) return;
 
     RECT rc;
     if (!GetClientRect(g_hwnd, &rc)) return;
@@ -259,16 +284,38 @@ void pump() {
     RECT paneL = {rc.left, rc.top, mid, rc.bottom};
     RECT paneR = {mid, rc.top, rc.right, rc.bottom};
 
-    HDC dc = GetDC(g_hwnd);
-    SetStretchBltMode(dc, COLORONCOLOR);
-    for (uint32_t eye = 0; eye < 2; ++eye) {
-        Latest& lt = g_latest[eye];
-        if (!lt.fresh || lt.e == nullptr) continue;
-        draw_pane_impl(dc, eye == 0 ? paneL : paneR, *lt.e);
-        lt.fresh = false;
-        g_drawn[eye]++;
+    LARGE_INTEGER qf, q0, q1;
+    QueryPerformanceFrequency(&qf);
+    QueryPerformanceCounter(&q0);
+    // 1) Finish copies issued on an earlier pump (non-blocking).
+    if (g_mirror_pending[0] || g_mirror_pending[1]) {
+        HDC dc = GetDC(g_hwnd);
+        SetStretchBltMode(dc, COLORONCOLOR);
+        for (uint32_t eye = 0; eye < 2; ++eye) {
+            Entry* pe = g_mirror_pending[eye];
+            if (pe && draw_pane_impl(dc, eye == 0 ? paneL : paneR, *pe)) {
+                g_mirror_pending[eye] = nullptr;
+                g_drawn[eye]++;
+            }
+        }
+        ReleaseDC(g_hwnd, dc);
     }
-    ReleaseDC(g_hwnd, dc);
+    // 2) Throttled: queue the next staging copy of the newest pair.
+    const ULONGLONG tnow = GetTickCount64();
+    if (tnow >= g_mirror_next && !g_mirror_pending[0] && !g_mirror_pending[1] &&
+        (g_latest[0].fresh || g_latest[1].fresh)) {
+        g_mirror_next = tnow + MIRROR_INTERVAL_MS;
+        for (uint32_t eye = 0; eye < 2; ++eye) {
+            Latest& lt = g_latest[eye];
+            if (!lt.fresh || lt.e == nullptr) continue;
+            g_ctx->CopyResource(lt.e->stg, lt.e->tex);
+            g_mirror_pending[eye] = lt.e;
+            lt.fresh = false;
+        }
+    }
+    QueryPerformanceCounter(&q1);
+    const double ms = (double)(q1.QuadPart - q0.QuadPart) * 1000.0 / (double)qf.QuadPart;
+    if (ms > g_mirror_max_ms) g_mirror_max_ms = ms;
 
     // ~10s activity line (diagnostic; the log is the acceptance evidence).
     static ULONGLONG next_stats = 0;
@@ -278,13 +325,17 @@ void pump() {
         next_stats = now + 10000;
     } else if (now > next_stats) {
         next_stats = now + 10000;
-        hostlog::write("seyes: window stats recvL=%llu recvR=%llu drawnL=%llu "
-                       "drawnR=%llu opened=%zu openFails=%llu",
+        hostlog::write("seyes: window stats recvL=%llu recvR=%llu pairs=%llu "
+                       "unpaired=%llu drawnL=%llu drawnR=%llu mirrorMax=%.2fms "
+                       "opened=%zu openFails=%llu",
                        (unsigned long long)(g_received[0] - g_stat_eyes[0][0]),
                        (unsigned long long)(g_received[1] - g_stat_eyes[1][0]),
+                       (unsigned long long)g_pairs, (unsigned long long)g_unpaired,
                        (unsigned long long)(g_drawn[0] - g_stat_eyes[0][1]),
                        (unsigned long long)(g_drawn[1] - g_stat_eyes[1][1]),
-                       g_cache.size(), (unsigned long long)g_open_fails);
+                       g_mirror_max_ms, g_cache.size(), (unsigned long long)g_open_fails);
+        g_pairs = g_unpaired = 0;
+        g_mirror_max_ms = 0.0;
         g_stat_eyes[0][0] = (uint32_t)g_received[0];  // 32-bit is fine for a window delta
         g_stat_eyes[1][0] = (uint32_t)g_received[1];
         g_stat_eyes[0][1] = (uint32_t)g_drawn[0];

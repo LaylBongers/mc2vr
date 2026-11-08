@@ -10,7 +10,9 @@ Runs in the same Proton prefix with DXVK D3D11 (`proton run`; plain `wine` only 
 
 ## Frame loop
 
-`xrWaitFrame` at HMD cadence (~120 Hz), event pump, submit. Consumes the newest eye pair from the [shared texture ring](shared_textures.md); commands/state over [ipc.md](ipc.md). Pose consistency: the carrier tags frames with `poseId = hostFrame+1`; the host keeps a 256-entry published-view history and submits the projection layer with the pose+FOV of that id, so the compositor reprojects from what the image actually contains. Focus lost: the host gates layer submission on `shouldRender` (zero layers while not VISIBLE/FOCUSED, Begin/End keeps cadence); the game keeps running with camera pass-through (`view/hmd: valid=0`).
+Per host frame: `xrWaitFrame` (HMD cadence ~120 Hz) → `xrBeginFrame` → **late latch** (drain carrier commands only now, so a pair finished during the WaitFrame block goes out this frame, not next) → locate this frame's views (layer fallback) → locate + **publish the render pose for `predictedDisplayTime + 1 period`** (the display time a pair rendered from it actually reaches; published before the blits so the next pass-1 sample sees it) → blit + `xrEndFrame`. The event pump and the mirror run between frames.
+
+Pose consistency: the carrier tags frames with `poseId = hostFrame+1`; the host keeps a 256-entry published-view history and submits the projection layer with the pose+FOV of that id, so the compositor reprojects from what the image actually contains. Only **complete pairs** (both eyes of one carrier frameId) are submitted (`seyes::latest`). `submit:` lines report `warp avg/max` = submit display time − the pair's pose prediction time (the error the compositor must warp; ~0 ideal). The host mirror is throttled (≤5 Hz) and maps its staging copy with `DO_NOT_WAIT` — it must never stall the HMD loop (`seyes:` line `mirrorMax`). Focus lost: the host gates layer submission on `shouldRender` (zero layers while not VISIBLE/FOCUSED, Begin/End keeps cadence); the game keeps running with camera pass-through (`view/hmd: valid=0`).
 
 ## Submission
 

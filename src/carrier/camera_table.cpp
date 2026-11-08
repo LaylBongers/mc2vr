@@ -59,9 +59,18 @@ struct Rewritten {
     uint64_t frame = 0;
     float rows[9] = {};  // entry+0x10 rows (3 floats each, w skipped)
     float pos[3] = {};
+    Quat urot;  // the union pose composed into this entry
+    Vec3 upos;
 };
 Rewritten g_history[HISTORY];
 uint32_t g_history_next = 0;
+
+// union_for_camera window counters: age (game frames) of the rewrite whose
+// rotation the uploaded VP actually carries; 0 = same frame as the pass-1
+// sample (what get_union assumes), none = no history entry matched.
+constexpr uint32_t UNION_AGES = 4;
+uint64_t g_union_age[UNION_AGES] = {};
+uint64_t g_union_none = 0;
 
 void remember_rewrite(const float *e)
 {
@@ -77,6 +86,8 @@ void remember_rewrite(const float *e)
         h.rows[i * 3 + 2] = e[i * 4 + 2];
         h.pos[i] = e[12 + i];
     }
+    h.urot = g_pose_rot;
+    h.upos = g_pose_pos;
     std::atomic_thread_fence(std::memory_order_release);
     h.seq.store(s + 2, std::memory_order_relaxed);
 }
@@ -438,6 +449,57 @@ bool get_union(math::Quat *rot, math::Vec3 *pos)
     return true;
 }
 
+bool union_for_camera(const Vec3 &R, const Vec3 &U, const Vec3 &F, Quat *rot, Vec3 *pos)
+{
+    if (g_s0 == 0) {
+        return false;  // row signs not measured: no rewrite has happened yet
+    }
+    // Rendered basis of an entry = s_j * row_j (probe-proven, measured signs).
+    const float sg[3] = {(float)g_s0, (float)g_s1, (float)g_s2};
+    const Vec3 *axes[3] = {&R, &U, &F};
+    const uint64_t now = hooks::frame_count();
+    constexpr float MATCH_EPS = 5e-3f;  // exact copies + VP decompose noise
+    float best = MATCH_EPS;
+    bool found = false;
+    uint64_t best_frame = 0;
+    for (Rewritten &h : g_history) {
+        const uint32_t s0 = h.seq.load(std::memory_order_acquire);
+        if (s0 == 0 || (s0 & 1u) != 0) {
+            continue;
+        }
+        const uint64_t frame = h.frame;
+        float r[9];
+        memcpy(r, h.rows, sizeof(r));
+        const Quat q = h.urot;
+        const Vec3 p = h.upos;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (h.seq.load(std::memory_order_relaxed) != s0 || now - frame >= UNION_AGES) {
+            continue;
+        }
+        float err = 0.0f;
+        for (int i = 0; i < 3; i++) {
+            const Vec3 &a = *axes[i];
+            err = std::fmax(err, std::fabs(a.x - sg[i] * r[i * 3 + 0]));
+            err = std::fmax(err, std::fabs(a.y - sg[i] * r[i * 3 + 1]));
+            err = std::fmax(err, std::fabs(a.z - sg[i] * r[i * 3 + 2]));
+        }
+        // Ties (the same pose rewritten twice): prefer the newest.
+        if (err < best || (found && err == best && frame > best_frame)) {
+            best = err;
+            best_frame = frame;
+            *rot = q;
+            *pos = p;
+            found = true;
+        }
+    }
+    if (!found) {
+        g_union_none++;
+        return false;
+    }
+    g_union_age[now - best_frame]++;
+    return true;
+}
+
 // Staleness window, NOT same-frame: the HMD FOV is a property of the optics
 // (quasi-static), and the view-context builder may run on another thread or
 // before this frame's first fill.
@@ -538,6 +600,16 @@ void report_window()
                         : "",
               (unsigned long long)g_miss_read, (unsigned long long)g_miss_untracked,
               (unsigned long long)g_miss_insane, (unsigned long long)g_pose_held);
+    MC2VR_LOG("camtable: VP union age (game frames between the union baked into an "
+              "uploaded VP and the upload; >0 = pipelined camera) 0=%llu 1=%llu 2=%llu "
+              "3=%llu none=%llu",
+              (unsigned long long)g_union_age[0], (unsigned long long)g_union_age[1],
+              (unsigned long long)g_union_age[2], (unsigned long long)g_union_age[3],
+              (unsigned long long)g_union_none);
+    for (uint64_t &a : g_union_age) {
+        a = 0;
+    }
+    g_union_none = 0;
     g_miss_read = g_miss_untracked = g_miss_insane = g_pose_held = 0;
     for (uint32_t k = 0; k < g_entries_n; k++) {
         MC2VR_LOG("camtable:   entry slot=%u.%u rot=%p fills=%llu rewrites=%llu",

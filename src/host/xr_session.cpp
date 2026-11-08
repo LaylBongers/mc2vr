@@ -64,11 +64,22 @@ struct State {
     // The carrier echoes the id of the pose it rendered with in FRAME_READY;
     // the projection layer is submitted with that pose+FOV so the compositor
     // reprojects from what the image actually contains.
-    struct PoseRec { uint32_t id = 0; XrPosef pose[2]; XrFovf fov[2]; };
+    struct PoseRec { uint32_t id = 0; XrTime time = 0; XrPosef pose[2]; XrFovf fov[2]; };
     static constexpr uint32_t kHist = 256;
     PoseRec hist[kHist];
     uint64_t poseHit = 0, poseMiss = 0, poseNone = 0;
+    // Warp the compositor has to cover per submitted pair: submit-frame
+    // display time minus the display time the pair's pose was predicted for
+    // (ms; ~0 = the image shows exactly the pose the display needs).
+    double warpSumMs = 0.0, warpMaxMs = 0.0;
+    uint64_t warpN = 0;
 };
+
+// The published (render) pose is predicted this many display periods past the
+// current frame's predictedDisplayTime: a pair rendered from a pose published
+// in host frame N is complete before frame N+1's xrWaitFrame returns (game
+// ~135 Hz > HMD 120 Hz) and is submitted — and displayed — in frame N+1.
+constexpr int kPoseLeadFrames = 1;
 
 // Distance between the two eye positions (the runtime's IPD), meters.
 float eye_separation(const XrView views[2]) {
@@ -319,13 +330,32 @@ void handle_events(State& s) {
 }
 
 // One frame: wait/begin/locate/render/end. Returns false on a hard error.
-void publish_frame(State& s, const XrFrameState& fs, const XrView views[2],
-                   bool poseOk);
+void publish_frame(State& s, XrTime displayTime, const XrView views[2], bool poseOk);
+void drain_commands(State& s);
+
+bool locate(State& s, XrTime t, XrView views[2], bool* poseOk) {
+    XrViewLocateInfo li = {XR_TYPE_VIEW_LOCATE_INFO};
+    li.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+    li.displayTime = t;
+    li.space = s.space;
+    XrViewState vs = {XR_TYPE_VIEW_STATE};
+    uint32_t nv = 0;
+    XR_TRY(xrLocateViews(s.session, &li, &vs, 2, &nv, views));
+    *poseOk = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0 &&
+              (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0;
+    return true;
+}
 
 bool frame(State& s, unsigned n) {
     XrFrameState fs = {XR_TYPE_FRAME_STATE};
     XR_TRY(xrWaitFrame(s.session, nullptr, &fs));
     XR_TRY(xrBeginFrame(s.session, nullptr));
+
+    // Late latch: take the carrier's FRAME_READYs only now. xrWaitFrame
+    // blocks for most of the display period; pairs completed during that
+    // block would otherwise wait one more host frame (draining before the
+    // wait = 1-2 frames of image age, jittering with the game/HMD beat).
+    drain_commands(s);
 
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW},
                                               {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
@@ -336,25 +366,29 @@ bool frame(State& s, unsigned n) {
     bool poseOk = false;
 
     if (fs.shouldRender) {
-        XrViewLocateInfo li = {XR_TYPE_VIEW_LOCATE_INFO};
-        li.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-        li.displayTime = fs.predictedDisplayTime;
-        li.space = s.space;
-        XrViewState vs = {XR_TYPE_VIEW_STATE};
-        uint32_t nv = 0;
-        XR_TRY(xrLocateViews(s.session, &li, &vs, 2, &nv, views));
+        // This frame's views (layer fallback for frames without a pose id).
+        if (!locate(s, fs.predictedDisplayTime, views, &poseOk)) return false;
 
-        poseOk = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0 &&
-                 (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0;
+        // Render pose for the carrier, predicted for the display time its
+        // image will actually reach (see kPoseLeadFrames), published NOW —
+        // before the blits and xrEndFrame — so the game's next pass-1 sample
+        // already sees it.
+        const XrTime pubTime =
+            fs.predictedDisplayTime + (XrTime)kPoseLeadFrames * fs.predictedDisplayPeriod;
+        XrView pub[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+        bool pubOk = false;
+        if (!locate(s, pubTime, pub, &pubOk)) return false;
+        publish_frame(s, pubTime, pub, pubOk);
+
         if (n % 90 == 0) {
             hostlog::write("openxr: frame %u valid=%d L=(%.3f %.3f %.3f) q=(%.3f %.3f %.3f %.3f) "
-                           "ipd=%.4f fovL=(%.3f %.3f %.3f %.3f)",
+                           "ipd=%.4f fovL=(%.3f %.3f %.3f %.3f) period=%.2fms",
                            n, poseOk, views[0].pose.position.x, views[0].pose.position.y,
                            views[0].pose.position.z, views[0].pose.orientation.x,
                            views[0].pose.orientation.y, views[0].pose.orientation.z,
                            views[0].pose.orientation.w, eye_separation(views),
                            views[0].fov.angleLeft, views[0].fov.angleRight, views[0].fov.angleUp,
-                           views[0].fov.angleDown);
+                           views[0].fov.angleDown, fs.predictedDisplayPeriod / 1e6);
         }
 
         // Layer pose/FOV (separate from `views`, which is what gets published).
@@ -384,12 +418,18 @@ bool frame(State& s, unsigned n) {
                     // Layer = the rendered pose/FOV (both eyes share one pose id).
                     lpose[e] = pr->pose[e];
                     lfov[e] = pr->fov[e];
+                    if (e == 0) {
+                        const double w = (fs.predictedDisplayTime - pr->time) / 1e6;
+                        s.warpSumMs += w;
+                        if (std::fabs(w) > std::fabs(s.warpMaxMs)) s.warpMaxMs = w;
+                        s.warpN++;
+                    }
                 }
                 if (img.frameId != s.subLast[e]) {
                     s.subLast[e] = img.frameId;
                     s.subFresh++;
                 } else {
-                    s.subReused++;  // game ~30 Hz < HMD cadence: re-submit newest
+                    s.subReused++;  // no newer complete pair: re-submit newest
                 }
             } else {
                 eyes::draw_pattern(s.d3d.ctx, ey.rtvs[idx], e, n);
@@ -425,12 +465,20 @@ bool frame(State& s, unsigned n) {
                            (s.subFresh + s.subReused + s.subPattern) / 10.0,
                            (s.subFresh + s.subReused + s.subPattern) / 20.0);
             hostlog::write("submit: pose ids hit=%llu miss=%llu none=%llu (miss = "
-                           "id aged out of the %u-entry history)",
+                           "id aged out of the %u-entry history) | warp avg=%.2fms "
+                           "max=%.2fms (display time - pose prediction time; ~0 ideal)",
                            (unsigned long long)s.poseHit, (unsigned long long)s.poseMiss,
-                           (unsigned long long)s.poseNone, State::kHist);
+                           (unsigned long long)s.poseNone, State::kHist,
+                           s.warpN ? s.warpSumMs / s.warpN : 0.0, s.warpMaxMs);
             s.poseHit = s.poseMiss = s.poseNone = 0;
             s.subFresh = s.subReused = s.subPattern = 0;
+            s.warpSumMs = s.warpMaxMs = 0.0;
+            s.warpN = 0;
         }
+    } else {
+        // Not rendering (not VISIBLE): keep the carrier's state current with
+        // an untracked publish.
+        publish_frame(s, fs.predictedDisplayTime, views, false);
     }
 
     XrFrameEndInfo ei = {XR_TYPE_FRAME_END_INFO};
@@ -439,17 +487,15 @@ bool frame(State& s, unsigned n) {
     ei.layerCount = layerCount;
     ei.layers = layerCount ? layers : nullptr;
     XR_TRY(xrEndFrame(s.session, &ei));
-    publish_frame(s, fs, views, poseOk);
     return true;
 }
 
 // Publish the located views (or a tracked=false state-only frame) to the
 // carrier. Eye fov mirrors XrFovF exactly (tangent half-angles).
-void publish_frame(State& s, const XrFrameState& fs, const XrView views[2],
-                   bool poseOk) {
+void publish_frame(State& s, XrTime displayTime, const XrView views[2], bool poseOk) {
     HmdFrame f;
     f.tracked = poseOk;
-    f.displayTime = fs.predictedDisplayTime;
+    f.displayTime = displayTime;
     for (int e = 0; e < 2; ++e) {
         f.eye[e].pos = {views[e].pose.position.x, views[e].pose.position.y,
                         views[e].pose.position.z};
@@ -461,11 +507,34 @@ void publish_frame(State& s, const XrFrameState& fs, const XrView views[2],
     const float ipd = eye_separation(views);
     State::PoseRec& r = s.hist[(s.pubFrame + 1) % State::kHist];
     r.id = s.pubFrame + 1;  // == the poseId the carrier derives from hostFrame
+    r.time = displayTime;
     for (int e = 0; e < 2; ++e) {
         r.pose[e] = views[e].pose;
         r.fov[e] = views[e].fov;
     }
     ipc::publish(f, ipd, (uint32_t)s.sessionState, s.recenterCount, s.pubFrame++);
+}
+
+// Carrier lifecycle (Shutdown command) + image traffic. Never blocks — a
+// lock-free ring poll.
+void drain_commands(State& s) {
+    Mc2IpcMsg cmd;
+    while (ipc::pop_command(&cmd)) {
+        if (cmd.type == MC2VR_CMD_SHUTDOWN) {
+            hostlog::write("openxr: Shutdown command from carrier (pid %u)",
+                           ipc::carrier_pid());
+            s.selfExit = true;
+            if (s.running) xrRequestExitSession(s.session);
+            s.exiting = true;
+        } else if (cmd.type == MC2VR_CMD_FRAME_READY) {
+            // {x=frameId y=handle a=slot b=eye c=w d=h e=poseId}
+            seyes::on_frame_ready(cmd.x, cmd.y, cmd.a, cmd.b, cmd.c, cmd.d, cmd.e);
+        } else if (cmd.type == MC2VR_CMD_CONFIG) {
+            seyes::on_config(cmd.a, cmd.b, cmd.c);
+        } else {
+            hostlog::write("openxr: unexpected command %u ignored", cmd.type);
+        }
+    }
 }
 
 }  // namespace
@@ -492,26 +561,9 @@ int run(const Options& opt) {
     while (!s.exiting && ok) {
         handle_events(s);
 
-        // Carrier lifecycle: Shutdown command, or the carrier (game) process
-        // went away. Never block — both checks are lock-free polls.
-        Mc2IpcMsg cmd;
-        while (ipc::pop_command(&cmd)) {
-            if (cmd.type == MC2VR_CMD_SHUTDOWN) {
-                hostlog::write("openxr: Shutdown command from carrier (pid %u)",
-                               ipc::carrier_pid());
-                s.selfExit = true;
-                if (s.running) xrRequestExitSession(s.session);
-                s.exiting = true;
-            } else if (cmd.type == MC2VR_CMD_FRAME_READY) {
-                // {x=frameId y=handle a=slot b=eye c=w d=h}
-                seyes::on_frame_ready(cmd.x, cmd.y, cmd.a, cmd.b, cmd.c, cmd.d,
-                                     cmd.e);
-            } else if (cmd.type == MC2VR_CMD_CONFIG) {
-                seyes::on_config(cmd.a, cmd.b, cmd.c);
-            } else {
-                hostlog::write("openxr: unexpected command %u ignored", cmd.type);
-            }
-        }
+        // Carrier commands: drained here only while no session frame loop
+        // runs; frame() late-latches them after xrBeginFrame.
+        if (!s.running) drain_commands(s);
         seyes::pump();
         if (ipc::carrier_died(1000)) {
             s.selfExit = true; // the game is already gone — not a runtime request

@@ -51,6 +51,14 @@ bool set_probe_enabled(const char *value);
 // not armed or the HMD wasn't tracked this frame.
 bool get_union(math::Quat *rot, math::Vec3 *pos);
 
+// True + fills *rot/*pos with the union pose that was composed into the
+// rewritten entry whose rendered basis (R, U, F — a decomposed VP camera)
+// matches, searching the last few frames' rewrites. This is the union the VP
+// ACTUALLY carries, so a per-eye delta taken against it is exact even if the
+// game builds a frame's VP from an earlier frame's table fill. Main thread.
+bool union_for_camera(const math::Vec3 &R, const math::Vec3 &U, const math::Vec3 &F,
+                      math::Quat *rot, math::Vec3 *pos);
+
 // True + fills *half_h/*half_v with the HMD FOV-union half-angles (radians,
 // outermost bound over BOTH eyes, no margin) from a pose sampled within the
 // last second. Input of the cull frustum (cull_frustum.hpp).

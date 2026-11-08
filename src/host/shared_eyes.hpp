@@ -29,15 +29,16 @@ void on_config(uint32_t width, uint32_t height, uint32_t format);
 void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
                     uint32_t eye, uint32_t w, uint32_t h, uint32_t poseId = 0);
 
-// Per host-frame: pump window messages and redraw panes when new frames
-// arrived. Cheap when idle.
+// Per host-frame: pump window messages; the mirror redraw is throttled and
+// its staging readback never waits on the GPU (diagnostic only — it must not
+// cost the HMD loop a frame).
 void pump();
 
-// Seam: the newest carrier image per eye. Returns true when eye has a
-// shared texture opened (with its UNORM-cast SRV). Does NOT consume the
-// mirror's `fresh` flag — the OpenXR loop re-submits the newest pair at HMD
-// cadence while the game runs ~30 Hz, so freshness is
-// irrelevant to the caller.
+// Seam: the given eye of the newest COMPLETE pair (both eyes of one carrier
+// frameId arrived — never a left from one game frame with a right from
+// another). Returns true when eye has a shared texture opened (with its
+// UNORM-cast SRV). Does NOT consume the mirror's `fresh` flag — the OpenXR
+// loop re-submits the newest pair whenever no newer one completed.
 struct LatestImage {
     ID3D11ShaderResourceView* srv = nullptr;
     uint64_t frameId = 0;

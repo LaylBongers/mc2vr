@@ -14,10 +14,15 @@ Live result: ~135 Hz gameplay (dt avg ~7.4 ms; pass 2 costs 3.2 ms — the wait 
 
 At ~135 Hz the game outpaces the ~120 Hz host; the host consumes the newest pair and the runtime reprojects.
 
-## KNOWN ISSUE — reprojection staleness (must be fixed eventually)
+## KNOWN ISSUE — head-turn judder (OPEN, fixes pending live verification)
 
-Apparent stutter/micro-judder during head motion that vanishes when the head is still. NOT frame drops (frame timing steady, dt min 5.8–7.8 ms) — the OpenXR compositor extrapolates the newest submitted pair (0–7 ms old at ~135 Hz game / ~120 Hz host), and the error scales with head velocity. The single biggest remaining VR-experience defect. Fix options, in preference order:
+Head turns feel choppy/low-rate while the frame rate is fine and the image is smooth with the head still. Error scales with head velocity → the image content and the pose it is submitted with disagree, or the pair is older than it needs to be. Loop audit 2026-11-08 found four defects, all fixed (verify with the next gameplay log):
 
-(a) **timewarp inputs** — feed motion vectors / late-stage data via slot-4 `EndOfFrameHook` ([hooks.md](hooks.md)) so the compositor reprojects accurately instead of extrapolating;
-(b) **throttle the game to HMD cadence** (slot-4) so pairs are always fresh at submit time;
-(c) suppress the duplicate per-frame Present — IMPLEMENTED 2026-11-08 (pass-1 present-prev skipped). Compare the staleness symptoms before and after.
+1. Commands (FRAME_READY) were drained BEFORE `xrWaitFrame`, so a pair completed during the wait block slipped a frame — image age jittered between 1 and 2 periods with the game/HMD beat. Now late-latched after `xrBeginFrame` ([host.md](host.md)).
+2. The render pose was predicted for the CURRENT frame's display time, though its image reaches the display ≥1 period later. Now predicted for `+1 period`. Evidence: `submit: … warp avg/max` (ms; ~0 ideal, ≈8.3 = one frame behind).
+3. Eyes were taken newest-per-eye, so LEFT of frame N+1 could ship with RIGHT of frame N. Now complete pairs only (`seyes: … pairs/unpaired`).
+4. The host mirror did a blocking full-res staging readback + GDI stretch of both eyes on every fresh frame inside the HMD loop. Now ≤5 Hz, non-blocking (`mirrorMax`).
+
+Carrier side: the per-eye delta was taken against the CURRENT frame's camtable union, assuming the uploaded VP was built from this frame's fill. If the engine builds a VP from an earlier fill, the rendered eye ≠ the tagged pose by one frame of head motion — exactly this symptom. The delta now uses the union the VP actually carries (matched by basis, `camera_table::union_for_camera`); `camtable: VP union age 0=… 1=…` records which case the game is in (any non-zero ages = that was a live bug).
+
+If judder remains after these: check SteamVR's frame timing for missed host frames; then (a) timewarp inputs (depth/motion vectors) or (b) throttle the game to HMD cadence via slot-4 `EndOfFrameHook` ([hooks.md](hooks.md)).

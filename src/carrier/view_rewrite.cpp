@@ -314,11 +314,14 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
     } else if (g_mode == RewriteMode::HmdDelta) {
         // I1: the raw VP already carries the camtable UNION pose; apply only
         // the per-eye complement — projection from this eye's OpenXR FOV,
-        // position/rotation delta relative to the union pose camtable used
-        // (same-frame reference, so pose and delta always pair up).
+        // position/rotation delta relative to the union pose THIS VP carries
+        // (matched by its basis, so the rendered eye equals the pass-1 sample
+        // whose id travels in FRAME_READY even if the VP came from an older
+        // table fill), else the same-frame union.
         math::Quat u_rot;
         math::Vec3 u_pos;
-        if (!camera_table::get_union(&u_rot, &u_pos)) {
+        if (!camera_table::union_for_camera(game.R, game.U, game.F, &u_rot, &u_pos) &&
+            !camera_table::get_union(&u_rot, &u_pos)) {
             g_delta_no_union++;
             if (g_delta_warn_logged++ < 8) {
                 MC2VR_LOG("view/hmd: delta upload passed through — no camtable union "
