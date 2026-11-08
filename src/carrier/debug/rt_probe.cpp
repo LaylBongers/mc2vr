@@ -460,7 +460,7 @@ uint32_t pass_idx()
 
 // ---- attach-time MidHooks ---------------------------------------------------------------
 
-SafetyHookMid g_osr_mid, g_setup_mid, g_fae0_mid;
+SafetyHookMid g_osr_mid, g_fae0_mid;
 uint64_t g_osr_calls = 0, g_setup_calls = 0;
 
 void osr_midhook(safetyhook::Context &ctx)
@@ -478,21 +478,6 @@ void osr_midhook(safetyhook::Context &ctx)
               (unsigned long long)hooks::frame_count(), s);
     log_dims("OnScreenResize-entry");
     g_pending = "after-OnScreenResize";
-}
-
-void setup_midhook(safetyhook::Context &ctx)
-{
-    g_setup_calls++;
-    Sig sig;
-    stack_sig(ctx.esp, &sig);
-    char s[160];
-    fmt_sig(sig, s, sizeof(s));
-    MC2VR_LOG("rtprobe: SetupRenderTargets #%llu this=0x%08x%s frame=%llu | stack %s",
-              (unsigned long long)g_setup_calls, (unsigned)ctx.ecx,
-              ctx.ecx == MC2_G_RENDERSHELL ? " (g_RenderShell)" : " (NOT g_RenderShell)",
-              (unsigned long long)hooks::frame_count(), s);
-    log_dims("Setup-entry");
-    g_pending = "after-SetupRenderTargets";
 }
 
 // FUN_0074fae0 `mov edx,[edx+0x3e98]`: EDX = g_RenderShell (expected).
@@ -562,8 +547,25 @@ void install_early()
     }
     QueryPerformanceFrequency(&g_qpc_freq);
     install_mid(g_osr_mid, MC2_ONSCREENRESIZE, osr_midhook, "OnScreenResize entry");
-    install_mid(g_setup_mid, MC2_SETUPRENDERTARGETS, setup_midhook, "SetupRenderTargets entry");
     install_mid(g_fae0_mid, MC2_FAE0_FRONTREF_READ, fae0_midhook, "FUN_0074fae0 front-ref read");
+}
+
+void on_setup_enter(void *self)
+{
+    if (!g_enabled) {
+        return;
+    }
+    g_setup_calls++;
+    Sig sig;
+    stack_sig_here(&sig);
+    char s[160];
+    fmt_sig(sig, s, sizeof(s));
+    MC2VR_LOG("rtprobe: SetupRenderTargets #%llu this=%p%s frame=%llu | stack %s",
+              (unsigned long long)g_setup_calls, self,
+              (uintptr_t)self == MC2_G_RENDERSHELL ? " (g_RenderShell)" : " (NOT g_RenderShell)",
+              (unsigned long long)hooks::frame_count(), s);
+    log_dims("Setup-entry");
+    g_pending = "after-SetupRenderTargets";
 }
 
 void on_present(void *device)

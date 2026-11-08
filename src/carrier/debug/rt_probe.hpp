@@ -17,6 +17,9 @@ bool enabled();
 // the boot-time OnScreenResize / SetupRenderTargets calls are seen).
 void install_early();
 
+// SetupRenderTargets entry (called by render_outputs' wrapper, main thread).
+void on_setup_enter(void *self);
+
 // Device-hook taps (device.cpp, render thread). `ret` = the device method's
 // return address (the immediate caller).
 void on_present(void *device);

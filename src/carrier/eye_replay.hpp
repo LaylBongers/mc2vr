@@ -1,36 +1,23 @@
 // Per-eye draw passes (docs/stereo.md).
 //
-// With frame_replay=on the frame is submitted twice. This module makes
-// the two passes a real stereo pair:
-//   - eye_pass=on:  pass 1 renders LEFT, pass 2 renders RIGHT — deterministic
-//     per-frame eye selection via view_rewrite::set_pass_eye() (replaces the
-//     deterministic eye while a pass override is active).
-//   - eye_rt=on:    during pass 2 every device SetRenderTarget(0, mainRT) is
-//     redirected to a carrier-created backbuffer-sized eye render target, and
-//     StretchRect/UpdateSurface sources pointing at the main RT are redirected
-//     too (pass-2 post-effects must read the pass-2 accumulation, not pass
-//     1's frozen final; EndSubmit's final copy likewise carries pass 2's image
-//     to the monitor — L/R alternate per frame unless eye_monitor_pin=on).
-//     The game's caller-side RT cache is untouched — device-level
-//     substitution only.
-//   - eye_monitor_pin=off|on: keep pass 1's LEFT image on the monitor. NOT
-//     by suppressing pass-2 backbuffer writes — SwapEffect=DISCARD gives no
-//     backbuffer persistence across Present, and suppression left a stale
-//     driver page on screen (live-observed 2026-10-04: frozen credits frame
-//     alternating with the live camera). Instead the backbuffer is
-//     SNAPSHOTTED (composite+HUD included) before pass 2 and RESTORED after;
-//     the pass-2 composite draw runs unsuppressed and the game presents the
-//     same LEFT image at both per-frame Presents — the eventual steady state (the
-//     host path will consume the eye images instead).
+// With frame_replay=on the frame is submitted twice. This module makes the
+// two passes a stereo pair:
+//   - eye_pass=on: pass 1 renders LEFT, pass 2 renders RIGHT — deterministic
+//     per-frame eye selection via view_rewrite::set_pass_eye().
+//   - Pass boundaries drive the eye captures: the engine's final frame of each
+//     pass lands in the carrier-owned front surface (render_outputs.cpp),
+//     captured into the shared ring at 1->2 (LEFT) and 2->0 (RIGHT). Pass 2
+//     simply re-renders into the engine's own targets (pass 1 is already
+//     composited and captured by then).
 //   - debug_eye_dump_frames=N: after debug_dump_delay seconds, write BMP pairs
-//     (mc2vr_eye_left/right_frame<N>.bmp) for the parallax check — pairs count
-//     only when NON-EMPTY (black loading/video frames are skipped and retried
-//     at a 0.5s cadence, so the window waits for real content). fp16 HDR
-//     targets (A16B16G16R16F) are decoded + Reinhard-tonemapped to 24-bit;
+//     (mc2vr_eye_left/right_frame<N>.bmp) of the per-eye LDR finals for the
+//     parallax check — pairs count only when NON-EMPTY and the per-eye
+//     rewrite ran in both passes (others are skipped, retried at 0.5s).
 //     tools/analyze_dumps.py reports the measured shift.
 //
-// Depth is shared with the game (BeginSubmit clears RT0+depth each pass, so
-// each pass starts fresh). The eye RT is invalidated on device Reset.
+// Retired 2026-11-08 (carrier-owned outputs made them unnecessary): the
+// pass-2 main-RT -> eye-RT redirect (eye_rt) and the monitor pin
+// (eye_monitor_pin) — git history has them.
 #pragma once
 
 #include <cstdint>
@@ -40,18 +27,7 @@ namespace mc2vr::eye_replay {
 // mc2vr.conf eye_pass=off|on (default off — hold-timer A/B stays in charge).
 bool set_pass_enabled(const char *value);
 
-// mc2vr.conf eye_rt=off|on (default off — pass 2 draws wherever the game draws).
-bool set_rt_enabled(const char *value);
-
-// mc2vr.conf eye_monitor_pin=off|on (default off). When on, the backbuffer is
-// snapshotted before pass 2 (pass 1's final image, composite+HUD included)
-// and restored after it, so every per-frame Present shows the same LEFT
-// image — the eventual steady state (the host consumes the eye images).
-// Pass-2 backbuffer writes are NOT suppressed: SwapEffect=DISCARD leaves a
-// stale driver page when they are (live-observed 2026-10-04).
-bool set_pin_enabled(const char *value);
-
-// mc2vr.conf debug_eye_dump_frames=N (0 = never; dumps need eye_rt=on).
+// mc2vr.conf debug_eye_dump_frames=N (0 = never).
 void set_dump_frames(uint32_t n);
 
 // mc2vr.conf debug_dump_delay=S — shared with the stream dump window.
@@ -64,28 +40,7 @@ void set_pass(uint32_t pass);
 // Current pass: 0 = outside a submit, 1/2 while the passes run (render thread).
 uint32_t current_pass();
 
-// Called from device.cpp's SetRenderTarget hook BEFORE the original call.
-// Returns the surface the device call must use: `game_surface` itself, or
-// the eye RT (pass-2 redirect of the main scene target, slot 0 only).
-void *on_set_render_target(void *device, uint32_t index, void *game_surface);
-
-// Called from device.cpp's StretchRect hook BEFORE the original call, for
-// the SOURCE surface. Pass-2 main-RT sources read the eye RT instead (post
-// effects must see pass 2's accumulation). `*skip` is never set anymore
-// (parameter kept for signature stability): suppressing backbuffer writes
-// conflicts with SwapEffect=DISCARD — the monitor pin snapshots/restores
-// the backbuffer around pass 2 instead (see set_pass).
-void *on_stretch_src(void *game_src, void *dst, bool *skip);
-
-// Called from device.cpp's UpdateSurface hook (slot 30) — same pass-2 source
-// rule as on_stretch_src (never observed live through 2026-10-04).
-void *on_update_surface_src(void *game_src, void *dst, bool *skip);
-
-// Called from device.cpp's UpdateTexture hook (slot 31) — diagnostic only
-// (the source is a texture and can't be matched against the RT surface).
-void on_update_texture(void *src_tex, void *dst_tex);
-
-// Called from device.cpp's Reset hook — surfaces are lost; forget them.
+// Called from device.cpp's Reset hook — the shared ring is dropped.
 void on_reset();
 
 // 10s window report (render_dump.cpp poller); resets counters.

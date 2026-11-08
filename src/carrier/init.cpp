@@ -8,6 +8,7 @@
 #include "device.hpp"
 #include "eye_replay.hpp"
 #include "eye_share.hpp"
+#include "render_outputs.hpp"
 #include "game_addresses.h"
 #include "hooks.hpp"
 #include "ipc.hpp"
@@ -176,24 +177,18 @@ static void load_conf()
             if (!rt_probe::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_rt_probe=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "own_outputs") == 0 || strcmp(key, "eye_rt") == 0 ||
+                   strcmp(key, "eye_monitor_pin") == 0) {
+            // Retired 2026-11-08: carrier-owned outputs are always on; the
+            // eye-RT redirect and the monitor pin are gone (docs/stereo.md).
+            MC2VR_LOG("conf: %s is retired (carrier-owned outputs are always on) — ignored", key);
         } else if (strcmp(key, "eye_pass") == 0) {
             // Deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
             if (!eye_replay::set_pass_enabled(value)) {
                 MC2VR_LOG("conf: eye_pass=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "eye_rt") == 0) {
-            // Per-eye: pass-2 SetRenderTarget(0)/StretchRect redirect to an eye RT.
-            if (!eye_replay::set_rt_enabled(value)) {
-                MC2VR_LOG("conf: eye_rt=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "eye_monitor_pin") == 0) {
-            // Per-eye: skip the pass-2 EndSubmit RT->backbuffer copy so the
-            // monitor holds pass 1's LEFT image (the host consumes the eyes).
-            if (!eye_replay::set_pin_enabled(value)) {
-                MC2VR_LOG("conf: eye_monitor_pin=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "eye_share") == 0) {
-            // Shared-handle: pass-boundary backbuffer capture into shared-handle RTs +
+            // Shared-handle: pass-boundary capture of the carrier front into shared-handle RTs +
             // FRAME_READY publish to the OpenXR host.
             if (!eye_share::set_enabled(value)) {
                 MC2VR_LOG("conf: eye_share=%s not recognized (use on|off)", value);
@@ -375,6 +370,7 @@ void init()
     hooks::install();
     render::install_early();
     rt_probe::install_early(); // no-op unless debug_rt_probe=on
+    render_outputs::install();  // carrier-owned outputs: setup wrap + restore MidHook
     // Device-hook chain root (vsync patch + device VmtHook at creation):
     // RenderSystem_Init calls Direct3DCreate9 during boot, so this must be in
     // place before the game resumes.

@@ -6,7 +6,7 @@ The agent implements/logs; the human runs `./launch.sh` into GAMEPLAY (SteamVR u
 
 ## Deployed conf steady state
 
-`frame_replay=on eye_pass=on eye_rt=on eye_monitor_pin=on eye_share=on view_table_inject=on view_row_rewrite=hmd_delta vsync=off` (in-tree defaults stay host-less + vsync=on). The deployed `mc2vr.conf` is never overwritten by `launch.sh` — edit it in place. Env: `MC2VR_NO_HOST`, `MC2VR_IPC_NAME`.
+`frame_replay=on eye_pass=on eye_share=on view_table_inject=on view_row_rewrite=hmd_delta vsync=off` (in-tree defaults stay host-less + vsync=on). The deployed `mc2vr.conf` is never overwritten by `launch.sh` — edit it in place. Env: `MC2VR_NO_HOST`, `MC2VR_IPC_NAME`.
 
 ## Healthy-run signatures
 
@@ -25,7 +25,7 @@ Host: `submit: blit shaders ready`, `openxr: using swapchain format 91`, `submit
 1. Phase-correlate the pair for the GLOBAL offset (the frustum-center offset is ~−450 px at 1440p — a ±64 px search window reports "no parallax" wrongly).
 2. Fit the per-eye horizontal scale (kx ≈ 0.983 in the reference run) from per-eye FOV spans.
 3. Measure parallax of target strips vs a **true far reference (sky)** — a wall coplanar with the target gives ~0 parallax and nonsense distances. Convert with `px_per_tan = W_px / (tan(fov.right) − tan(fov.left))` per eye (from the `ipc: first tracked pose ... fovL=` log line), `z = ipd·s·px_per_tan / parallax`.
-4. Backlog: `tools/analyze_dumps.py` still does horizontal-only ±64 px SAD — upgrade it with this recipe.
+4. Backlog: `tools/analyze_dumps.py` still does horizontal-only ±64 px SAD — upgrade it with this recipe. Interim check (2026-11-08, carrier-owned LDR finals, central band, Hann-windowed 2D phase correlation): global L-vs-R offset +481…+508 px, dy = 0, across 3 gameplay pairs. That is consistent with the ~450–460 px frustum-center offset plus scene parallax; the sign follows the correlation convention.
 
 ## Hard-won gotchas
 

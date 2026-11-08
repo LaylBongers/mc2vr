@@ -72,9 +72,13 @@ SafetyHookMid g_vcd_mid;
 // ---- pass gate (RT0 size) -----------------------------------------------------
 // Shadow-map, reflection and other offscreen passes upload their own
 // viewContextData; shifting those would move e.g. the shadow map relative to
-// its receivers. Gate on RT0 == backbuffer size. (If the render resolution
-// ever differs from the backbuffer, key this on RT identity instead.)
-uint32_t g_main_w = 0, g_main_h = 0;
+// its receivers. Gate on RT0 == the engine's LIVE render size (RenderShell
+// +0x2b98/+0x2b9c = g_ScreenWidth/Height — every full-size chain surface is
+// created from it; docs/reverse_engineering/rt_dims_source.md). Stock it
+// equals the backbuffer size; it follows resolution changes (the old gate
+// cached the first backbuffer size and silently stopped rewriting after a
+// menu resolution change — live 2026-11-08) and render/window decoupling.
+uint32_t g_main_w = 0, g_main_h = 0; // last logged render size
 uint32_t g_rt_w = 0, g_rt_h = 0;
 uint32_t g_rt_seen[16][2];  // distinct RT0 sizes (log once each)
 uint32_t g_rt_seen_n = 0;
@@ -82,14 +86,25 @@ uint32_t g_rt_seen_n = 0;
 // ---- per-pass eye state ----------------------------------------------------------
 int g_pass_eye = 0;  // Per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 none
 
+uint32_t render_w()
+{
+    return *(volatile const uint32_t *)(MC2_G_RENDERSHELL + MC2_RS_SCREEN_W_OFF);
+}
+uint32_t render_h()
+{
+    return *(volatile const uint32_t *)(MC2_G_RENDERSHELL + MC2_RS_SCREEN_H_OFF);
+}
+
 bool pass_is_main()
 {
-    // Unknown main size (params not yet read): don't gate.
-    return g_main_w == 0 || (g_rt_w == g_main_w && g_rt_h == g_main_h);
+    // Render size not yet set up (boot): don't gate.
+    const uint32_t w = render_w(), h = render_h();
+    return w == 0 || (g_rt_w == w && g_rt_h == h);
 }
 
 // ---- window counters ------------------------------------------------------------
 uint64_t g_vs_calls = 0, g_vs_vec4s = 0, g_rows_rewritten = 0;
+uint64_t g_rows_rewritten_total = 0; // monotonic (never reset) — rewrite_count()
 
 // MidHook @ MC2_VCD_UPLOAD_CMP (`cmp [edi+0xd8],0` at the upload gate):
 // EDI = the CURRENT technique object. Publish its resolved constant map.
@@ -359,6 +374,7 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
     g_pw_valid = true;
     g_hmd_blocks++;
     g_rows_rewritten += 4;
+    g_rows_rewritten_total += 4;
     return scratch;
 }
 
@@ -376,17 +392,16 @@ bool set_view_row_rewrite(const char *value)
     return true;
 }
 
-void set_main_rt_size(uint32_t w, uint32_t h)
-{
-    g_main_w = w;
-    g_main_h = h;
-    MC2VR_LOG("view: main scene RT size = %ux%u", w, h);
-}
-
 void on_set_render_target(uint32_t w, uint32_t h)
 {
     g_rt_w = w;
     g_rt_h = h;
+    if (render_w() != g_main_w || render_h() != g_main_h) {
+        g_main_w = render_w();
+        g_main_h = render_h();
+        g_rt_seen_n = 0; // re-log the RT0 sizes against the new render size
+        MC2VR_LOG("view: main scene RT size = %ux%u (engine render size)", g_main_w, g_main_h);
+    }
     for (uint32_t k = 0; k < g_rt_seen_n; k++) {
         if (g_rt_seen[k][0] == w && g_rt_seen[k][1] == h) {
             return;
@@ -397,7 +412,7 @@ void on_set_render_target(uint32_t w, uint32_t h)
         g_rt_seen[g_rt_seen_n][1] = h;
         g_rt_seen_n++;
         MC2VR_LOG("view: new RT0 size %ux%u (%s)", w, h,
-                  (g_main_w == 0 || (w == g_main_w && h == g_main_h))
+                  pass_is_main()
                       ? "main pass — rewritten"
                       : "offscreen pass — not rewritten");
     }
@@ -428,6 +443,11 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     }
 
     return data;  // no rewrite for this mode — pass the upload through
+}
+
+uint64_t rewrite_count()
+{
+    return g_rows_rewritten_total;
 }
 
 void report_window()

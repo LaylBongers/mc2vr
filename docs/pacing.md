@@ -2,7 +2,7 @@
 
 ## The vsync lock (found, live-log-proven 2026-10-05)
 
-The frame does two Presents — a present-prev at each `LtiRenderer_BeginSubmit` (each submit also waits on all prior GPU work: event-query spin). Vsync-locked 60 Hz capped the game at ~30 Hz with the two passes (~600 Presents vs ~300 frames per 10 s).
+The frame did two Presents — a present-prev at each `LtiRenderer_BeginSubmit` (each submit also waits on all prior GPU work: event-query spin). Vsync-locked 60 Hz capped the game at ~30 Hz with the two passes (~600 Presents vs ~300 frames per 10 s). Since 2026-11-08 pass 1's present-prev is skipped through the engine's own `g_SuppressPresent` ([render_resolution.md](render_resolution.md) §3), so there is one Present per frame (live-confirmed: Present = frames per 10 s window).
 
 ## Fix: `vsync=off`
 
@@ -20,4 +20,4 @@ Apparent stutter/micro-judder during head motion that vanishes when the head is 
 
 (a) **timewarp inputs** — feed motion vectors / late-stage data via slot-4 `EndOfFrameHook` ([hooks.md](hooks.md)) so the compositor reprojects accurately instead of extrapolating;
 (b) **throttle the game to HMD cadence** (slot-4) so pairs are always fresh at submit time;
-(c) suppress the deferred second Present ([stereo.md](stereo.md) gaps) if compositor pressure is implicated.
+(c) suppress the duplicate per-frame Present — IMPLEMENTED 2026-11-08 (pass-1 present-prev skipped). Compare the staleness symptoms before and after.

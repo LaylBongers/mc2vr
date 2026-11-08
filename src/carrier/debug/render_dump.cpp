@@ -10,6 +10,7 @@
 #include "occluder_boxes.hpp"
 #include "game_addresses.h"
 #include "eye_replay.hpp"
+#include "render_outputs.hpp"
 #include "hooks.hpp"
 #include "ipc.hpp"
 #include "log.hpp"
@@ -313,6 +314,7 @@ void report_window()
     trace::report_window();
     s2c::report_window();
     eye_replay::report_window();
+    render_outputs::report_window();
     watch::report_window();
 }
 

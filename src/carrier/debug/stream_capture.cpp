@@ -5,6 +5,7 @@
 
 #include "game_addresses.h"
 #include "eye_replay.hpp"
+#include "render_outputs.hpp"
 #include "hooks.hpp"
 #include "log.hpp"
 
@@ -52,6 +53,10 @@ double g_replay_ms_max = 0.0;
 void submit_togpu_hook()
 {
     eye_replay::set_pass(1); // pass 1 = LEFT eye (override applies only if eye_pass=on)
+    // Two passes -> two present-prevs per frame; skip pass 1's (duplicate).
+    if (g_replay_enabled) {
+        render_outputs::begin_present_skip();
+    }
     g_submit_hook.call<void>();
 
     if (!g_replay_enabled) {
@@ -63,6 +68,7 @@ void submit_togpu_hook()
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);
 
+    render_outputs::end_present_skip();
     eye_replay::set_pass(2); // pass 2 = RIGHT eye
     g_submit_hook.call<void>();
 

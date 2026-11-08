@@ -13,6 +13,7 @@
 #include "hooks.hpp"
 #include "hud_timing.hpp"
 #include "init.hpp"
+#include "render_outputs.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
 #include "debug/rt_probe.hpp"
@@ -46,8 +47,6 @@ constexpr size_t SLOT_SetVertexShaderConstantF = 94;
 // and must not receive the eye shift.
 constexpr size_t SLOT_SetRenderTarget = 37;
 constexpr size_t SLOT_StretchRect = 34;
-constexpr size_t SLOT_UpdateSurface = 30;
-constexpr size_t SLOT_UpdateTexture = 31;
 constexpr size_t SLOT_Surface_GetDesc = 12;
 // rt_probe (debug_rt_probe=on only): creation + getter census slots.
 constexpr size_t SLOT_GetBackBuffer = 18;
@@ -74,9 +73,6 @@ using GetPresentParams_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *)
 using SetRenderTarget_t = HRESULT(__stdcall *)(void *, DWORD, void *);
 using StretchRect_t = HRESULT(__stdcall *)(void *, void *, const RECT *,
                                            void *, const RECT *, DWORD);
-using UpdateSurface_t = HRESULT(__stdcall *)(void *, void *, void *, const RECT *,
-                                             const POINT *);
-using UpdateTexture_t = HRESULT(__stdcall *)(void *, void *, void *);
 using SetVertexShaderConstantF_t = HRESULT(__stdcall *)(void *, UINT, const float *, UINT);
 
 // Leaked by design (see device.hpp).
@@ -88,8 +84,6 @@ safetyhook::VmHook *g_reset_hook = nullptr;
 safetyhook::VmHook *g_setvsconstf_hook = nullptr;
 safetyhook::VmHook *g_setrt_hook = nullptr;
 safetyhook::VmHook *g_stretchrect_hook = nullptr;
-safetyhook::VmHook *g_updatesurface_hook = nullptr;
-safetyhook::VmHook *g_updatetexture_hook = nullptr;
 // rt_probe census hooks (installed only with debug_rt_probe=on).
 safetyhook::VmHook *g_getswapchain_hook = nullptr;
 safetyhook::VmHook *g_getbackbuffer_hook = nullptr;
@@ -130,6 +124,48 @@ safetyhook::VmHook *g_createdevice_hook = nullptr; // leaked by design
 
 bool hook_device(void *device);
 
+// ---- Device-parameter policy ----------------------------------------------------
+// Applied to a COPY of the engine's D3DPRESENT_PARAMETERS: the engine keeps
+// its stored copy exactly as it asked (RenderSystem_ApplySettings compares
+// that stored copy field by field — MultiSampleType @+0x10, interval @+0x34 —
+// against its settings, so in-place patches read as "settings changed").
+//   - vsync=off: PresentationInterval = IMMEDIATE.
+//   - The swapchain is only the carrier's monitor mirror, so it runs without
+//     MSAA; the engine-requested MSAA moves to the carrier's front/depth
+//     surfaces (render_outputs).
+D3DPRESENT_PARAMETERS apply_param_policy(const D3DPRESENT_PARAMETERS &engine, const char *what)
+{
+    D3DPRESENT_PARAMETERS p = engine;
+    if (g_present_immediate && p.PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
+        MC2VR_LOG("vsync: %s params: %ux%u windowed=%u swapeffect=%u refresh=%u "
+                  "interval=0x%08x -> forcing IMMEDIATE",
+                  what, p.BackBufferWidth, p.BackBufferHeight, p.Windowed, p.SwapEffect,
+                  p.FullScreen_RefreshRateInHz, p.PresentationInterval);
+        p.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    }
+    render_outputs::note_requested_msaa((uint32_t)p.MultiSampleType, p.MultiSampleQuality);
+    if (p.MultiSampleType != D3DMULTISAMPLE_NONE) {
+        MC2VR_LOG("outputs: %s swapchain MSAA %u/%lu -> none (moved to the carrier front)",
+                  what, (unsigned)p.MultiSampleType, (unsigned long)p.MultiSampleQuality);
+        p.MultiSampleType = D3DMULTISAMPLE_NONE;
+        p.MultiSampleQuality = 0;
+    }
+    return p;
+}
+
+// D3D may update the params it was given (BackBufferCount/Format, …): mirror
+// those back, keeping the policy fields exactly as the engine requested.
+void copy_back_params(D3DPRESENT_PARAMETERS *engine, const D3DPRESENT_PARAMETERS &used)
+{
+    const D3DMULTISAMPLE_TYPE ms = engine->MultiSampleType;
+    const DWORD msq = engine->MultiSampleQuality;
+    const UINT interval = engine->PresentationInterval;
+    *engine = used;
+    engine->MultiSampleType = ms;
+    engine->MultiSampleQuality = msq;
+    engine->PresentationInterval = interval;
+}
+
 // IDirect3D9::CreateDevice — the device's birth. Runs on the engine's main
 // thread inside RenderSystem_CreateDevice (itself inside the first
 // SetupRenderTargets — docs/reverse_engineering/render_target_table.md). The
@@ -141,18 +177,16 @@ HRESULT __stdcall createdevice_hook(void *self, UINT adapter, DWORD device_type,
                                      HWND focus_window, DWORD behavior_flags,
                                      D3DPRESENT_PARAMETERS *pp, void **out_device)
 {
-    if (pp != nullptr && g_present_immediate &&
-        pp->PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
-        MC2VR_LOG("vsync: CreateDevice params: %ux%u windowed=%u swapeffect=%u "
-                  "refresh=%u interval=0x%08x -> forcing IMMEDIATE",
-                  pp->BackBufferWidth, pp->BackBufferHeight, pp->Windowed,
-                  pp->SwapEffect, pp->FullScreen_RefreshRateInHz,
-                  pp->PresentationInterval);
-        pp->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    D3DPRESENT_PARAMETERS used = {};
+    if (pp != nullptr) {
+        used = apply_param_policy(*pp, "CreateDevice");
     }
     const HRESULT hr = g_createdevice_hook->stdcall<HRESULT>(self, adapter, device_type,
                                                              focus_window, behavior_flags,
-                                                             pp, out_device);
+                                                             pp ? &used : nullptr, out_device);
+    if (pp != nullptr) {
+        copy_back_params(pp, used);
+    }
     if (SUCCEEDED(hr) && out_device != nullptr && *out_device != nullptr) {
         hook_device(*out_device);
     } else {
@@ -233,7 +267,6 @@ void log_present_params()
         return;
     }
 
-    view_rewrite::set_main_rt_size(pp.BackBufferWidth, pp.BackBufferHeight);
     MC2VR_LOG("D3D: present params: %ux%u fmt=%u count=%u windowed=%u swapeffect=%u "
               "refresh=%u interval=0x%08x hdeviceWindow=%p",
               pp.BackBufferWidth, pp.BackBufferHeight, pp.BackBufferFormat,
@@ -300,6 +333,10 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
         g_window_start = now;
     }
 
+    // Monitor mirror: the engine no longer draws into the swapchain —
+    // compose the latest LEFT image into it before presenting.
+    render_outputs::on_present(self);
+
     return g_present_hook->stdcall<HRESULT>(self, src, dst, hwnd, dirty);
 }
 
@@ -342,19 +379,22 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
                   (unsigned long long)g_reset.total, (unsigned long long)hooks::frame_count());
     }
 
-    eye_replay::on_reset(); // surfaces are lost; drop the eye RT + main-RT recording
+    eye_replay::on_reset(); // the shared eye ring is dropped (re-created lazily)
 
-    // Pacing: a Reset carries NEW present params (resolution etc.) —
-    // re-apply the vsync unlock so the interval survives device-reset paths.
-    if (pp != nullptr && g_present_immediate &&
-        pp->PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
-        MC2VR_LOG("vsync: Reset interval=0x%08x -> forcing IMMEDIATE",
-                  pp->PresentationInterval);
-        pp->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    // A Reset carries NEW present params (resolution etc.) — the same policy
+    // as CreateDevice (vsync unlock, MSAA move), on a copy.
+    D3DPRESENT_PARAMETERS used = {};
+    if (pp != nullptr) {
+        used = apply_param_policy(*pp, "Reset");
     }
 
     rt_probe::on_reset(true, 0);
-    const HRESULT hr = g_reset_hook->stdcall<HRESULT>(self, pp);
+    render_outputs::on_reset(true, 0);
+    const HRESULT hr = g_reset_hook->stdcall<HRESULT>(self, pp ? &used : nullptr);
+    if (pp != nullptr) {
+        copy_back_params(pp, used);
+    }
+    render_outputs::on_reset(false, (long)hr);
     rt_probe::on_reset(false, (long)hr);
     return hr;
 }
@@ -365,54 +405,22 @@ uint64_t g_setvsconst_calls = 0;
 
 uint64_t g_stretch_calls = 0;
 
-// StretchRect: pass-2 sources pointing at the main RT read the eye RT instead
-// (post-effect blits must see pass 2's accumulation, not pass 1's frozen one).
-// With eye_monitor_pin=on the EndSubmit RT->backbuffer copy is skipped
-// (on_stretch_src sets skip) so the monitor keeps pass 1's LEFT image.
+// StretchRect: observed (rt_probe) and forwarded; the hook also provides the
+// original-method trampoline for the carrier's own blits (blit_surfaces).
 HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
                                    void *dst, const RECT *dst_rect, DWORD filter)
 {
     g_stretch_calls++;
     rt_probe::on_stretch_rect(src, dst, __builtin_return_address(0));
-    bool skip = false;
-    src = eye_replay::on_stretch_src(src, dst, &skip);
-    if (skip) {
-        return S_OK;
-    }
     return g_stretchrect_hook->stdcall<HRESULT>(self, src, src_rect, dst, dst_rect,
                                                 filter);
 }
 
-// UpdateSurface (slot 30): same pass-2 rules as StretchRect (pin skips
-// backbuffer writes; main-RT sources read the eye RT instead) — closes the
-// "post-effects reading the main RT via other paths" watch item.
-HRESULT __stdcall updatesurface_hook(void *self, void *src, void *dst,
-                                     const RECT *src_rect, const POINT *dst_pt)
-{
-    bool skip = false;
-    src = eye_replay::on_update_surface_src(src, dst, &skip);
-    if (skip) {
-        return S_OK;
-    }
-    return g_updatesurface_hook->stdcall<HRESULT>(self, src, dst, src_rect, dst_pt);
-}
-
-// UpdateTexture (slot 31): diagnostic only for now (the source is a texture;
-// it cannot be pointer-matched against the main RT surface). Counts pass-2
-// activity so the next audit knows whether this path exists at all.
-HRESULT __stdcall updatetexture_hook(void *self, void *src, void *dst)
-{
-    eye_replay::on_update_texture(src, dst);
-    return g_updatetexture_hook->stdcall<HRESULT>(self, src, dst);
-}
-
 HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
 {
-    // Per-eye: pass-2 slot-0 sets of the main RT go to the eye RT (device-level
-    // substitution only — the game's caller-side RT cache is untouched).
+    // Observed, never altered: the pass gate for the view rewrite.
     rt_probe::on_set_render_target(index, surface, __builtin_return_address(0));
-    void *target = eye_replay::on_set_render_target(self, index, surface);
-    const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, target);
+    const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, surface);
     if (index == 0) {
         UINT w = 0, h = 0;
         if (surface) {
@@ -615,10 +623,6 @@ bool hook_device(void *device)
          "SetRenderTarget"},
         {SLOT_StretchRect, (void *)&stretchrect_hook, &g_stretchrect_hook,
          "StretchRect"},
-        {SLOT_UpdateSurface, (void *)&updatesurface_hook, &g_updatesurface_hook,
-         "UpdateSurface"},
-        {SLOT_UpdateTexture, (void *)&updatetexture_hook, &g_updatetexture_hook,
-         "UpdateTexture"},
     };
 
     for (const SlotSpec &spec : slots) {
@@ -670,14 +674,25 @@ bool hook_device(void *device)
 
 } // namespace
 
+bool stretch_surfaces(void *src, const RECT *src_rect, void *dst, const RECT *dst_rect,
+                      uint32_t filter)
+{
+    if (!g_device || !g_stretchrect_hook || !src || !dst) {
+        return false;
+    }
+    // Through the trampoline (no re-entry into the pass-2 redirect logic).
+    return SUCCEEDED(g_stretchrect_hook->stdcall<HRESULT>(g_device, src, src_rect, dst,
+                                                          dst_rect, (DWORD)filter));
+}
+
 bool blit_surfaces(void *src, void *dst)
 {
     if (!g_device || !g_stretchrect_hook || !src || !dst) {
         return false;
     }
     // Full-surface copy, no filtering (both surfaces are the same size).
-    // Through the trampoline, NOT the hooked vtable: the monitor pin's
-    // save/restore blits must not re-enter the pass-2 redirect logic.
+    // Through the trampoline, NOT the hooked vtable: the carrier's own
+    // blits must not re-enter the device hooks (rt_probe classification).
     const HRESULT hr = g_stretchrect_hook->stdcall<HRESULT>(
         g_device, src, nullptr, dst, nullptr, 0 /* D3DTEXF_NONE */);
     if (FAILED(hr)) {
@@ -685,7 +700,7 @@ bool blit_surfaces(void *src, void *dst)
         if (!logged) {
             logged = true;
             MC2VR_LOG("D3D: blit_surfaces StretchRect FAILED hr=%08lx "
-                      "(monitor pin degraded this run)", (unsigned long)hr);
+                      "(carrier blits degraded this run)", (unsigned long)hr);
         }
         return false;
     }

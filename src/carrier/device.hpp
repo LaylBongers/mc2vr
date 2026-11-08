@@ -20,6 +20,9 @@
 //     possibly after DXVK has freed the device (UAF write on exit).
 #pragma once
 
+#include <windows.h>
+#include <cstdint>
+
 namespace mc2vr::device {
 
 // mc2vr.conf vsync=on|off (default on — the game's own PresentationInterval
@@ -38,8 +41,13 @@ bool set_vsync(const char *value);
 bool install_d3d9_gate();
 
 // Full-surface StretchRect through the ORIGINAL device method (bypasses the
-// hook chain entirely — used by the eye module's monitor pin to snapshot and
-// restore the backbuffer around pass 2; render thread only).
+// hook chain entirely — the carrier's own captures/resolves; render thread
+// only).
 bool blit_surfaces(void *src, void *dst);
+
+// StretchRect with explicit rects/filter through the ORIGINAL device method
+// (render thread only). Used by render_outputs' monitor mirror.
+bool stretch_surfaces(void *src, const RECT *src_rect, void *dst, const RECT *dst_rect,
+                      uint32_t filter);
 
 } // namespace mc2vr::device

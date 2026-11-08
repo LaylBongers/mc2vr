@@ -37,7 +37,13 @@ No other plaintext copies of the slots exist. Every creation site also registers
 - Boot order: the probe saw `SetupRenderTargets` entered first. Its leading call `FUN_00749270` creates the device (→ `RenderSystem_ApplySettings` → `RenderSystem_CreateDevice` → `OnScreenResize(cfg)`). Only then does Setup copy cfg → fields and create the chain; [rt_dims_source.md](rt_dims_source.md).
 - Creation census matches the static census: 35 unique DEFAULT-pool creations, no runtime surprises. Level loads re-create the bloom/water/clouds sets (25 creations) at the same sizes.
 
+- **Reset path** (run 3, menu resolution change 2560×1440 → 1920×1080 → back):
+  1. `RenderSystem_ApplySettings` builds new params and the device is Reset.
+  2. `RenderSystem_CheckDevice` restores: `OnScreenResize(cfg)`, then `RenderSystem_RestoreDeviceResources` (`0x0074d410`, mutated), then `FUN_00753050`.
+
+  The restore re-seeds the Dx9 caches (`Dx9State_SeedCachesFromDevice` again) and refills the table with the new swapchain surfaces, re-creating 47 DEFAULT surfaces. **`SetupRenderTargets` is not re-run on Reset**, so a hook on it alone misses resets.
+- Registry: with the carrier owning the front (run 3), zero binds of the real backbuffer occurred outside the one-frame reset transition. Nothing looks the registry entries up for binding.
+
 ## OPEN
 
-- Menu resolution change (Reset path, OnScreenResize #2, aspect re-snap): not observed in this run (no Reset, no second OnScreenResize).
-- Which registry name the front/auto depth are looked up by, and by whom (to know whether a replacement must be re-registered or merely may be).
+- Which code (if any) looks up registry entries by name — no consumer has been seen in rendering.

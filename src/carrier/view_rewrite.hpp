@@ -7,7 +7,7 @@
 //   - install(): MidHook at the upload gate that publishes the current
 //     technique's exact viewContextData register map.
 //   - on_set_vs_constant(): the device VmtHook tap that applies the rewrite.
-//   - on_set_render_target()/set_main_rt_size(): pass gate — only the main
+//   - on_set_render_target(): pass gate (RT0 size == engine render size) — only the main
 //     scene pass is rewritten (shadow-map/reflection/offscreen passes are not).
 //   - set_view_row_rewrite()/set_view_world_scale(): mc2vr.conf controls.
 #pragma once
@@ -31,7 +31,6 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
 // applies only while RT0 has the main scene size (the backbuffer size).
 // w=h=0 means no RT0.
 void on_set_render_target(uint32_t w, uint32_t h);
-void set_main_rt_size(uint32_t w, uint32_t h);
 
 // mc2vr.conf view_row_rewrite=off|hmd_delta|hmd_identity (hmd_delta = I1,
 // the pairing with view_table_inject=on — per-eye projection from the
@@ -70,5 +69,9 @@ void set_pass_eye(int sign);
 
 // 10s window report (called from render_dump.cpp's poller); resets counters.
 void report_window();
+
+// Monotonic count of rewritten VP rows (render thread). A pass that leaves it
+// unchanged drew with the game's own camera (no per-eye rewrite).
+uint64_t rewrite_count();
 
 } // namespace mc2vr::view_rewrite

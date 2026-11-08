@@ -292,7 +292,7 @@ bool set_enabled(const char *value)
     } else {
         return false;
     }
-    MC2VR_LOG("share: eye_share=%s (pass-boundary backbuffer capture -> shared "
+    MC2VR_LOG("share: eye_share=%s (pass-boundary carrier-front capture -> shared "
               "handles -> host FRAME_READY)",
               g_enabled ? "on" : "off");
     return true;

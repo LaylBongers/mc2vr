@@ -363,6 +363,12 @@
 // Render target table: g_RenderShell + 0x3e90 .. + 0x3eb0 (9 slots).
 #define MC2_RS_RT_TABLE_OFF ((uintptr_t)0x3e90u)
 #define MC2_RS_RT_TABLE_SLOTS 9u
+#define MC2_RS_RT_AUTODEPTH_OFF ((uintptr_t)0x3e94u)  // device auto depth (owns a ref)
+#define MC2_RS_RT_FRONTREF_OFF ((uintptr_t)0x3e98u)   // front copy (owns a ref; op-6 source)
+#define MC2_RS_RT_SCENEDEPTH_OFF ((uintptr_t)0x3ea0u) // own D24S8, or alias of +0x3e94
+#define MC2_RS_RT_FRONT_OFF ((uintptr_t)0x3ea4u)      // GetRenderTarget(0) (owns a ref)
+// Dx9State_SeedCachesFromDevice's auto-depth ref (released by FUN_0074d1b0).
+#define MC2_G_DX9_AUTODEPTH_REF ((uintptr_t)0x01175318u)
 // MidHook sites (instruction boundaries verified; no references into the
 // patched bytes). OnScreenResize entry: [esp+4] = W, EAX = H, ESI = this.
 // SetupRenderTargets entry: ECX = this. 0x0075078d: `mov edx,[edx+0x3e98]`
@@ -379,3 +385,18 @@
 // Live-proven call sites 2026-11-08 (return addresses 0x00630ef4 / 0x00630fa6).
 #define MC2_FRAMETICK_POSTUPDATE_SITE ((uintptr_t)0x00630ee7u)
 #define MC2_FRAMETICK_ENDOFFRAME_SITE ((uintptr_t)0x00630f99u)
+
+// RenderSystem_CheckDevice device-restore tail: after OnScreenResize(cfg),
+// FUN_0074d410 (restore: re-seeds the Dx9 caches via
+// Dx9State_SeedCachesFromDevice and refills the render target table —
+// SetupRenderTargets is NOT re-run on Reset, live 2026-11-08) and
+// FUN_00753050. MidHook site = the 6-byte `mov edx,[0x01175288]` right after
+// (no branch targets inside it).
+#define MC2_CHECKDEVICE_RESTORED ((uintptr_t)0x0074d087u)
+
+// g_SuppressPresent (bool): LtiRenderer_BeginSubmit skips its present-prev
+// Present when set. PgPrimitive_SubmitToGPU sets it itself only in its
+// precache branch (0x00855714) and clears it right after a successful
+// BeginSubmit (0x00855766). The carrier sets it before pass 1 to retire the
+// duplicate per-frame Present (render_outputs::skip_next_present).
+#define MC2_G_SUPPRESS_PRESENT ((uintptr_t)0x011755c3u)

@@ -1,8 +1,8 @@
 // Shared-handle image path — carrier side (docs/stereo.md).
 //
-// At the pass boundaries the backbuffer holds the per-eye tonemapped LDR
-// finals (1->2 = pass-1 LEFT, 2->0 = pass-2 RIGHT before the monitor-pin
-// restore — the design observation). This module blits them into a ring
+// At the pass boundaries the carrier-owned front (render_outputs.cpp) holds
+// the per-eye tonemapped LDR finals (1->2 = pass-1 LEFT, 2->0 = pass-2
+// RIGHT). This module blits them into a ring
 // of DEFAULT-pool textures created with legacy pSharedHandle — the mechanism
 // PROVEN cross-process by tools/probe/run_shared_handle.sh (2026-10-04: DXVK
 // D3D9 -> DXVK D3D11 OpenSharedResource works for both A8R8G8B8 and
@@ -27,11 +27,11 @@ namespace mc2vr::eye_share {
 // mc2vr.conf eye_share=off|on (default off — monitor stereo path unchanged).
 bool set_enabled(const char *value);
 
-// Called from eye_replay::set_pass at the two pass boundaries with the live
-// device + cached backbuffer. `next_pass`: 2 = boundary 1->2 (capture LEFT),
-// 0 = boundary 2->0 (capture RIGHT — must run BEFORE the monitor-pin restore
-// blits the LEFT snapshot back into the backbuffer).
-void on_pass_boundary(uint32_t next_pass, void *device, void *backbuffer);
+// Called from eye_replay::set_pass at the pass boundaries with the live
+// device + the carrier front (nullptr when not owned yet — skipped).
+// `next_pass`: 2 = boundary 1->2 (capture LEFT), 0 = boundary 2->0 (capture
+// RIGHT).
+void on_pass_boundary(uint32_t next_pass, void *device, void *source);
 
 // Called from eye_replay::on_reset — all surfaces are gone (the device will
 // be recreated; the ring re-creates lazily on the next boundary).

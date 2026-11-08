@@ -8,7 +8,7 @@ User-perceived, live-confirmed: the HUD/crosshair reads as placed way too close 
 
 ## Root cause (analysis; one step still to verify)
 
-The HUD is composited into the per-eye pass images (screen-space drawing before the `eye_share` blits and the monitor pin). It does NOT go through the per-eye camera rewrite (`hmd_delta` only rewrites `viewContextData` camera rows — [view_rewrite.md](view_rewrite.md)), so it lands at **identical NDC coordinates in both eyes**. But the world is not: the per-eye OpenXR frusta are asymmetric with different centers — left `cL = (tan(−0.994)+tan(0.812))/2 = −0.233` tangent units, right `cR ≈ +0.234` (measured world L/R offset −451 px, predicted −460; 1.7% span scale). So:
+The HUD is composited into the per-eye pass images (screen-space drawing into the carrier-owned front before the `eye_share` captures). It does NOT go through the per-eye camera rewrite (`hmd_delta` only rewrites `viewContextData` camera rows — [view_rewrite.md](view_rewrite.md)), so it lands at **identical NDC coordinates in both eyes**. But the world is not: the per-eye OpenXR frusta are asymmetric with different centers — left `cL = (tan(−0.994)+tan(0.812))/2 = −0.233` tangent units, right `cR ≈ +0.234` (measured world L/R offset −451 px, predicted −460; 1.7% span scale). So:
 
 1. **Crossed disparity**: the left eye places the HUD at world direction −0.233, the right at +0.234 — inverted relative to real objects (real points always have the left eye seeing them right of the right eye). Crossed by ~0.467 tangent units ⇒ perceived at `z = ipd/0.467 ≈ 0.14 m` — a floating HUD ~14 cm in front of the face. Invisible pre-VR (mono output).
 2. **Aspect distortion**: the HUD is drawn 16:9 square-pixel screen-space, but the RT carries the XR frustum squeezed horizontally (tangent spans ≈ 2.59 H vs 2.80 V ⇒ true eye aspect ≈ 0.93 vs the RT's 1.78) and the host un-stretches the full image ≈1.9× horizontally — HUD icons/text render ~1.9× too wide in the HMD.
@@ -30,6 +30,6 @@ The HUD is composited into the per-eye pass images (screen-space drawing before 
 - [ ] HUD technique census at the upload gate (screen-space records list, registers, cadence — is the crosshair a separate technique from menus/HUD?)
 - [ ] Comfort distance vs zero-disparity (infinity) decision
 - [ ] Aspect compensation factor from the runtime FOV (per-eye, dynamic — arrives over IPC every frame)
-- [ ] Interaction with `eye_monitor_pin` (monitor keeps LEFT — fine) and the HUD boundary sampling ([stereo.md](stereo.md) § HUD/2D)
+- [ ] Interaction with the monitor mirror (monitor shows LEFT — fine) and the HUD boundary sampling ([stereo.md](stereo.md) § HUD/2D)
 
 Dump-pair measurement recipe (do NOT re-derive): [debugging.md](debugging.md).
