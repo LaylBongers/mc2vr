@@ -159,7 +159,7 @@ int main(void) // no arguments: everything is resolved from the install layout
 
     // ---- Start the OpenXR host  ----------------------------------------
     // The host owns the VR session and its IPC section; the carrier connects
-    // at stage 1 by name. Spawn it first so the section exists before the
+    // at attach by name. Spawn it first so the section exists before the
     // carrier attaches. Everything here is non-fatal: no host (or a failed
     // host) means the game runs the monitor-stereo path exactly as today.
     char no_host[8];
@@ -253,7 +253,7 @@ int main(void) // no arguments: everything is resolved from the install layout
     mc2_log("carrier injected");
 
     // ---- Wait for the carrier's early hooks, then resume ---------------------
-    // The marker is logged at the end of carrier stage 1 (also when the
+    // The marker is logged at the end of carrier attach (also when the
     // build lock fails and the carrier stays idle). Poll for the actual line,
     // not bare file existence — the file exists before its first line.
     BOOL acked = wait_for_log_line(carrier_log, "early init done", ACK_TIMEOUT_MS);
@@ -276,7 +276,8 @@ int main(void) // no arguments: everything is resolved from the install layout
     // Game keeps running on its own from here.
     CloseHandle(pi.hProcess);
 
-    // Let late-stage init finish a little so the dump below is informative.
+    // Wait for the carrier's post-boot installs ("init complete", logged at the
+    // game's first Present) so the dump below is informative.
     wait_for_log_line(carrier_log, "init complete", 10000);
 
     FILE *f = _wfopen(carrier_log, L"r");

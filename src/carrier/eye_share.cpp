@@ -197,8 +197,8 @@ void on_pass_boundary(uint32_t next_pass, void *device, void *bb)
     if (!g_enabled) return;
     if (next_pass != 2u && next_pass != 0u) return;
     if (!ipc::connected()) {
-        // No host (permanent for the run — the carrier only connects at stage
-        // 1): count the boundaries and skip. Avoids allocating ~118 MB of
+        // No host (permanent for the run — the carrier only connects at
+        // attach): count the boundaries and skip. Avoids allocating ~118 MB of
         // shared RTs that nobody would read.
         g_ipc_skipped++;
         return;

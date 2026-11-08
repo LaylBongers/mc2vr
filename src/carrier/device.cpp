@@ -12,8 +12,10 @@
 #include "eye_replay.hpp"
 #include "hooks.hpp"
 #include "hud_timing.hpp"
+#include "init.hpp"
 #include "log.hpp"
 #include "view_rewrite.hpp"
+#include "debug/rt_probe.hpp"
 
 namespace mc2vr::device {
 
@@ -47,14 +49,20 @@ constexpr size_t SLOT_StretchRect = 34;
 constexpr size_t SLOT_UpdateSurface = 30;
 constexpr size_t SLOT_UpdateTexture = 31;
 constexpr size_t SLOT_Surface_GetDesc = 12;
+// rt_probe (debug_rt_probe=on only): creation + getter census slots.
+constexpr size_t SLOT_GetBackBuffer = 18;
+constexpr size_t SLOT_CreateTexture = 23;
+constexpr size_t SLOT_CreateRenderTarget = 28;
+constexpr size_t SLOT_CreateDepthStencilSurface = 29;
+constexpr size_t SLOT_CreateOffscreenPlainSurface = 36;
+constexpr size_t SLOT_GetRenderTarget = 38;
+constexpr size_t SLOT_GetDepthStencilSurface = 40;
 // IDirect3DSwapChain9::GetPresentParameters
 constexpr size_t SLOT_SC_GetPresentParameters = 9;
 // IDirect3D9::CreateDevice (d3d9.h method order, cross-checked against the
 // game's observed use: RenderSystem_Init reads the adapter count through
 // IDirect3D9 vtable +0x10 = slot 4 GetAdapterCount).
 constexpr size_t SLOT_D3D9_CreateDevice = 16;
-
-using GetD3DDevice_t = void *(*)();
 
 // COM x86 convention: __stdcall, this as first stack argument.
 using Present_t = HRESULT(__stdcall *)(void *, const RECT *, const RECT *, HWND, const RGNDATA *);
@@ -82,6 +90,15 @@ safetyhook::VmHook *g_setrt_hook = nullptr;
 safetyhook::VmHook *g_stretchrect_hook = nullptr;
 safetyhook::VmHook *g_updatesurface_hook = nullptr;
 safetyhook::VmHook *g_updatetexture_hook = nullptr;
+// rt_probe census hooks (installed only with debug_rt_probe=on).
+safetyhook::VmHook *g_getswapchain_hook = nullptr;
+safetyhook::VmHook *g_getbackbuffer_hook = nullptr;
+safetyhook::VmHook *g_createtexture_hook = nullptr;
+safetyhook::VmHook *g_creatert_hook = nullptr;
+safetyhook::VmHook *g_createds_hook = nullptr;
+safetyhook::VmHook *g_createplain_hook = nullptr;
+safetyhook::VmHook *g_getrt_hook = nullptr;
+safetyhook::VmHook *g_getds_hook = nullptr;
 
 void *g_device = nullptr;
 bool g_params_logged = false;
@@ -107,10 +124,19 @@ LARGE_INTEGER g_qpc_freq = {};
 // D3DPRESENT_INTERVAL_IMMEDIATE so the game renders as fast as the passes
 // actually cost; the OpenXR host/runtime paces the HMD.
 bool g_present_immediate = false;
-SafetyHookInline g_d3dcreate9_hook;          // game's IAT thunk, stage 1
+SafetyHookInline g_d3dcreate9_hook;          // game's IAT thunk, installed at attach
 safetyhook::VmtHook *g_d3d9_vmt_hook = nullptr;  // IDirect3D9, leaked by design
 safetyhook::VmHook *g_createdevice_hook = nullptr; // leaked by design
 
+bool hook_device(void *device);
+
+// IDirect3D9::CreateDevice — the device's birth. Runs on the engine's main
+// thread inside RenderSystem_CreateDevice (itself inside the first
+// SetupRenderTargets — docs/reverse_engineering/render_target_table.md). The
+// device VmtHook is installed HERE, before CreateDevice returns, so no engine
+// device call (incl. the setup tail's GetRenderTarget/GetDepthStencilSurface)
+// precedes our hooks. Replaces the old polling capture, which raced the main
+// thread (live 2026-11-08: hooks landed while SetupRenderTargets was running).
 HRESULT __stdcall createdevice_hook(void *self, UINT adapter, DWORD device_type,
                                      HWND focus_window, DWORD behavior_flags,
                                      D3DPRESENT_PARAMETERS *pp, void **out_device)
@@ -124,9 +150,15 @@ HRESULT __stdcall createdevice_hook(void *self, UINT adapter, DWORD device_type,
                   pp->PresentationInterval);
         pp->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
     }
-    return g_createdevice_hook->stdcall<HRESULT>(self, adapter, device_type,
-                                                 focus_window, behavior_flags,
-                                                 pp, out_device);
+    const HRESULT hr = g_createdevice_hook->stdcall<HRESULT>(self, adapter, device_type,
+                                                             focus_window, behavior_flags,
+                                                             pp, out_device);
+    if (SUCCEEDED(hr) && out_device != nullptr && *out_device != nullptr) {
+        hook_device(*out_device);
+    } else {
+        MC2VR_LOG("D3D: CreateDevice failed hr=%08lx — no device hooks", (unsigned long)hr);
+    }
+    return hr;
 }
 
 // The game's Direct3DCreate9 thunk (jmp [0x00b05620]). The original is
@@ -143,8 +175,8 @@ void *__stdcall d3dcreate9_hook(UINT sdk_version)
 
     auto vmt = safetyhook::VmtHook::create(d3d);
     if (!vmt) {
-        MC2VR_LOG("vsync: IDirect3D9 VmtHook create failed (error %u) — "
-                  "CreateDevice params left as-is",
+        MC2VR_LOG("D3D: FATAL — IDirect3D9 VmtHook create failed (error %u) — "
+                  "no device hooks this run",
                   (unsigned)vmt.error().type);
         return d3d;
     }
@@ -153,13 +185,13 @@ void *__stdcall d3dcreate9_hook(UINT sdk_version)
     auto hook = g_d3d9_vmt_hook->hook_method(SLOT_D3D9_CreateDevice,
                                              (void *)&createdevice_hook);
     if (!hook) {
-        MC2VR_LOG("vsync: hook_method(CreateDevice, slot %u) failed (error %u) — "
-                  "CreateDevice params left as-is",
+        MC2VR_LOG("D3D: FATAL — hook_method(CreateDevice, slot %u) failed (error %u) — "
+                  "no device hooks this run",
                   (unsigned)SLOT_D3D9_CreateDevice, (unsigned)hook.error().type);
         return d3d;
     }
     g_createdevice_hook = new safetyhook::VmHook(std::move(*hook)); // leaked by design
-    MC2VR_LOG("vsync: IDirect3D9 captured @ %p, CreateDevice hooked (slot %u)",
+    MC2VR_LOG("D3D: IDirect3D9 captured @ %p, CreateDevice hooked (slot %u)",
               d3d, (unsigned)SLOT_D3D9_CreateDevice);
     return d3d;
 }
@@ -219,6 +251,7 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
 {
     g_present.total++;
     g_present.window++;
+    rt_probe::on_present(self);
 
     if (g_present.total <= BURST_LOG_CALLS) {
         char extra[96];
@@ -230,6 +263,13 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
 
     if (!g_params_logged) {
         log_present_params(); // main thread — first Present is the safe point
+        // The engine is past boot (device built, render shell constructed,
+        // SecuROM loader done): run the installs that need a running engine.
+        static bool engine_running = false;
+        if (!engine_running) {
+            engine_running = true;
+            on_engine_running();
+        }
     }
 
     // HUD timing: Present is a per-frame phase sample point.
@@ -313,7 +353,10 @@ HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
         pp->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
     }
 
-    return g_reset_hook->stdcall<HRESULT>(self, pp);
+    rt_probe::on_reset(true, 0);
+    const HRESULT hr = g_reset_hook->stdcall<HRESULT>(self, pp);
+    rt_probe::on_reset(false, (long)hr);
+    return hr;
 }
 
 // ---- SetVertexShaderConstantF — the camera channel (view_rewrite.cpp) --------
@@ -330,6 +373,7 @@ HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
                                    void *dst, const RECT *dst_rect, DWORD filter)
 {
     g_stretch_calls++;
+    rt_probe::on_stretch_rect(src, dst, __builtin_return_address(0));
     bool skip = false;
     src = eye_replay::on_stretch_src(src, dst, &skip);
     if (skip) {
@@ -366,6 +410,7 @@ HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
 {
     // Per-eye: pass-2 slot-0 sets of the main RT go to the eye RT (device-level
     // substitution only — the game's caller-side RT cache is untouched).
+    rt_probe::on_set_render_target(index, surface, __builtin_return_address(0));
     void *target = eye_replay::on_set_render_target(self, index, surface);
     const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, target);
     if (index == 0) {
@@ -399,6 +444,84 @@ HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UI
     return g_setvsconstf_hook->stdcall<HRESULT>(self, start, out, count);
 }
 
+// ---- rt_probe census (debug_rt_probe=on; observe + forward only) -------------
+
+HRESULT __stdcall createtexture_hook(void *self, UINT w, UINT h, UINT levels, DWORD usage,
+                                     D3DFORMAT fmt, D3DPOOL pool, void **out, HANDLE *shared)
+{
+    const HRESULT hr = g_createtexture_hook->stdcall<HRESULT>(self, w, h, levels, usage, fmt,
+                                                              pool, out, shared);
+    rt_probe::on_create(rt_probe::Create::Texture, w, h, (uint32_t)fmt, usage, (uint32_t)pool,
+                        (long)hr, out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall creatert_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
+                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL lockable, void **out,
+                                HANDLE *shared)
+{
+    const HRESULT hr = g_creatert_hook->stdcall<HRESULT>(self, w, h, fmt, ms, msq, lockable, out,
+                                                         shared);
+    rt_probe::on_create(rt_probe::Create::RenderTarget, w, h, (uint32_t)fmt,
+                        D3DUSAGE_RENDERTARGET, D3DPOOL_DEFAULT, (long)hr, out ? *out : nullptr,
+                        __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall createds_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
+                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL discard, void **out,
+                                HANDLE *shared)
+{
+    const HRESULT hr = g_createds_hook->stdcall<HRESULT>(self, w, h, fmt, ms, msq, discard, out,
+                                                         shared);
+    rt_probe::on_create(rt_probe::Create::DepthStencil, w, h, (uint32_t)fmt,
+                        D3DUSAGE_DEPTHSTENCIL, D3DPOOL_DEFAULT, (long)hr, out ? *out : nullptr,
+                        __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall createplain_hook(void *self, UINT w, UINT h, D3DFORMAT fmt, D3DPOOL pool,
+                                   void **out, HANDLE *shared)
+{
+    const HRESULT hr = g_createplain_hook->stdcall<HRESULT>(self, w, h, fmt, pool, out, shared);
+    rt_probe::on_create(rt_probe::Create::OffscreenPlain, w, h, (uint32_t)fmt, 0,
+                        (uint32_t)pool, (long)hr, out ? *out : nullptr,
+                        __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getswapchain_hook(void *self, UINT index, void **out)
+{
+    const HRESULT hr = g_getswapchain_hook->stdcall<HRESULT>(self, index, out);
+    rt_probe::on_getter(rt_probe::Getter::SwapChain, index,
+                        SUCCEEDED(hr) && out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getbackbuffer_hook(void *self, UINT swapchain, UINT index,
+                                     D3DBACKBUFFER_TYPE type, void **out)
+{
+    const HRESULT hr = g_getbackbuffer_hook->stdcall<HRESULT>(self, swapchain, index, type, out);
+    rt_probe::on_getter(rt_probe::Getter::BackBuffer, index,
+                        SUCCEEDED(hr) && out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getrt_hook(void *self, DWORD index, void **out)
+{
+    const HRESULT hr = g_getrt_hook->stdcall<HRESULT>(self, index, out);
+    rt_probe::on_getter(rt_probe::Getter::RenderTarget, index,
+                        SUCCEEDED(hr) && out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getds_hook(void *self, void **out)
+{
+    const HRESULT hr = g_getds_hook->stdcall<HRESULT>(self, out);
+    rt_probe::on_getter(rt_probe::Getter::DepthStencil, 0, SUCCEEDED(hr) && out ? *out : nullptr,
+                        __builtin_return_address(0));
+    return hr;
+}
 
 } // namespace
 
@@ -420,44 +543,44 @@ bool set_vsync(const char *value)
 
 bool install_d3d9_gate()
 {
-    if (!g_present_immediate) {
-        return true; // vsync=on — no interception at all
-    }
     if (g_d3dcreate9_hook) {
         return true; // already installed
     }
 
-    // Trap-based install while the game is still suspended (stage 1); the
+    // Trap-based install while the game is still suspended (attach); the
     // 6-byte `jmp dword ptr [IAT]` thunk is plaintext .text well below the
-    // SecuROM region. Failing this only costs the pacing fix — the game
-    // still runs with its own params.
+    // SecuROM region. Root of the device-hook chain (Direct3DCreate9 ->
+    // CreateDevice -> device VmtHook): failing it means no device hooks this
+    // run — the game still runs unmodified.
     auto result = SafetyHookInline::create(
         reinterpret_cast<uint8_t *>(MC2_D3DCREATE9_THUNK),
         reinterpret_cast<uint8_t *>(&d3dcreate9_hook));
     if (!result) {
-        MC2VR_LOG("vsync: Direct3DCreate9 thunk hook install failed @ %p "
-                  "(error %u) — device params left as-is",
+        MC2VR_LOG("D3D: FATAL — Direct3DCreate9 thunk hook install failed @ %p "
+                  "(error %u) — no device hooks this run",
                   (void *)MC2_D3DCREATE9_THUNK, (unsigned)result.error().type);
         return false;
     }
     g_d3dcreate9_hook = std::move(*result);
-    MC2VR_LOG("vsync: installed Direct3DCreate9 thunk hook @ %p",
+    MC2VR_LOG("D3D: installed Direct3DCreate9 thunk hook @ %p",
               (void *)MC2_D3DCREATE9_THUNK);
     return true;
 }
 
-bool capture_and_hook()
+namespace {
+
+// Called from createdevice_hook (main thread; the engine has not seen the
+// device yet). A second CreateDevice (device re-creation) re-hooks the new
+// object; the trampolines stay valid — every device shares DXVK's vtable.
+bool hook_device(void *device)
 {
     QueryPerformanceFrequency(&g_qpc_freq);
 
-    // Capture: a direct call of the plaintext GetD3DDevice thunk. Returns
-    // the live DXVK IDirect3DDevice9 object (init.cpp's stage 2 only
-    // calls us once g_LtiRenderer->dx9State is non-NULL).
-    g_device = ((GetD3DDevice_t)MC2_GETD3DDEVICE_THUNK)();
-    if (!g_device) {
-        MC2VR_LOG("D3D: FATAL — GetD3DDevice() returned NULL at init (unexpected per the early boot probes)");
-        return false;
+    if (g_device != nullptr && g_device != device) {
+        MC2VR_LOG("D3D: NEW device %p replaces %p — re-hooking", device, g_device);
     }
+    g_device = device;
+    g_params_logged = false;
 
     void **vt = *(void ***)g_device;
     char vtable_desc[96];
@@ -509,11 +632,43 @@ bool capture_and_hook()
         MC2VR_LOG("D3D: hooked %s (slot %u) via cloned vtable", spec.name, (unsigned)spec.slot);
     }
 
-    MC2VR_LOG("D3D: VmtHook installed — Present/BeginScene/EndScene/Reset pinned "
-              "+ SetVertexShaderConstantF slot %u (the GPU-boundary "
-              "channel)", (unsigned)SLOT_SetVertexShaderConstantF);
+    if (rt_probe::enabled()) {
+        const SlotSpec probe_slots[] = {
+            {SLOT_GetSwapChain, (void *)&getswapchain_hook, &g_getswapchain_hook, "GetSwapChain"},
+            {SLOT_GetBackBuffer, (void *)&getbackbuffer_hook, &g_getbackbuffer_hook,
+             "GetBackBuffer"},
+            {SLOT_CreateTexture, (void *)&createtexture_hook, &g_createtexture_hook,
+             "CreateTexture"},
+            {SLOT_CreateRenderTarget, (void *)&creatert_hook, &g_creatert_hook,
+             "CreateRenderTarget"},
+            {SLOT_CreateDepthStencilSurface, (void *)&createds_hook, &g_createds_hook,
+             "CreateDepthStencilSurface"},
+            {SLOT_CreateOffscreenPlainSurface, (void *)&createplain_hook, &g_createplain_hook,
+             "CreateOffscreenPlainSurface"},
+            {SLOT_GetRenderTarget, (void *)&getrt_hook, &g_getrt_hook, "GetRenderTarget"},
+            {SLOT_GetDepthStencilSurface, (void *)&getds_hook, &g_getds_hook,
+             "GetDepthStencilSurface"},
+        };
+        for (const SlotSpec &spec : probe_slots) {
+            auto hook = g_vmt_hook->hook_method(spec.slot, spec.destination);
+            if (!hook) {
+                // Non-fatal: the probe only loses this tap.
+                MC2VR_LOG("rtprobe: hook_method(%s, slot %u) failed (error %u)", spec.name,
+                          (unsigned)spec.slot, (unsigned)hook.error().type);
+                continue;
+            }
+            *spec.storage = new safetyhook::VmHook(std::move(*hook)); // leaked by design
+            MC2VR_LOG("rtprobe: hooked %s (slot %u)", spec.name, (unsigned)spec.slot);
+        }
+    }
+
+    MC2VR_LOG("D3D: VmtHook installed at device creation — Present/BeginScene/EndScene/"
+              "Reset pinned + SetVertexShaderConstantF slot %u (the GPU-boundary channel)",
+              (unsigned)SLOT_SetVertexShaderConstantF);
     return true;
 }
+
+} // namespace
 
 bool blit_surfaces(void *src, void *dst)
 {

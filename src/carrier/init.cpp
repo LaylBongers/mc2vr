@@ -15,6 +15,7 @@
 
 #include "debug/probes.hpp"
 #include "debug/render_dump.hpp"
+#include "debug/rt_probe.hpp"
 #include "debug/stream_capture.hpp"
 #include "debug/stub_trace.hpp"
 #include "debug/watch.hpp"
@@ -167,6 +168,13 @@ static void load_conf()
             // docs/stereo.md). Requires the opcode MidHook (render_dump.cpp).
             if (!s2c::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_stream_capture=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_rt_probe") == 0) {
+            // Render-target / render-size probe (log-only; docs/render_resolution.md
+            // track 2): table snapshots, backbuffer-bind signatures, creation +
+            // getter census, OnScreenResize/Setup order.
+            if (!rt_probe::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_rt_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "eye_pass") == 0) {
             // Deterministic per-pass eye (pass1=LEFT pass2=RIGHT).
@@ -331,25 +339,6 @@ static bool verify_build_lock()
     return true;
 }
 
-// Block until the engine has built its D3D device. Reads the same two
-// globals GetD3DDevice_Impl does (`g_LtiRenderer ? g_LtiRenderer->dx9State :
-// NULL`) instead of CALLING the GetD3DDevice thunk: before the loader patches
-// that VM-slot thunk, a call would enter the unpatched SecuROM stub, and the
-// frame counter is no help (it spins ~1400 Hz pre-D3D). A non-NULL device
-// means the engine is well past startup, so the thunk is safe afterwards.
-static bool wait_for_device()
-{
-    for (DWORD waited = 0; waited < 120 * 1000; waited += 50) {
-        const uintptr_t renderer = *(volatile uintptr_t *)MC2_G_LTIRENDERER;
-        if (renderer != 0 &&
-            *(volatile uintptr_t *)(renderer + MC2_LTIRENDERER_DX9STATE_OFF) != 0) {
-            return true;
-        }
-        Sleep(50);
-    }
-    return false;
-}
-
 void init()
 {
     log_init();
@@ -371,9 +360,11 @@ void init()
         return;
     }
 
-    // ---- Stage 1: early. Runs possibly before the game's first instruction
-    // (launcher starts it suspended and resumes on the marker below). Plaintext
-    // .text hooks only — nothing that needs engine-constructed state.
+    // ---- Attach: runs before the game's first instruction (the launcher
+    // starts it suspended and resumes on the marker below). Everything is
+    // installed here; hooks on objects that do not exist yet are chained off
+    // their creation (Direct3DCreate9 -> CreateDevice -> device VmtHook,
+    // device.cpp) or the first Present (on_engine_running below).
 
     // Attach to the OpenXR host's shared section, if one exists (the
     // launcher spawns the host before the game). Non-fatal: no host means
@@ -383,35 +374,33 @@ void init()
 
     hooks::install();
     render::install_early();
-    // Vsync pacing (vsync=off): must run while the game is still suspended —
-    // RenderSystem_Init calls Direct3DCreate9 during boot, before stage 2.
+    rt_probe::install_early(); // no-op unless debug_rt_probe=on
+    // Device-hook chain root (vsync patch + device VmtHook at creation):
+    // RenderSystem_Init calls Direct3DCreate9 during boot, so this must be in
+    // place before the game resumes.
     device::install_d3d9_gate();
-    MC2VR_LOG("early init done"); // launcher's resume marker
+    MC2VR_LOG("early init done"); // launcher's resume marker (src/launcher/main.c)
+}
 
-    // ---- Stage 2: late. Needs the engine up (device, render shell).
-    MC2VR_LOG("waiting for D3D device");
-    if (!wait_for_device()) {
-        MC2VR_LOG("FATAL: D3D device never appeared — late init skipped");
-        return;
-    }
-    MC2VR_LOG("D3D device live — late init");
+void on_engine_running()
+{
+    MC2VR_LOG("engine running (first Present, frame %llu) — post-boot installs",
+              (unsigned long long)hooks::frame_count());
 
     // SecuROM pre-probes: each step logs, so a crash is attributable to
-    // exactly one action.
+    // exactly one action. call_vm_thunk CALLS the GetD3DDevice VM-slot thunk —
+    // safe only once the loader has patched it; the first Present is well
+    // past that point (same condition the old device wait guaranteed).
     probes::data_write_restore();
     probes::call_vm_thunk();
 
-    // Device capture + VmtHook (Present/BeginScene/EndScene/Reset).
-    // Best-effort: a failure here keeps the game and FrameTick hook alive.
-    device::capture_and_hook();
-
-    // g_RenderShell slot claim + queue poll.
+    // Queue poller (reads g_RenderQueue fields set up during boot).
     render::install_late();
 
     // Read-only live dump of the VM chain behind RenderTask_RenderFrame.
     vmdump::install();
 
-    MC2VR_LOG("init complete");
+    MC2VR_LOG("init complete"); // launcher waits for this before dumping the log
 }
 
 } // namespace mc2vr

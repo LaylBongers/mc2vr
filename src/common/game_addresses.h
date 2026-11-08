@@ -333,3 +333,49 @@
 // The counter is diagnostic-only, so a tick landing mid-probe corrupting it
 // by one increment is acceptable (logged, never "fixed").
 #define MC2_PROBE_DATA_BYTE ((uintptr_t)0x017bad00u)
+
+// ---- Render size + render target table (docs/reverse_engineering/
+// rt_dims_source.md, render_target_table.md; debug/rt_probe.cpp) ----------
+// Plaintext .text bounds (target_binary.md) — stack-scan return-address filter.
+#define MC2_TEXT_BEGIN ((uintptr_t)0x00401000u)
+#define MC2_TEXT_END ((uintptr_t)0x00b05000u)
+// Display-size authority (INI [Render] ScrW/ScrH).
+#define MC2_G_RENDERCFG_SCRW ((uintptr_t)0x00dfb328u)
+#define MC2_G_RENDERCFG_SCRH ((uintptr_t)0x00dfb32cu)
+// Mouse scale = cfg / client (written by OnScreenResize).
+#define MC2_G_MOUSESCALE_X ((uintptr_t)0x00f7df40u)
+#define MC2_G_MOUSESCALE_Y ((uintptr_t)0x00f7df44u)
+// Surface registries: every creation site calls obj->vfn[+0x1c](hash, surf, 3).
+#define MC2_G_SURFACE_REGISTRY_A ((uintptr_t)0x00cfca08u)
+#define MC2_G_SURFACE_REGISTRY_B ((uintptr_t)0x00cfca0cu)
+// g_LtiRenderer + 0x594 != 0 -> scene depth is its own D24S8 surface.
+#define MC2_LTIRENDERER_SEPDEPTH_OFF ((uintptr_t)0x594u)
+// Render-size authority + aspect state on g_RenderShell (offsets).
+#define MC2_RS_SCREEN_W_OFF ((uintptr_t)0x2b98u)
+#define MC2_RS_SCREEN_H_OFF ((uintptr_t)0x2b9cu)
+#define MC2_RS_FLAG169_OFF ((uintptr_t)0x2bc4u)
+#define MC2_RS_ASPECT_X_OFF ((uintptr_t)0x2bc8u)
+#define MC2_RS_ASPECT_Y_OFF ((uintptr_t)0x2bccu)
+#define MC2_RS_ASPECT_R_OFF ((uintptr_t)0x2bd0u)
+#define MC2_RS_RENDERSCALE_OFF ((uintptr_t)0x2bd4u)
+#define MC2_RS_FLOAT_W_OFF ((uintptr_t)0x3f20u)
+#define MC2_RS_FLOAT_H_OFF ((uintptr_t)0x3ef4u)
+// Render target table: g_RenderShell + 0x3e90 .. + 0x3eb0 (9 slots).
+#define MC2_RS_RT_TABLE_OFF ((uintptr_t)0x3e90u)
+#define MC2_RS_RT_TABLE_SLOTS 9u
+// MidHook sites (instruction boundaries verified; no references into the
+// patched bytes). OnScreenResize entry: [esp+4] = W, EAX = H, ESI = this.
+// SetupRenderTargets entry: ECX = this. 0x0075078d: `mov edx,[edx+0x3e98]`
+// inside FUN_0074fae0 (EDX = g_RenderShell) — the front-ref read candidate.
+#define MC2_ONSCREENRESIZE ((uintptr_t)0x007492f0u)
+#define MC2_SETUPRENDERTARGETS ((uintptr_t)0x007494e0u)
+#define MC2_FAE0_FRONTREF_READ ((uintptr_t)0x0075078du)
+
+// GameShell_FrameTick's per-frame virtual calls on g_RenderShell slots 5
+// (PostUpdateHook) and 4 (EndOfFrameHook) — both slots point to the shared
+// 1-byte VirtHook_NoOp 0x006b9360. MidHook sites = the 6-byte
+// `mov ecx,[0x00dfb2f8]` that starts each call sequence (`mov edx,[ecx];
+// mov eax,[edx+0x14|0x10]; call eax`); branches land only on the first byte.
+// Live-proven call sites 2026-11-08 (return addresses 0x00630ef4 / 0x00630fa6).
+#define MC2_FRAMETICK_POSTUPDATE_SITE ((uintptr_t)0x00630ee7u)
+#define MC2_FRAMETICK_ENDOFFRAME_SITE ((uintptr_t)0x00630f99u)

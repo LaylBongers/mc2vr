@@ -1,5 +1,5 @@
 // Carrier side of the mc2vr IPC: connects to the host's shared section
-// in stage 1 (non-fatal — no host means the game runs exactly as today),
+// at attach (non-fatal — no host means the game runs exactly as today),
 // registers the game's pid, and runs a low-rate monitor thread that logs
 // session-state transitions and host death. The per-eye path reads the
 // pose from the render thread via read_state() — lock-free, never blocking.
@@ -10,7 +10,7 @@
 namespace mc2vr {
 namespace ipc {
 
-// Stage 1. Opens the host section (env MC2VR_IPC_NAME overrides the name),
+// At attach. Opens the host section (env MC2VR_IPC_NAME overrides the name),
 // validates magic/version and registers this pid. Logs once either way and
 // starts the monitor thread on success. Safe to call once at init.
 void connect();

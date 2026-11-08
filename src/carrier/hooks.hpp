@@ -4,7 +4,7 @@
 //   - never patch inside 0x01a48000+ (SecuROM) or VM-stub thunks
 //   - the one exception: VmtHook on the captured IDirect3DDevice9
 //
-// Installs the early (stage-1) hook: GameShell_FrameTick 0x00630e10 — frame
+// Installs the attach-time hook: GameShell_FrameTick 0x00630e10 — frame
 // counter, timing sanity, install ack; it also observes the D3D device
 // pointer once it exists. The full installed-site inventory: docs/hooks.md.
 #pragma once
@@ -13,7 +13,7 @@
 
 namespace mc2vr::hooks {
 
-// Installs the stage-1 hooks. Returns true on success.
+// Installs the attach-time hooks. Returns true on success.
 // Caller must have verified the build lock (init.cpp gates on it).
 bool install();
 

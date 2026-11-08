@@ -19,6 +19,7 @@ add_library(mc2vr_carrier SHARED
     # Diagnostic/instrumentation modules (mostly conf-gated, default off).
     debug/probes.cpp
     debug/render_dump.cpp
+    debug/rt_probe.cpp
     debug/stub_trace.cpp
     debug/stream_capture.cpp
     debug/vm_dump.cpp

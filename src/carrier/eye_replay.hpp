@@ -61,6 +61,8 @@ void set_dump_delay(float seconds);
 // invoke (0 = not inside a submit). Sets the per-pass eye-sign override
 // (pass 1 = LEFT/-1, pass 2 = RIGHT/+1) when eye_pass=on.
 void set_pass(uint32_t pass);
+// Current pass: 0 = outside a submit, 1/2 while the passes run (render thread).
+uint32_t current_pass();
 
 // Called from device.cpp's SetRenderTarget hook BEFORE the original call.
 // Returns the surface the device call must use: `game_surface` itself, or

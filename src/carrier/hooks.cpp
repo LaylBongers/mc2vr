@@ -13,8 +13,6 @@ namespace mc2vr::hooks {
 
 namespace {
 
-using GetD3DDevice_t = void *(*)();
-
 SafetyHookInline g_frame_tick_hook;
 
 // Frame statistics. FrameTick has a single call site in GameShell_Run's loop,
@@ -106,26 +104,6 @@ void frame_tick_hook()
 
     // ---- original game logic first, instrumentation side effects after ----
     g_frame_tick_hook.call<void>();
-
-    // Observe the D3D device once it exists. The
-    // call runs on the main thread (render threading rules, docs/reverse_engineering/render_threading.md)
-    // and stops as soon as the pointer is non-NULL — normal game code calls
-    // this thunk constantly, so per-frame calls are routine for it.
-    static void *observed_device = nullptr;
-    static uint32_t device_tries = 0;
-    constexpr uint32_t DEVICE_TRIE_MAX = 1200; // ~20s at 60fps
-    if (!observed_device && device_tries < DEVICE_TRIE_MAX) {
-        device_tries++;
-        void *device = ((GetD3DDevice_t)MC2_GETD3DDEVICE_THUNK)();
-        if (device) {
-            observed_device = device;
-            MC2VR_LOG("FrameTick: observed IDirect3DDevice9* = %p after %u frames",
-                      device, device_tries);
-        } else if (device_tries == DEVICE_TRIE_MAX) {
-            MC2VR_LOG("FrameTick: no IDirect3DDevice9* after %u frames (D3D init late?",
-                      device_tries);
-        }
-    }
 
     if (g_window_start.QuadPart != 0) {
         double window_sec =

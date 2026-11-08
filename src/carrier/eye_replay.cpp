@@ -619,6 +619,11 @@ void set_pass(uint32_t pass)
     view_rewrite::set_pass_eye(g_pass_enabled && pass != 0 ? (pass == 1 ? -1 : 1) : 0);
 }
 
+uint32_t current_pass()
+{
+    return g_pass;
+}
+
 void on_reset()
 {
     // All surfaces are gone. Forget the recording; the first post-Reset

@@ -2,19 +2,20 @@
 
 `mc2vr_carrier.dll` (win32 i386) — injected into the suspended game by the [launcher](launcher.md). Delivery vehicle only: the mechanism is "patch the code itself" (rejected: external cross-process `WriteProcessMemory` patching — no prologue relocation, no MidHook, messier under Wine). All hooking goes through [hooks.md](hooks.md).
 
-## Init stages
+## Init: attach + engine events (no stages)
 
-`DllMain` only spawns the init thread (loader lock).
+`DllMain` only spawns the init thread (loader lock). There is no polling phase: everything installs at attach, and hooks on objects that don't exist yet are chained off engine events, on the main thread.
 
-- **Stage 1** (before the game runs): conf, base/build-lock gate, FrameTick + BeginSubmit hooks, `render::install_early` (opcode/view/upload-gate MidHooks, stub tracer, SubmitToGPU). Plaintext `.text` only. Logs `early init done` — the launcher's resume signal.
-- **Stage 2** (once the engine has a device): probes, device capture + VmtHook, `render::install_late` (g_RenderShell vtable claim, poller), vmdump. Gate = plain memory read of `g_LtiRenderer` (`0x01175288`) → `dx9State` (`+0x5bc`), i.e. what `GetD3DDevice_Impl` does, WITHOUT calling the `GetD3DDevice` thunk (its VM slot is patched by the loader at runtime; calling it before startup finishes would enter the unpatched stub). Device non-NULL ⇒ engine past startup ⇒ the thunk is safe afterwards.
+- **Attach** (game suspended; `init.cpp` `init`): conf, base/build-lock gate, IPC connect, FrameTick + BeginSubmit hooks, `render::install_early` (opcode/view/upload-gate MidHooks, stub tracer, SubmitToGPU, camera/culling), `rt_probe::install_early`, and the `Direct3DCreate9` thunk hook (always installed). Logs `early init done` — the launcher's resume signal. The init thread then exits.
+- **Device creation** (`device.cpp` `createdevice_hook`): `Direct3DCreate9` → IDirect3D9 VmtHook → `CreateDevice` → the device VmtHook is installed before the engine receives the pointer. Device creation happens inside the first `SetupRenderTargets` ([reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md)), so this is the only race-free point. A re-created device is re-hooked.
+- **First Present** (`init.cpp` `on_engine_running`): SecuROM pre-probes (one CALLS the `GetD3DDevice` VM-slot thunk — safe only after the loader patched it), `render::install_late` (queue poller thread), vmdump. (The g_RenderShell slot 4/5 hooks used to be a vtable claim here; they are now attach-time MidHooks at the FrameTick call sites — [hooks.md](hooks.md).) Logs `init complete`.
 
-GOTCHA: the frame counter `0x011755bc` is NOT a device-ready signal (spins ~1400 Hz pre-D3D); an earlier build gated on it, captured NULL and silently skipped all device hooks.
+Superseded 2026-11-08: a second "stage" thread polled `g_LtiRenderer->dx9State` and hooked the device from the init thread. It raced the main thread: live, the hooks landed ~200 ms before the setup tail's device calls, by luck. GOTCHA kept from that era: the frame counter `0x011755bc` is not a device-ready signal (it spins ~1400 Hz pre-D3D).
 
 ## Design rules
 
 - The carrier stays thin (inject + install + mod host); gameplay mod logic would go in a separate hot-swappable module the carrier hosts.
-- State-dependent hooks install in stage 2 once the engine has built the objects.
+- Install everything at attach; hooks on objects that don't exist yet chain off the object's creation (or the first Present), on the engine's own thread — never poll from a side thread.
 - The carrier never blocks on the [host](host.md); no host ⇒ the game runs as before, logged once.
 
 ## Debug modules

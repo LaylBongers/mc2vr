@@ -37,9 +37,8 @@ constexpr uint32_t REFRESH_MAX = 12;            // steady-state re-dumps per run
 // Leaked by design (same teardown reasoning as the device hooks).
 SafetyHookMid g_opcode_mid;
 SafetyHookMid g_view_mid;
-safetyhook::VmtHook *g_shell_vmt = nullptr;
-safetyhook::VmHook *g_shell_slot4 = nullptr;
-safetyhook::VmHook *g_shell_slot5 = nullptr;
+SafetyHookMid g_postupdate_mid; // FrameTick slot-5 call site
+SafetyHookMid g_endofframe_mid; // FrameTick slot-4 call site
 HANDLE g_poller_thread = nullptr;
 volatile LONG g_poller_run = 0;
 
@@ -210,29 +209,29 @@ void view_midhook(safetyhook::Context &ctx)
     }
 }
 
-// ---- g_RenderShell slot 4/5 claim test --------------------------------------
-// Handlers are replacements for VirtHook_NoOp (empty body): counting no-ops,
-// semantically identical. thiscall void(this) with no stack args == cdecl
-// void() for dispatch purposes; the original need not be called.
+// ---- g_RenderShell slot 4/5 call sites ---------------------------------------
+// MidHooks at GameShell_FrameTick's two per-frame virtual calls on
+// g_RenderShell (slot 5 PostUpdateHook, slot 4 EndOfFrameHook — both the
+// shared no-op VirtHook_NoOp). Installed at attach; they run at exactly the
+// point the old vtable claim's handlers did (just before the no-op call),
+// without depending on the object's vptr (no reinit-reinstall risk).
 
-void slot4_endofframe_hook()
+void endofframe_midhook(safetyhook::Context &)
 {
     g_slot4_calls++;
     if (!g_slot4_logged) {
         g_slot4_logged = true;
-        MC2VR_LOG("EndOfFrameHook (g_RenderShell slot 4) CALLED, frame=%llu — slots "
-                  "claimable, mechanism works",
+        MC2VR_LOG("EndOfFrameHook call site (g_RenderShell slot 4) hit, frame=%llu",
                   (unsigned long long)hooks::frame_count());
     }
 }
 
-void slot5_postupdate_hook()
+void postupdate_midhook(safetyhook::Context &)
 {
     g_slot5_calls++;
     if (!g_slot5_logged) {
         g_slot5_logged = true;
-        MC2VR_LOG("PostUpdateHook (g_RenderShell slot 5) CALLED, frame=%llu — slots "
-                  "claimable, mechanism works",
+        MC2VR_LOG("PostUpdateHook call site (g_RenderShell slot 5) hit, frame=%llu",
                   (unsigned long long)hooks::frame_count());
     }
     // The host-event drain point (main thread, once per frame — before
@@ -399,6 +398,13 @@ void install_early()
     // View-table dump.
     install_mid(g_view_mid, MC2_SUBMITVIEW_LOOP_LEA, view_midhook, "SubmitWorldPackets view loop");
 
+    // Per-frame orchestration points (IPC event drain): the FrameTick call
+    // sites of g_RenderShell slots 5/4.
+    install_mid(g_postupdate_mid, MC2_FRAMETICK_POSTUPDATE_SITE, postupdate_midhook,
+                "FrameTick PostUpdateHook call site");
+    install_mid(g_endofframe_mid, MC2_FRAMETICK_ENDOFFRAME_SITE, endofframe_midhook,
+                "FrameTick EndOfFrameHook call site");
+
     // View rewrite: upload-gate MidHook (the device-level tap is installed
     // with the device VmtHook, device.cpp).
     view_rewrite::install();
@@ -421,27 +427,6 @@ void install_early()
 
 void install_late()
 {
-    // g_RenderShell slots 4/5 claim (also proves the vtable-claim mechanism).
-    // The object's vptr is only valid once the engine has constructed it.
-    auto vmt = safetyhook::VmtHook::create(reinterpret_cast<void *>(MC2_G_RENDERSHELL));
-    if (!vmt) {
-        MC2VR_LOG("FATAL — g_RenderShell VmtHook create failed (error %u)",
-                  (unsigned)vmt.error().type);
-    } else {
-        g_shell_vmt = new safetyhook::VmtHook(std::move(*vmt));
-
-        auto slot4 = g_shell_vmt->hook_method(4, (void *)&slot4_endofframe_hook);
-        auto slot5 = g_shell_vmt->hook_method(5, (void *)&slot5_postupdate_hook);
-        if (!slot4 || !slot5) {
-            MC2VR_LOG("FATAL — g_RenderShell slot hook failed (%u)", (unsigned)(slot4 ? slot5.error().type : slot4.error().type));
-        } else {
-            g_shell_slot4 = new safetyhook::VmHook(std::move(*slot4));
-            g_shell_slot5 = new safetyhook::VmHook(std::move(*slot5));
-            MC2VR_LOG("claimed g_RenderShell slots 4 (EndOfFrameHook) / 5 (PostUpdateHook) "
-                      "via cloned vtable");
-        }
-    }
-
     // Queue counter poller.
     InterlockedExchange(&g_poller_run, 1);
     g_poller_thread = CreateThread(nullptr, 0, poller_thread, nullptr, 0, nullptr);
