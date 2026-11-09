@@ -10,7 +10,7 @@ The implemented camera system, live-verified 2026-10-07. Two parts:
 Measured by the `debug_camtable_probe` transfer-function instrument (fixed +10° local-axis injections at the fill site, entry + rendered response logged):
 
 - The rendered camera's axes are the entry's **ROWS**: rendered basis = (−row0, row1, row2) of the 3×3 at entry+0x10. Every earlier "columns" reading was an axis-aligned coincidence (rows ≈ columns near identity).
-- Writing `E' = E·M` renders axes' = `M⁻¹·axes` — WORLD-side application of the INVERSE. The builder's 4×4 matrix inverse (`FUN_008225c0`, called at `0x008593db` between the entry and the view·proj multiply) inverts whatever rotation is composed into the entry. This one fact produced an entire misleading history of "shifting sign conventions" and pitch/roll coupling on yawed cameras.
+- Writing `E' = E·M` renders axes' = `M⁻¹·axes` — WORLD-side application of the INVERSE. The builder's 4×4 matrix inverse (`Matrix_Inverse4x4`, called at `0x008593db` between the entry and the view·proj multiply) inverts whatever rotation is composed into the entry. This one fact produced an entire misleading history of "shifting sign conventions" and pitch/roll coupling on yawed cameras.
 
 Implemented composition for the desired aim-following LOCAL head rotation: with
 
@@ -35,7 +35,7 @@ Units are METRES: Havok world gravity is 9.8–9.81 game units/s², zero feet-co
 
 ## Verdicts (do not re-litigate)
 
-- The `viewContextData` records are PLAINTEXT-filled, once per frame, BOTH double-buffer bases, not per submit (E1) — the fill is in `FUN_00466da0` (~0x004671xx, caller `FUN_0085ac50`). A record-level per-eye rewrite is interference-free; the [stereo.md](stereo.md) replay pass re-reads unchanged records.
+- The `viewContextData` records are PLAINTEXT-filled, once per frame, BOTH double-buffer bases, not per submit (E1) — the fill is in `Scene_EmitViewPrimitives` (~0x004671xx, caller `RenderShell_BuildSceneRecords`). A record-level per-eye rewrite is interference-free; the [stereo.md](stereo.md) replay pass re-reads unchanged records.
 - Upstream ViewEntry pose injection does NOT steer the draw camera (E2): `pos7c4`/`quat7d4` are OUTPUT channels of the staged round-trip — every write+bump is answered by the copy-back re-asserting the VM's pose within one frame (regression slope 0.00). This also killed the old ViewEntry D1/D2 culling design.
 - **The VP uploaded in frame F is built from frame F−1's table fill** (`camtable: VP union age`). Anything pairing a VP with a table-side pose must match by basis (`camera_table::union_for_camera`), not assume the same frame — otherwise the rendered eye is off the tagged pose by one frame of head motion (head-turn judder).
 - `g_CameraTable` (`0x014A2EE0`) is the single upstream injection point (E1b + E2b): static VA, runtime-live, plaintext-filled ~1.7/frame from the camera entity's quat+pos, read by BOTH the draw-camera builder AND the culling/fov consumers.

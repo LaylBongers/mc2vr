@@ -162,7 +162,7 @@ void RenderCmd_ExecuteStream(const uint32_t *stream, void *vs_ctx, void *ps_ctx)
             break;
         }
         case RenderCmdOp::Op21:
-            FUN_0074af30(as<rcmd::Op21>(c).a1);
+            Dx9_ClearTexture(as<rcmd::Op21>(c).a1);
             break;
         case RenderCmdOp::StretchRect: {
             const auto &cmd = as<rcmd::StretchRect>(c);

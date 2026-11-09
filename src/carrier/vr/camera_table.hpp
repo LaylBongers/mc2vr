@@ -4,7 +4,7 @@
 // CameraTable_FillLoop).
 //
 // g_CameraTable (0x014a2ee0) is 5 camera-entity slots x 0x620, filled once per
-// frame by the CameraTable_FillFromPose loop (FUN_0070f430, from
+// frame by the CameraTable_FillFromPose loop (CameraTable_FillLoop, from
 // InGameShellState_FramePipeline) — only slots with a live camera object
 // (+0x1e0) get filled. The fill's Matrix_Copy3x4 (call 0x0070aef3) destination
 // EAX = the slot's ACTIVE camera entry + 0x10. A MidHook right after that call

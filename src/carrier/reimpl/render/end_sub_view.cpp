@@ -31,7 +31,7 @@ void RenderShell_EndSubView(uint32_t phase, uint32_t view)
 
     // ---- 2. world markers 0x62ee63-0x62ee7e ----
     const bool hud_on = DAT_01174cdc::get()[kHudEnabledFlag] != 0;
-    auto context = []() { return *reinterpret_cast<void **>(DAT_01174fb0::get() + kHudContext); };
+    auto context = []() { return *reinterpret_cast<void **>(g_GuiMgr::get() + kHudContext); };
     hud::begin_markers();
     if (hud_on) {
         if (void *const ctx = context()) {
@@ -45,11 +45,11 @@ void RenderShell_EndSubView(uint32_t phase, uint32_t view)
     LtiRenderer_Slot14(g_RenderShellPtrB::get());
     if (hud_on) {
         if (void *const ctx = context()) {
-            FUN_0060fe20(ctx, view);
+            Hud_DrawOffscreenIndicators(ctx, view);
         }
     }
-    FUN_00709890(view);
-    FUN_00609d80(DAT_01174fb0::get(), view);
+    Bink_DrawOverlays(view);
+    GuiMgr_DrawView(g_GuiMgr::get(), view);
     hud::end_hud();
 }
 

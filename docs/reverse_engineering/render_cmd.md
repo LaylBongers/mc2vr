@@ -18,4 +18,4 @@ Each draw record's `cmdStream` (`PgPrimitive+0x2c`) is a dword stream: an opcode
 
 ## OPEN
 
-- The roles of the pass helpers behind ops 16/17/21/25 (`RenderCmd_{Begin,End}SurfacePass`, `FUN_0074af30`, `RenderShell_BeginHalfResPass`).
+- The roles of the pass helpers behind ops 16/17/21/25 (`RenderCmd_{Begin,End}SurfacePass`, `Dx9_ClearTexture`, `RenderShell_BeginHalfResPass`).

@@ -293,6 +293,7 @@ bool fit_rect(const D3DSURFACE_DESC &src, const D3DSURFACE_DESC &dst, RECT *r)
 void on_setup_done()
 {
     render_size::after_setup(); // the mutated stretch re-snapped aspect
+    hud::on_screen_setup();      // ...and the aspect mode
     take_over("SetupRenderTargets");
     msaa::ensure(engine_device());
     hud::ensure(engine_device());
@@ -300,6 +301,7 @@ void on_setup_done()
 
 void on_device_restored()
 {
+    hud::on_screen_setup();  // the restore re-enters the setup tail (aspect mode)
     take_over("device restore");
     msaa::ensure(engine_device());
     hud::ensure(engine_device());
@@ -428,7 +430,7 @@ void on_reset(bool before, long hr)
         msaa::on_reset_before();
         hud::on_reset_before();
         // Engine slots were released by the engine's pre-Reset path
-        // (FUN_0074d1b0 -> LtiRenderer_ReleaseRenderTargets); drop ours so no
+        // (RenderSystem_ReleaseDeviceResources -> LtiRenderer_ReleaseRenderTargets); drop ours so no
         // D3DPOOL_DEFAULT surface survives into Reset.
         if (g_front) {
             g_retired_front = g_front;

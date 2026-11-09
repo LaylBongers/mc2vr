@@ -2,7 +2,7 @@
 
 Found statically on 2026-11-08; per-address facts are on the Ghidra plates. It is all plaintext: the only SecuROM elements are two call gates, which are plain forwarders ([securom_vm.md](securom_vm.md)). Record layout: [render_data_model.md](render_data_model.md). Submit side: [frame_chain.md](frame_chain.md).
 
-## Pipeline (task-system nodes, registered by `FUN_0046a4a0`)
+## Pipeline (task-system nodes, registered by `RenderTask_RegisterAll`)
 
 ```
 node 0  RenderTask_BeginFrame      0x0046a270  scene = taskctx+0x104 -> g_RenderShell+0x2b94; shell->vtbl[1]()
@@ -39,4 +39,4 @@ node 2  RenderTask_RenderFrame     0x0046a290  -> shell->vtbl[3] RenderFrameTime
 - `Scene_EmitViewPrimitives`: per view, plaintext and normally structured, so a clean hook target.
 - `PgPrimitiveScratchRecord_Submit`: per record, cheap to filter (record type byte at `0x0116374c`: 4 = occlusion box, etc. — see its plate).
 - `PgPrimitive_PublishFrame` exit: the finished, sorted frame before any pass walks it.
-- HUD/2D: ordinary records from the Scaleform renderer `GuiRenderer` ([gui_renderer.md](gui_renderer.md)), a few dozen per frame, emitted inside this build. The first census missed them because they're few and share sub-view 1 and type 8 with the scene. `FUN_00853980` (×4 from the post chain `FUN_0074fae0`) is a full-screen-pass emitter, not HUD.
+- HUD/2D: ordinary records from the Scaleform renderer `GuiRenderer` ([gui_renderer.md](gui_renderer.md)), a few dozen per frame, emitted inside this build. The first census missed them because they're few and share sub-view 1 and type 8 with the scene. `RenderShell_EmitScreenQuad` (×4 from the post chain `PgLtiBloom_EmitPasses`) is a full-screen-pass emitter, not HUD.

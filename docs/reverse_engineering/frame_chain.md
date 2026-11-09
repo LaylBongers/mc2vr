@@ -12,7 +12,7 @@ InGameShellState_FramePipeline (producer side, no D3D):
   built by the render task graph, not here: RenderTask_BuildScene -> RenderShell_BuildSceneRecords
   -> PgPrimitive_PublishFrame (scene_record_build.md)
 PgPrimitive_SubmitToGPU (0x00855690, entered via vtable slot03 = RenderFrameTimed 0x0085abd0)
-  RenderShell_InitDrawRecordTables (0x00853ee0, called from LtiRenderer-side FUN_007494e0)
+  RenderShell_InitDrawRecordTables (0x00853ee0, called from LtiRenderer-side PgLtiRendererPc_SetupRenderTargets)
   zeroes/allocates the draw-record tables + pools. SubmitToGPU walks the 0x58 PgPrimitive
   records (head g_PrimitiveHead, base g_PrimitiveBase, link g_PrimitiveNext), applying
   per-record state (order: view type/RT, technique + VS/PS constants, indices, pass object,

@@ -31,9 +31,15 @@ using g_DepthStencilCache = Global<IDirect3DSurface9 *, 0x011752b4u>;
 // declares its entry.
 inline constexpr Function<void(uint32_t phase, uint32_t view)> RenderShell_EndSubView{"RenderShell_EndSubView",
                                                                                       0x0062ee20u, {EAX, EDI}};
+// Writes the view blocks from the render size (docs/reverse_engineering/view_blocks.md).
+// Reimplemented (reimpl/render/setup_viewports.hpp); this declares its entry.
+// AX = view mode (the original reads only AX), ECX = the shell.
+inline constexpr Function<void(uint32_t mode, uint8_t *shell)> RenderShell_SetupViewports{
+    "RenderShell_SetupViewports", 0x0085a9b0u, {EAX, ECX}};
 inline constexpr Function<void(uint8_t *shell, uint8_t *cam_input)> PostFx_ChainAndComposite{
     "PostFx_ChainAndComposite", 0x00468f30u, {ECX, ESI}};
-// LtiRenderer vtable slot 14 (+0x38), called between the world markers and the HUD; role unknown.
+// LtiRenderer vtable slot 14 (+0x38), called between the world markers and the HUD: VirtHook_NoOp
+// (0x006b9360, vtable 0x00bd38e8) — it does nothing (Ghidra plate on RenderShell_EndSubView).
 inline constexpr Method<void(uint8_t *shell)> LtiRenderer_Slot14{"LtiRenderer vtbl slot 14", 0x38, {ECX}};
 using g_CurViewType = Global<uint8_t, 0x01169792u>;
 using g_HalfResPassAllowed = Global<uint8_t, 0x01175616u>;

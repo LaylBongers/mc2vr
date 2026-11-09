@@ -14,6 +14,7 @@
 #include "reimpl/render/begin_submit.hpp"
 #include "reimpl/render/end_sub_view.hpp"
 #include "reimpl/render/render_cmd.hpp"
+#include "reimpl/render/setup_viewports.hpp"
 #include "reimpl/render/submit_to_gpu.hpp"
 
 namespace mc2vr::hooks {
@@ -34,6 +35,7 @@ const std::array kReplacements = {
     replace<game::PgPrimitive_SubmitToGPU, &reimpl::PgPrimitive_SubmitToGPU>(0x0085647fu),
     replace<game::LtiRenderer_BeginSubmit, &reimpl::LtiRenderer_BeginSubmit>(0x0074ac2bu),
     replace<game::RenderShell_EndSubView, &reimpl::RenderShell_EndSubView>(0x0062eebfu),
+    replace<game::RenderShell_SetupViewports, &reimpl::RenderShell_SetupViewports>(0x0085ab47u),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;

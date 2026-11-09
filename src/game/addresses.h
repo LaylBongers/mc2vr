@@ -155,7 +155,7 @@
 #define MC2_TECH_VP_COUNT_OFF ((uintptr_t)0xe0u)
 
 // g_ViewContextTable (2026-10-06, E1 prep): holds a POINTER, not the array.
-// Sole plaintext xref is the initializer (FUN_00854da8, write 0x00854e6d):
+// Sole plaintext xref is the initializer (PgPrimitive_PublishFrame_body, write 0x00854e6d):
 //   g_ViewContextTable = 0x018c45e0 + DAT_00ff364c * 0xe00
 // — a double-buffered array of 32 records x 0x70 stride, buffer-selected by
 // the same frame index that swings g_PrimitiveBase/g_MaterialTable/etc.
@@ -200,7 +200,7 @@
 //   +0x10..0x3c 3x3 rotation, row-major — the RENDERED camera's axes are
 //                its ROWS: R = -row0, U = row1, F = row2. TRANSFER LAW for
 //                rewrites: E' = E*M renders axes' = M^-1 * axes (the
-//                builder's 4x4 inverse, FUN_008225c0, sits between the
+//                builder's 4x4 inverse, Matrix_Inverse4x4, sits between the
 //                entry and the view). The carrier therefore writes the
 //                closed form E' = S_r*L^-1*S_r*E (LEFT multiply, S_r =
 //                diag(measured row signs) = diag(-1,1,1); composite quat
@@ -230,13 +230,13 @@
 // (0x00859425/0x00859436). At this instruction EBX = the view render-ctx,
 // XMM2 = tanH, XMM0 = tanV, XMM1 = 1.0; everything after (projection at
 // ctx+0xb20, the four frustum-corner vectors at [esp+0x10/0x3c/0x48/0x54] fed
-// to FUN_00857140/FUN_0085a3f0) is derived from XMM2/XMM0 only — the single
+// to Frustum_Build/ViewContext_BuildCascadeFrusta) is derived from XMM2/XMM0 only — the single
 // cull-frustum input. mc2vr rewrites them (cull_frustum.cpp).
 #define MC2_VCCAM_TANS_READY ((uintptr_t)0x0085943bu)
 #define MC2_VCCAM_CTX_TANH_OFF ((uintptr_t)0x30u)
 #define MC2_VCCAM_CTX_TANV_OFF ((uintptr_t)0x34u)
 
-// The builder's view frustum struct at ctx+0x38 (FUN_00857140 output, 0x218 bytes):
+// The builder's view frustum struct at ctx+0x38 (Frustum_Build output, 0x218 bytes):
 // +0x00 near, +0x04 far, +0x0c 8 world-space corners (vec3): near-plane corners
 // 0..3 = (+H,+V) (+H,-V) (-H,-V) (-H,+V) at distance `near`, then the 4 far-plane
 // corners; +0x6c side-plane normals.
@@ -244,7 +244,7 @@
 #define MC2_FRUSTUM_CORNERS_OFF ((uintptr_t)0xcu)
 
 // Third-person camera clearance from the main view's near plane (raw-decoded
-// 2026-10-08, watch-found): FUN_007107d0 (callers FUN_00715ad0 / FUN_00713b60,
+// 2026-10-08, watch-found): CamCtrl_NearPlaneClearance (callers FUN_00715ad0 / FUN_00713b60,
 // camera controller) block-copies the MAIN slot's frustum struct
 // ([g_RenderShellPtr]+0xec8 = slot-1 ctx+0x38, `rep movsd` 0x86 dwords to
 // [esp+0x18]) and keeps running maxima of the near-plane diagonal |c2-c0| and
@@ -268,10 +268,10 @@
 
 // ---- g_CameraTable: union HMD injection site (2026-10-07, docs/ ----
 // ---- docs/camera.md "Decided architecture")           ----
-// g_CameraTable = 5 camera-entity slots x 0x620 (constructed by FUN_0070f020:
-// FUN_00401890(&g_CameraTable,0x620,5,ctor)); camera-object ptr at slot+0x1e0,
+// g_CameraTable = 5 camera-entity slots x 0x620 (constructed by CameraTable_StaticInit:
+// Array_ConstructElements(&g_CameraTable,0x620,5,ctor)); camera-object ptr at slot+0x1e0,
 // fov source at slot+0x614. Once per frame the CameraTable_FillFromPose loop
-// (FUN_0070f430, tail do-while at 0x0070f62c, from InGameShellState_FramePipeline)
+// (CameraTable_FillLoop, tail do-while at 0x0070f62c, from InGameShellState_FramePipeline)
 // fills every slot whose +0x1e0 camera object exists (~1.7/frame live) from the
 // camera entity's quat+pos. Each slot is a self-indexed 0x70-stride camera
 // entry array (active entry = slot + [slot+4]*0x70) with the MC2_VCCAM_ENTRY_*
@@ -310,7 +310,7 @@
 #define MC2_RS_RT_FRONTREF_OFF ((uintptr_t)0x3e98u)   // front copy (owns a ref; op-6 source)
 #define MC2_RS_RT_SCENEDEPTH_OFF ((uintptr_t)0x3ea0u) // own D24S8, or alias of +0x3e94
 #define MC2_RS_RT_FRONT_OFF ((uintptr_t)0x3ea4u)      // GetRenderTarget(0) (owns a ref)
-// Dx9State_SeedCachesFromDevice's auto-depth ref (released by FUN_0074d1b0).
+// Dx9State_SeedCachesFromDevice's auto-depth ref (released by RenderSystem_ReleaseDeviceResources).
 #define MC2_G_DX9_AUTODEPTH_REF ((uintptr_t)0x01175318u)
 // MidHook sites (instruction boundaries verified; no references into the
 // patched bytes). OnScreenResize entry: [esp+4] = W, EAX = H, ESI = this.
@@ -328,10 +328,10 @@
 #define MC2_FRAMETICK_ENDOFFRAME_SITE ((uintptr_t)0x00630f99u)
 
 // RenderSystem_CheckDevice device-restore tail: after OnScreenResize(cfg),
-// FUN_0074d410 (restore: re-seeds the Dx9 caches via
+// RenderSystem_RestoreDeviceResources (restore: re-seeds the Dx9 caches via
 // Dx9State_SeedCachesFromDevice and refills the render target table —
 // SetupRenderTargets is NOT re-run on Reset, live 2026-11-08) and
-// FUN_00753050. MidHook site = the 6-byte `mov edx,[0x01175288]` right after
+// Dx9State_ApplyDefaultRenderStates. MidHook site = the 6-byte `mov edx,[0x01175288]` right after
 // (no branch targets inside it).
 #define MC2_CHECKDEVICE_RESTORED ((uintptr_t)0x0074d087u)
 
@@ -390,9 +390,9 @@
 // g_Dt: float seconds, the governed simulation step (policy+0x1c copied by
 // GameTime_ComputeDt at 0x004c170a); 17 readers across the game.
 #define MC2_G_DT ((uintptr_t)0x01174a90u)
-// dt governor 0x004f5720 (unnamed) mode: (byte [0x00dfad75] ? dword [0x01750870] :
+// dt governor GameTime_GovernDt 0x004f5720 mode: (byte [0x00dfad75] ? dword [0x01750870] :
 // dword [0x0175086c]) — 0 = raw clamped [1e-4, 0.1] s; 1 = fixed substeps of
-// 1/rate (count via FUN_004f4db0); 2 = one step quantized to the smallest
+// 1/rate (count via GameTime_RecordDtSamples); 2 = one step quantized to the smallest
 // multiple of 1/rate STRICTLY greater than the input. rate = float
 // [0x01750874]. All runtime-set (.bss zero in the image).
 #define MC2_FRAMERATE_MODE_SEL ((uintptr_t)0x00dfad75u)
@@ -416,6 +416,39 @@
 // XMM5/XMM6 = the quad's centre, [esp+0x10] = the vertices (stride 0x30; vertex 0
 // y at +0x14 = centre y - half height), [ebp+8] = the depth (float).
 #define MC2_HUD_DRAWQUAD_EMIT ((uintptr_t)0x00617d91u)
+// Widget_CorrectForResolution (0x00627cc0, Ghidra plate) right after it loads
+// the view's W/H: XMM0 = W, XMM5 = H (floats). 7 bytes (`xorps xmm7,xmm7;
+// lea eax,[...]`); the flags of the `cmp` at 0x00627d01 are live for the `jz`
+// at 0x00627d32 (the MidHook stub preserves EFLAGS).
+#define MC2_WIDGET_LAYOUT_SIZE ((uintptr_t)0x00627d19u)
+// GuiMgr_OnScreenResize (0x00609ef0; entry is mutated code 0x00544338 that
+// loads EAX = [0x00dfb2f8] and jumps back into the plaintext body): the current
+// view's W just loaded into ECX (`cvtsi2ss xmm0,ecx; mov ecx,[ebp+0x60]`,
+// 7 bytes), and its H just loaded into EDI (`lahf; test ah,0x44; mov
+// [esp+0x14],edx`, 8 bytes; flags of the ucomiss live). Both feed the GUI
+// screen info [mgr+0x60]+4/+8 and the Lua NewScreenWidth/Height event.
+#define MC2_GUI_RESIZE_W ((uintptr_t)0x00609f1du)
+#define MC2_GUI_RESIZE_H ((uintptr_t)0x00609f2du)
+// The HUD layer's screen policy (vr/hud.hpp; docs/reverse_engineering/view_blocks.md).
+// The UI scale's source is our RenderShell_SetupViewports (reimpl); these are
+// the GUI loads that need the eye image's scale or the layer's W/H.
+// Hud_DrawWorldMarkers: the view's UI scale just loaded into XMM0 (`movzx ecx,
+// word [eax+0x2b92]`, 7 bytes). ECX = view index * 0xe80.
+#define MC2_WORLDMARKERS_SCALE ((uintptr_t)0x0060f659u)
+// Hud_DrawPinnedMarkers: the view's UI scale just loaded into XMM0 (`mov eax,
+// [ebp+0x10]; cmp dword [ebx+eax*4+0x18],0`, 8 bytes). EDI = view index * 0xe80.
+#define MC2_PINNEDMARKERS_SCALE ((uintptr_t)0x00611809u)
+// Hud_DrawOffscreenIndicators: the view's W (EAX) / H (ECX) just loaded from the
+// view context (`movss xmm2,[ebx]; addss xmm0,xmm6`, 8 bytes).
+#define MC2_OFFSCREEN_IND_WH ((uintptr_t)0x0061007du)
+// Hud_IndicatorNdcToPixels: H (XMM5) / W (XMM2) just converted (`movss
+// [esp+0x3c],xmm5`, 6 bytes), and later W (EDI) / H (EAX) just loaded (`mov esi,
+// [ebp+0x10]; movaps xmm6,xmm4`, 6 bytes; the x87 stack holds 2 values there).
+#define MC2_IND_NDC_WH_A ((uintptr_t)0x00612b91u)
+#define MC2_IND_NDC_WH_B ((uintptr_t)0x00612c7au)
+// GuiRenderer_BeginDisplay: the current view's x/y/W/H just copied into
+// renderer (EDI) +0x6c048..+0x6c054 (`cmp dword [ecx+0x2bc4],3`, 7 bytes).
+#define MC2_BEGINDISPLAY_VIEWRECT ((uintptr_t)0x004af05au)
 // LtiRenderer_PublishIfNewFrame: `call PgPrimitive_PublishFrame` and its successor.
 #define MC2_PUBLISH_CALL ((uintptr_t)0x0074add1u)
 #define MC2_PUBLISH_RETURN ((uintptr_t)0x0074add6u)

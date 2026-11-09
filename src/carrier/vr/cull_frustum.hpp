@@ -7,7 +7,7 @@
 // ctx+0x30/+0x34 — and EVERY frustum product of the build is derived from
 // those two registers afterwards: the projection matrix (ctx+0xb20 -> VP ->
 // g_ViewContextTable records), the four frustum-corner rays handed to the
-// cull/cascade builders (FUN_00857140, FUN_0085a3f0 -> ctx+0x954/0xa70/0xa80,
+// cull/cascade builders (Frustum_Build, ViewContext_BuildCascadeFrusta -> ctx+0x954/0xa70/0xa80,
 // +0x46c/0x8c0/0x900), and the ctx tans the per-object cull divides by. A
 // MidHook there replaces both extents with the HMD FOV union (+ margin) for
 // HMD-driven views, so the whole culling volume is the HMD frustum by
@@ -18,7 +18,7 @@
 // game's frustum. Never narrows: each extent is max(game, HMD).
 //
 // One consumer must NOT see the HMD frustum: the third-person camera sizes its
-// obstacle clearance from the main view's near-plane quad (FUN_007107d0 copies
+// obstacle clearance from the main view's near-plane quad (CamCtrl_NearPlaneClearance copies
 // the frustum struct and keeps the near diagonal/edge maxima). A second MidHook
 // right after that copy (0x007107F9) scales the copy's near corners back to the
 // game's own extents — without it the ~3x larger quad pulls the camera in.

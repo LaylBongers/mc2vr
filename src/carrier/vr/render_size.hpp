@@ -48,6 +48,11 @@ bool set_follow_hmd(const char *value);
 // (`ret` = the device method's return address). Applies the pending target.
 bool consume_forced_reset(void *ret);
 
+// The HMD is in use: host connected, session VISIBLE/FOCUSED (the runtime's
+// own debounced lifecycle signal; not the per-frame tracked flag). Also the
+// HUD layer's mode signal (vr/hud.cpp).
+bool hmd_in_use();
+
 // render_size is configured (WxH or hmd): hooks/render_size.cpp installs the
 // rewrite hooks only then.
 bool configured();

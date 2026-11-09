@@ -19,6 +19,19 @@ How to work with the Ghidra project safely. Locating/identifying code: [re_metho
 - `set-comment` replaces the whole comment of that type — read it first, resend the full text.
 - `parse-c-structure` on an existing name replaces the struct in place; dependents keep working.
 
+## Naming and provenance
+
+- **Names:** the C++ name `TypeName::Member` becomes `TypeName_Member`. Name by observed role, never by a guessed source class. Never encode confidence in the name: docs and `src/game/` cite Ghidra names, so upgrading one would mean a rename everywhere. If the role can't be described, the function stays `FUN_` with a plate note.
+- **Provenance tag** (Ghidra function tag, exactly one):
+  - `name:anchored`: the name comes from the binary itself, i.e. a `"Class::Method"` debug/profiling/assert string, a Lua binding-table entry, or an embedded symbol;
+  - `name:inferred`: the role was read from the decompile and is consistent with the function's callers and data;
+  - `name:guess`: plausible from context, not read closely.
+  - Add `verified-live` on top when a live run confirmed the behaviour.
+  - Tags are stored and versioned with the program and readable by scripts (`Function.getTags()`, ReVa `function-tags`). The decompiler doesn't show them, so the plate carries the basis too.
+- **Plate basis line:** `Name: <anchored|inferred|guess> <date> — <basis>`. For anchored names, quote the anchor string and its address. This replaces free-form markers like `[static sweep …, not deep-verified]`.
+- **Older names:** the 226 user-named functions from before 2026-11-09 are untagged, so "no tag" means "named before the convention", not "no basis". The only ones backfilled are those strictly provable: an exact `Class::Method` string match (`PgPrimitive_Reset`, `PgPrimitive_SubmitToGPU`). Tag the others when they're next touched.
+- Names are always `SourceType.USER_DEFINED`. Ghidra's own analysis can overwrite `ANALYSIS` names, and they look identical to its auto-names.
+
 ## Scripting (`run-script`)
 
 - Needs Ghidra started through PyGhidra (`pyghidra /opt/ghidra`). Script-object field names (e.g. `state`) cannot be reused as Python globals.

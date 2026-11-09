@@ -3,7 +3,7 @@
 Found statically on 2026-11-08; per-address facts are on the Ghidra plates (`GuiRenderer_vtbl` `0x00bad178`). The HUD-placement problem is in [../hud.md](../hud.md); the record pipeline is in [scene_record_build.md](scene_record_build.md).
 
 - **What draws the UI:** all UI (HUD, menus, pause screens) is Scaleform GFx 2.x Flash movies. They're driven from Lua (`mrxgui` module; `CreateFlashWidget`, `SetFlashSwfFile`, `SetFlashPauseMenu`, ...).
-- **The renderer:** GFx draws through the engine's own `GRenderer` implementation, `GuiRenderer`. Its base vtable `0x00baceb8` is a destructor plus 29 purecalls. There's one instance, `g_GuiRenderer` `0x01174a58`, created by `GuiRenderer_ctor` `0x004adfe0` via `FUN_0060e780`. Each movie is registered with it by `FUN_0060e680`.
+- **The renderer:** GFx draws through the engine's own `GRenderer` implementation, `GuiRenderer`. Its base vtable `0x00baceb8` is a destructor plus 29 purecalls. There's one instance, `g_GuiRenderer` `0x01174a58`, created by `GuiRenderer_ctor` `0x004adfe0` via `GuiRenderer_CreateInstance`. Each movie is registered with it by `GuiRenderer_RegisterMovie`.
 - **Slot names:** inferred from the GFx 2.x interface order and confirmed by stack-argument sizes, e.g. `BeginDisplay` `ret 0x18` (6 args), `DrawIndexedTriList` `0x14`, `DrawBitmaps` `0x1c`.
 - **UI = ordinary draw records.** The draw and mask slots emit `PgPrimitive` records through `PgPrimitiveScratchRecord_Submit`, inside `RenderShell_BuildSceneRecords`. There's no separate GUI draw path at the device level.
   - `DrawIndexedTriList` → `GuiRenderer_EmitTriListRecord` `0x004ae780`: type 8 (sort bucket 2), identity instance matrix, painter's-order depth key `1023/DAT_00d29e4c`. Gameplay HUD: ~39 records/frame (ret `0x004ae907`).
@@ -17,9 +17,9 @@ Found statically on 2026-11-08; per-address facts are on the Ghidra plates (`Gui
 ```
 RenderShell_BuildSceneRecords, per sub-view v:
   listener->vtbl[1](phase 2, v)  @0x0085acf6 (end-of-sub-view callback)
-    -> FUN_0062ee20               (via a VM-slot jmp near 0x0062e62e)
-         post-processing chain records (-> FUN_0074fae0)
-         then GUI: FUN_00609d80 -> mrxgui manager -> GFx core FUN_007cafd0 -> GuiRenderer_BeginDisplay ...
+    -> RenderShell_EndSubView     (0x0062ee20, via a VM-slot jmp near 0x0062e62e)
+         post-processing chain records (-> PgLtiBloom_EmitPasses)
+         then GUI: GuiMgr_DrawView -> GuiMgr_DrawViewWidgets -> FlashWidget_Draw -> GFxMovieRoot_Display -> GuiRenderer_BeginDisplay ...
 ```
 
 The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of the post chain.
@@ -43,7 +43,11 @@ The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of
 - **Where:** everything draws into the front (`+0x3e98`) with the scene depth bound, in the final composite segment after the post chain. The records after the GUI are more technique-73 2D draws (view contexts 12/13), not a fade.
 - **Frame end, in order:** the post chain; one draw back into main; the eye-adaptation luminance chain (64×64 → 1×1); the composite into the front (technique 78, whose stream binds the front and scene depth, then technique 79); the engine-2D HUD; the Scaleform block; a few more engine-2D draws.
 - **Emitters** (build-time `Submit` return addresses, per-address facts on the Ghidra plates): most engine-2D records come from the renderer's vtable slot 11 (`0x00853390`). The technique-75 records come from slot 10 (`0x00853650`), which takes one depth value per batch. Some come from slot 17 of the vtable at `0x00bacde4` (`0x004ad0a0`). All are reached through vtables only, so the game code above them is what tells HUD from world marker.
-- **Who draws what** (`FUN_0062ee20`'s order is on its Ghidra plate): after the post chain and composite, `Hud_DrawWorldMarkers` (`0x0060f610`) draws most world icons (vehicle entry, pickups, objectives; hiding its records removes them and nothing else). These are the depth-tested icons the in-game AA option breaks. The rest of the HUD follows in steps 3–6: `FUN_0061f430` draws the HUD icons and text, `FUN_00625620`'s records upload the shared pixel-to-clip `c2` that the Scaleform minimap also relies on, and the Scaleform block is the minimap content. Destroyable-crate and helicopter-pickup icons come from neither `Hud_DrawWorldMarkers` nor these; not mapped.
+- **Who draws what** (`RenderShell_EndSubView`'s order is on its Ghidra plate):
+  - After the post chain and composite, `Hud_DrawWorldMarkers` (`0x0060f610`) draws most world icons: vehicle entry, pickups, objectives. Hiding its records removes them and nothing else. These are the depth-tested icons the in-game AA option breaks.
+  - Steps 3–6 draw the rest of the HUD: `Hud_DrawOffscreenIndicators` (step 4), `Bink_DrawOverlays` (step 5), and `GuiMgr_DrawView` (step 6), which draws the game's widgets ([gui_widgets.md](gui_widgets.md)). Each widget draws through `Gui_DrawTexturedRect` / `TextWidget_DrawGlyphRuns`, or as a Scaleform movie, e.g. the minimap content.
+  - The text records upload the shared pixel-to-clip `c2` that the Scaleform minimap also relies on.
+  - Not mapped: destroyable-crate and helicopter-pickup icons, which come from neither `Hud_DrawWorldMarkers` nor the known widgets.
 - **Identified by skipping records** (a one-off `debug_gui_skip` switch, since removed; in git history): the Scaleform block is the minimap content; the engine-2D view-type-8 records include the crosshair, the ammo indicator and the minimap outline. All engine-2D records share the same render states (depth test on, `LESSEQUAL`, blended), so render states can't separate HUD from world markers.
 
 ## Consequences for changing HUD rendering
@@ -55,4 +59,4 @@ The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of
 
 `debug_gui_census=on` logs the draw-time view of the HUD segment for these (`gui:` lines): record fields, build-time emitters, render commands, shader-constant uploads, draws.
 
-- Where the destroyable-crate and helicopter-pickup icons are drawn (they land in the HUD layer, so in steps 3–6), and which step draws which HUD element.
+- Where the destroyable-crate and helicopter-pickup icons are drawn: they land in the HUD layer, so in steps 3–6.

@@ -26,6 +26,7 @@ add_library(mc2vr_carrier SHARED
     reimpl/render/begin_submit.cpp
     reimpl/render/end_sub_view.cpp
     reimpl/render/render_cmd.cpp
+    reimpl/render/setup_viewports.cpp
     reimpl/render/submit_to_gpu.cpp
     # vr/: the VR implementation, plain C++.
     vr/adaptation.cpp

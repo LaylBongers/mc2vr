@@ -12,6 +12,7 @@
 #include "hooks/site.hpp"
 #include "ipc.hpp"
 #include "log.hpp"
+#include "vr/hud.hpp"
 #include "vr/pacing.hpp"
 
 namespace mc2vr::hooks {
@@ -174,6 +175,7 @@ void post_update_midhook(safetyhook::Context &)
     // next pass-1 pose sample so events apply to THIS frame's camera).
     // No-op when disconnected. Pose sampling itself happens at pass-1 start.
     ipc::drain_events();
+    hud::on_update_tick();  // HUD layout mode switch (update thread)
 }
 
 } // namespace

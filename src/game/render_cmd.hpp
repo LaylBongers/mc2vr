@@ -130,7 +130,7 @@ inline constexpr Function<void(uint32_t a1, uint32_t a2, uint32_t a3)> RenderCmd
 inline constexpr Function<void(uint32_t a1, uint32_t a2, uint32_t a3)> RenderCmd_EndSurfacePass{
     "RenderCmd_EndSurfacePass", 0x00756590u, {ECX, EDX, STK}};
 inline constexpr Function<void()> RenderCmd_BindTextureAndSamplers{"RenderCmd_BindTextureAndSamplers", 0x00756390u};
-inline constexpr Function<void(uint32_t a1)> FUN_0074af30{"FUN_0074af30", 0x0074af30u, {EAX}};
+inline constexpr Function<void(uint32_t a1)> Dx9_ClearTexture{"Dx9_ClearTexture", 0x0074af30u, {EAX}};
 // Op 23: real SecuROM VM bytecode behind the thunk (callable, not hookable).
 inline constexpr Function<void(uint32_t a1, uint32_t a1_minus_1, uint32_t obj_10, uint32_t a2)> thunk_FUN_0256af90{
     "thunk_FUN_0256af90", 0x00482b00u, {EDI, ECX, EAX, STK}};

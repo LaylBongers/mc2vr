@@ -5,7 +5,7 @@ The `viewContextData`/VP production chain, mapped end-to-end — **all PLAINTEXT
 ```
 camera entity pose (quat + pos, heap record; values originate in game logic/VM)
   -> CameraTable_FillFromPose (0x0070ae50, plaintext; called from CameraTable_FillLoop
-     FUN_0070f430's 5-slot x 0x620 loop):
+     CameraTable_FillLoop's 5-slot x 0x620 loop):
        CameraEntity_GetPoseRecord (0x0042ee50) -> D3DXQuaternionNormalize
        -> D3DXMatrixRotationQuaternion -> position + w=1.0
        -> Matrix_Copy3x4 -> g_CameraTable entry (0x014A2EE0, STATIC, ~1.7 fills/frame)
@@ -24,7 +24,7 @@ camera entity pose (quat + pos, heap record; values originate in game logic/VM)
        camera object = *(ctx+0x28)          (null -> identity defaults)
        near/far/fov via self-indexed obj[obj[0]*0x1c + 0x14/0x15/0x16/0x1d]
        entry rot+pos copied VERBATIM into ctx+0xaa0 (Matrix_Copy3x4 @0x008592a1)
-       -> INVERTED into the view slot (FUN_008225c0 = Matrix_Inverse4x4,
+       -> INVERTED into the view slot (Matrix_Inverse4x4 = Matrix_Inverse4x4,
           call @0x008593db, result copied back @0x008593e4)
        projection built in plaintext (LH: clip.w z-coeff +1.0 @ctx+0xb4c; m00 =
          -1/xscale from the fov tan table DAT_00cf1900, aspect from g_RenderShell
@@ -62,4 +62,4 @@ These could NOT be settled by static analysis (sign-blind probe evidence, runtim
 
 ## Where the fill lives
 
-`FUN_00466da0` (~0x004671xx–0x004674xx, caller `FUN_0085ac50`); first located with `debug_watch=addr:` on the record address ([re_methodology.md](re_methodology.md)).
+`Scene_EmitViewPrimitives` (~0x004671xx–0x004674xx, caller `RenderShell_BuildSceneRecords`); first located with `debug_watch=addr:` on the record address ([re_methodology.md](re_methodology.md)).

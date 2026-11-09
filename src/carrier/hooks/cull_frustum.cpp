@@ -26,7 +26,7 @@ void tans_midhook(safetyhook::Context &ctx)
     }
 }
 
-// Third-person camera clearance (FUN_007107d0, camera thread): runs right after
+// Third-person camera clearance (CamCtrl_NearPlaneClearance, camera thread): runs right after
 // the camera copied the main view's frustum struct onto its stack, at
 // ESP + MC2_CAMCLEAR_COPY_ESP_OFF.
 void camclear_midhook(safetyhook::Context &ctx)

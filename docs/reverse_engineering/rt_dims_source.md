@@ -26,32 +26,32 @@ Where the engine's sizes come from and who reads them. The output surfaces thems
 Height readers mirror the width readers.
 
 - Chain sizing / viewports: the field-derived sets above, `RenderShell_Begin/EndHalfResPass`, `RenderShell_DrawTexturedQuad`, `RenderShell_SetupViewports` (also H/480 UI scale), `ViewContext_BuildCameraConstants` (viewport normalization).
-- Screen-space 2D: UI ortho projection (`FUN_004aefd0`, pillarbox mode uses the aspect scales), Bink movie rects (`FUN_00709620`; `FUN_00709900` rescales them by new/old in OnScreenResize), UI shell half-dims (`*[0x00ed3574]+0x74/+0x78`).
-- Camera aspect: `Fov_TanIndexHelper`, camera init `FUN_0069fdc0` (cached into cam+0x4f0), projection builder `FUN_005efd30` — all via the aspect scales.
+- Screen-space 2D: UI ortho projection (`GuiRenderer_BeginDisplay`, pillarbox mode uses the aspect scales), Bink movie rects (`Bink_UpdateOverlayRect`; `Bink_RescaleOverlayRects` rescales them by new/old in OnScreenResize), UI shell half-dims (`*[0x00ed3574]+0x74/+0x78`).
+- Camera aspect: `Fov_TanIndexHelper`, camera init `Camera_InitAspect` (cached into cam+0x4f0), projection builder `Camera_BuildProjection` — all via the aspect scales.
 
 ## Aspect is snapped, not derived
 
-`OnScreenResize` (and the mutated SetupRenderTargets stretch, at boot) sets the 16:9 flag `+0x2bc4` and the aspect scales `+0x2bc8/+0x2bcc` to the NEARER of 4:3 / 16:9, never the true ratio (0.9 → 4:3). Other writers: `FUN_005b0100` (script/cvar binding), `FUN_005b2c70` (aspect-mode setter, modes 0–3). The flag only selects the split-screen layout in `RenderShell_SetupViewports`; single view ignores it.
+`OnScreenResize` (and the mutated SetupRenderTargets stretch, at boot) sets the 16:9 flag `+0x2bc4` and the aspect scales `+0x2bc8/+0x2bcc` to the NEARER of 4:3 / 16:9, never the true ratio (0.9 → 4:3). Other writers: `LuaGraphics_SetScreenRatio` (script/cvar binding), `RenderShell_SetAspectMode` (aspect-mode setter, modes 0–3). The flag only selects the split-screen layout in `RenderShell_SetupViewports`; single view ignores it.
 
 ## `LtiRenderer_OnScreenResize` (`0x007492f0`)
 
 - Convention: W on the stack (callee-popped, `ret 4`), H in EAX, `this` (= g_RenderShell) in ESI.
-- It computes the new/old ratios before storing the fields; they go to `FUN_00709900` in XMM0/XMM1.
+- It computes the new/old ratios before storing the fields; they go to `Bink_RescaleOverlayRects` in XMM0/XMM1.
 - Callees:
   - `RenderShell_SetupViewports` (AX = view mode 1/2, ECX = this);
-  - `FUN_00854da0` ×2: `PgPrimitive_PublishFrame` — despite its `jmp [slot]`, a plaintext call gate (input: ZF from `cmp [0x017c5518],0`), [scene_record_build.md](scene_record_build.md). This was the stated reason the function is not reimplemented; that reason no longer holds;
-  - `FUN_00609ef0` (1 stack arg, callee-popped);
-  - `FUN_00709900`.
+  - `PgPrimitive_PublishFrame` ×2: `PgPrimitive_PublishFrame` — despite its `jmp [slot]`, a plaintext call gate (input: ZF from `cmp [0x017c5518],0`), [scene_record_build.md](scene_record_build.md). This was the stated reason the function is not reimplemented; that reason no longer holds;
+  - `GuiMgr_OnScreenResize` (1 stack arg, callee-popped);
+  - `Bink_RescaleOverlayRects`.
 - Epilogue at `0x007494d5` (single branch target).
 
 ## Boot and reset order
 
-- Boot: `SetupRenderTargets` is entered first. Its leading `FUN_00749270` creates the device (→ `RenderSystem_ApplySettings` → `RenderSystem_CreateDevice` → `OnScreenResize(cfg)` → `Dx9State_SeedCachesFromDevice`). Setup then copies cfg → fields and builds the chain.
+- Boot: `SetupRenderTargets` is entered first. Its leading `PgLtiRendererPc_InitRenderSystem` creates the device (→ `RenderSystem_ApplySettings` → `RenderSystem_CreateDevice` → `OnScreenResize(cfg)` → `Dx9State_SeedCachesFromDevice`). Setup then copies cfg → fields and builds the chain.
 - Reset (device lost, menu resolution change, or carrier-forced):
   1. `RenderSystem_CheckDevice` → `RenderSystem_ReleaseDeviceResources` → Reset;
   2. `OnScreenResize(cfg)`;
   3. `RenderSystem_RestoreDeviceResources` (mutated) — re-seeds the Dx9 caches, re-enters the setup tail, re-creates about 47 DEFAULT surfaces;
-  4. `FUN_00753050` (default render states).
+  4. `Dx9State_ApplyDefaultRenderStates` (default render states).
 
   `SetupRenderTargets` itself is not re-entered.
 - `RenderSystem_CheckDevice` runs every frame (render task, `0x0046a290`) and calls `TestCooperativeLevel`. `D3DERR_DEVICENOTRESET` takes the restore path.

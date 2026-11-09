@@ -254,8 +254,6 @@ void after_setup()
     apply_aspect("SetupRenderTargets");
 }
 
-namespace {
-
 // HMD in use = host connected and the session VISIBLE/FOCUSED — the OpenXR
 // lifecycle signal (the runtime already debounces it: proximity sensor /
 // standby). Deliberately NOT the per-frame tracked flag: a brief tracking
@@ -270,6 +268,8 @@ bool hmd_in_use()
     return st.sessionState == MC2VR_XR_SESSION_VISIBLE ||
            st.sessionState == MC2VR_XR_SESSION_FOCUSED;
 }
+
+namespace {
 
 void evaluate_follow()
 {

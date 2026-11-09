@@ -57,7 +57,7 @@
 <rect x="358" y="630" width="664" height="94" rx="8" fill="#eaf4ea" stroke="#5b8a5b" stroke-width="1.5"/>
 <text x="372" y="650" text-anchor="start" font-size="13" font-weight="bold" fill="#1c2433">ViewContext_BuildCameraConstants   0x008591ac   (plaintext)</text>
 <text x="372" y="668" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">reads camera object: rotation rows · position · near/far · fovCos (+0x58)</text>
-<text x="372" y="684" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">4×4 matrix inverse FUN_008225c0 (call 0x008593db) → view matrix  ← why E·M renders M⁻¹</text>
+<text x="372" y="684" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">4×4 matrix inverse Matrix_Inverse4x4 (call 0x008593db) → view matrix  ← why E·M renders M⁻¹</text>
 <text x="372" y="700" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">builds the projection from the runtime tan-table (LH: clip.w = +z)</text>
 <text x="372" y="716" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">D3DXMatrixMultiply(view, proj) = VP → Matrix_Copy3x4 → scratch 0x017D04E0</text>
 <polyline points="690.0,724 690.0,744" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
@@ -129,7 +129,7 @@
 <rect x="1076" y="178" width="304" height="64" rx="8" fill="#eaf4ea" stroke="#5b8a5b" stroke-width="1.5"/>
 <text x="1090" y="198" text-anchor="start" font-size="13" font-weight="bold" fill="#1c2433">InGameShellState_FramePipeline</text>
 <text x="1090" y="216" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">0x004c96f0 · ~114 subsystem updates</text>
-<text x="1090" y="232" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">→ CameraTable_FillLoop FUN_0070f430</text>
+<text x="1090" y="232" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">→ CameraTable_FillLoop CameraTable_FillLoop</text>
 <polyline points="1076,210 1022,210" fill="none" stroke="#44506a" stroke-width="2" marker-end="url(#a)"/>
 <rect x="1076" y="378" width="304" height="50" rx="8" fill="#eaf4ea" stroke="#2f9e44" stroke-width="2"/>
 <text x="1090" y="398" text-anchor="start" font-size="13" font-weight="bold" fill="#1c2433">Culling · LOD · fov readers</text>

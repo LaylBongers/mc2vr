@@ -8,7 +8,7 @@
 //
 // For phase 2 only, in order: the post chain and composite
 // (PostFx_ChainAndComposite), the world markers (Hud_DrawWorldMarkers),
-// renderer slot 14, FUN_0060fe20, FUN_00709890, the GUI (FUN_00609d80). All
+// renderer slot 14, Hud_DrawOffscreenIndicators, Bink_DrawOverlays, the GUI (GuiMgr_DrawView). All
 // emit ordinary draw records. Calls: game/render_shell.hpp, game/hud.hpp.
 //
 // VR behavior inside it, as direct calls:
