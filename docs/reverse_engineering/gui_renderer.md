@@ -33,6 +33,19 @@ The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of
   - **viewContextIdx:** the front-end uses 3, gameplay 12, pause 13. Gameplay's 12 is the world-camera record, so the per-eye camera upload ([view_rewrite.md](../view_rewrite.md)) also fires for HUD records. The GUI transform itself doesn't come from it (next point).
 - **Transform:** every GUI record has a command stream and none has `vsConstData`, so the GUI matrix/color transform reaches the GPU through the record's command stream (RenderCmd ops). That fits the per-draw state routine `0x024F0C70` writing the command-stream slots.
 
+## Draw time (live, 2026-11-09, `debug_gui_census`)
+
+- **Scaleform is only part of the HUD.** In gameplay the ~44 GUI records were almost all the minimap:
+  - setup: op 8 (SetScreenConstants) with the minimap rect (1369, 1568, 466, 466) at 2016×2240, then render-state ops and a stencil Clear (op 15) for a stencil mask;
+  - draws: technique 127, ~40 records sharing one rotated 2D matrix.
+- **The GUI transform:** each GUI draw uploads a 2×4 affine matrix to VS c0–c1 through op 2 (SetVSConstants) and a color to PS c0 through op 3 (SetPSConstants). Its translation (~16–18) is not in clip units, so the GUI shader probably applies a further screen mapping; not checked.
+- **The engine's own 2D path:** the rest of the HUD (by elimination) draws as technique-73 records with no command stream, right before and right after the GUI block. They upload VS c2 = (2/W, −2/H, −1, 1), a pixel-to-clip mapping. Some depth-test against the scene depth with blending (world markers, presumably); some write depth.
+- **Where:** everything draws into the front (`+0x3e98`) with the scene depth bound, in the final composite segment after the post chain. The records after the GUI are more technique-73 2D draws (view contexts 12/13), not a fade.
+- **Frame end, in order:** the post chain; one draw back into main; the eye-adaptation luminance chain (64×64 → 1×1); the composite into the front (technique 78, whose stream binds the front and scene depth, then technique 79); the engine-2D HUD; the Scaleform block; a few more engine-2D draws.
+- **Emitters** (build-time `Submit` return addresses, per-address facts on the Ghidra plates): most engine-2D records come from the renderer's vtable slot 11 (`0x00853390`). The technique-75 records come from slot 10 (`0x00853650`), which takes one depth value per batch. Some come from slot 17 of the vtable at `0x00bacde4` (`0x004ad0a0`). All are reached through vtables only, so the game code above them is what tells HUD from world marker.
+- **Who draws what** (`FUN_0062ee20`'s order is on its Ghidra plate): after the post chain and composite, `Hud_DrawWorldMarkers` (`0x0060f610`) draws most world icons (vehicle entry, pickups, objectives; hiding its records removes them and nothing else). These are the depth-tested icons the in-game AA option breaks. The rest of the HUD follows in steps 3–6: `FUN_0061f430` draws the HUD icons and text, `FUN_00625620`'s records upload the shared pixel-to-clip `c2` that the Scaleform minimap also relies on, and the Scaleform block is the minimap content. Destroyable-crate and helicopter-pickup icons come from neither `Hud_DrawWorldMarkers` nor these; not mapped.
+- **Identified by skipping records** (`debug_gui_skip`): the Scaleform block is the minimap content; the engine-2D view-type-8 records include the crosshair, the ammo indicator and the minimap outline. All engine-2D records share the same render states (depth test on, `LESSEQUAL`, blended), so render states can't separate HUD from world markers.
+
 ## Consequences for changing HUD rendering
 
 - **Identification:** GUI records are identifiable at build time, exactly and cheaply: the `Submit` caller is in `0x004ae2d0`–`0x004b051b`, and the record index is the write count at `Submit` entry. They're also contiguous at draw time. That makes a record-level split possible: during the record walk, switch to a carrier-owned HUD render target at the first GUI record, draw the GUI once (not per eye), and composite it as its own layer. Per-eye placement then becomes a compositor problem instead of a constant rewrite.
@@ -42,6 +55,6 @@ The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of
 
 `debug_gui_census=on` logs the draw-time view of the GUI records for these (`gui:` lines).
 
-- What the 3–6 records that draw after the GUI in gameplay are.
-- The exact RenderCmd op/register that carries the GUI matrix in the command stream.
-- Which render target the GUI draws into, and whether anything (post, AA resolve) runs after it.
+- The full HUD segment before the GUI block (the first census logged only 8 records of it), and where the 2D path's VS c2 is first set.
+- Whether the GUI shader (technique 127) also goes through c2.
+- Where the destroyable-crate and helicopter-pickup icons are drawn, and which of steps 3–6 draws which HUD element.

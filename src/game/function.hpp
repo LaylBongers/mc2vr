@@ -29,9 +29,10 @@
 
 namespace mc2vr::game {
 
-constexpr size_t kMaxParams = 8;
+constexpr size_t kMaxParams = 12;
 
-enum class Loc : uint8_t { Stack, EAX, ECX, EDX, EBX, ESI, EDI, XMM0, AL };  // AL: EAX low byte only
+// AL: EAX low byte only. XMMn: the register's low lane (a float).
+enum class Loc : uint8_t { Stack, EAX, ECX, EDX, EBX, ESI, EDI, XMM0, AL, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7 };
 
 struct Param {
     Loc loc = Loc::Stack;
@@ -48,6 +49,13 @@ inline constexpr Param ESI{Loc::ESI};
 inline constexpr Param EDI{Loc::EDI};
 inline constexpr Param XMM0{Loc::XMM0};
 inline constexpr Param AL{Loc::AL};  // the callee reads only AL; the rest of EAX is not an input
+inline constexpr Param XMM1{Loc::XMM1};
+inline constexpr Param XMM2{Loc::XMM2};
+inline constexpr Param XMM3{Loc::XMM3};
+inline constexpr Param XMM4{Loc::XMM4};
+inline constexpr Param XMM5{Loc::XMM5};
+inline constexpr Param XMM6{Loc::XMM6};
+inline constexpr Param XMM7{Loc::XMM7};
 
 // Bytes of stack arguments the original pops itself (`ret N`); 0 = the caller pops.
 struct Pops {
@@ -79,8 +87,9 @@ struct CallFrame {
     uint32_t xmm0;                         // +28 (low lane)
     const uint32_t *stack;                 // +32 (first = [esp+4] at the callee)
     uint32_t nstack;                       // +36
+    uint32_t xmm1_7[7];                    // +40 .. +64 (low lanes of XMM1..XMM7)
 };
-static_assert(sizeof(CallFrame) == 40);
+static_assert(sizeof(CallFrame) == 68);
 
 extern "C" uint32_t mc2vr_game_call(const CallFrame *frame);  // the asm shim
 
@@ -104,6 +113,10 @@ extern "C" uint32_t mc2vr_game_call(const CallFrame *frame);  // the asm shim
         case Loc::EDI: f.edi = v; break;
         case Loc::XMM0: f.xmm0 = v; break;
         case Loc::AL: f.eax = v & 0xff; break;
+        case Loc::XMM1: case Loc::XMM2: case Loc::XMM3: case Loc::XMM4:
+        case Loc::XMM5: case Loc::XMM6: case Loc::XMM7:
+            f.xmm1_7[(int)fn.params[i].loc - (int)Loc::XMM1] = v;
+            break;
         }
     }
     f.stack = stack;

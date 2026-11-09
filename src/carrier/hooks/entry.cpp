@@ -14,9 +14,9 @@
 // Reached from a stub with the EntryInfo pushed:
 //   [ebp+4] info, [ebp+8] the game's return address, [ebp+12] stack arguments.
 // Builds the EntryFrame below EBP, calls info->adapter(frame), then returns
-// like the original: EAX = result, every other general register as the
-// caller left it, info->pops bytes of arguments popped (the return address
-// is moved up to where `ret N` would leave ESP).
+// like the original: EAX = result, every other general register and
+// XMM1..XMM7 as the caller left them, info->pops bytes of arguments popped
+// (the return address is moved up to where `ret N` would leave ESP).
 asm(R"(
     .text
     .globl _mc2vr_game_entry
@@ -25,31 +25,45 @@ asm(R"(
 _mc2vr_game_entry:
     push ebp
     mov ebp, esp
-    sub esp, 32
-    mov [ebp - 32], eax
-    mov [ebp - 28], ecx
-    mov [ebp - 24], edx
-    mov [ebp - 20], ebx
-    mov [ebp - 16], esi
-    mov [ebp - 12], edi
-    movd [ebp - 8], xmm0
+    sub esp, 160                    /* EntryFrame at [ebp - 160] */
+    mov [ebp - 160], eax
+    mov [ebp - 156], ecx
+    mov [ebp - 152], edx
+    mov [ebp - 148], ebx
+    mov [ebp - 144], esi
+    mov [ebp - 140], edi
     lea eax, [ebp + 12]
-    mov [ebp - 4], eax
-    lea eax, [ebp - 32]
+    mov [ebp - 136], eax            /* stack arguments */
+    movdqu [ebp - 128], xmm0
+    movdqu [ebp - 112], xmm1
+    movdqu [ebp - 96], xmm2
+    movdqu [ebp - 80], xmm3
+    movdqu [ebp - 64], xmm4
+    movdqu [ebp - 48], xmm5
+    movdqu [ebp - 32], xmm6
+    movdqu [ebp - 16], xmm7
+    lea eax, [ebp - 160]
     push eax
     mov eax, [ebp + 4]
     call dword ptr [eax]            /* adapter(frame), cdecl */
+    movdqu xmm1, [ebp - 112]
+    movdqu xmm2, [ebp - 96]
+    movdqu xmm3, [ebp - 80]
+    movdqu xmm4, [ebp - 64]
+    movdqu xmm5, [ebp - 48]
+    movdqu xmm6, [ebp - 32]
+    movdqu xmm7, [ebp - 16]
     mov ecx, [ebp + 4]
     movzx ecx, word ptr [ecx + 4]   /* pops */
     lea ecx, [ebp + ecx + 8]        /* where the return address goes */
     mov edx, [ebp + 8]
     mov [ecx], edx
     mov [ebp + 4], ecx              /* the final ESP, read after EBP is restored */
-    mov ecx, [ebp - 28]
-    mov edx, [ebp - 24]
-    mov ebx, [ebp - 20]
-    mov esi, [ebp - 16]
-    mov edi, [ebp - 12]
+    mov ecx, [ebp - 156]
+    mov edx, [ebp - 152]
+    mov ebx, [ebp - 148]
+    mov esi, [ebp - 144]
+    mov edi, [ebp - 140]
     mov esp, ebp
     pop ebp
     mov esp, [esp]

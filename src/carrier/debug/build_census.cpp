@@ -23,6 +23,7 @@ namespace mc2vr::build_census {
 namespace {
 
 bool g_enabled = false;
+bool g_installed = false;  // the hooks are in (its publish tap only counts then)
 
 int64_t qpc_now()
 {
@@ -155,6 +156,38 @@ uint32_t g_gui_bits[0x2000 / 32];  // GUI record indices of the buffer being bui
 // (the next build clears g_gui_bits while that list is still drawing).
 bool g_gui_marks_wanted = false;  // debug_gui_census
 uint32_t g_pub_gui_bits[0x2000 / 32];
+// Each record's emitter: the return address of its PgPrimitiveScratchRecord_Submit
+// call (record index = the write count at entry), and the published snapshot.
+uint32_t g_emitters[0x2000];
+uint32_t g_pub_emitters[0x2000];
+// Further up (heuristic): the next stack dwords above the return address
+// that point just after a call instruction in .text — direct (E8) or
+// indirect (FF /2: register, [reg], [reg+disp8/32], [abs32]).
+constexpr int kAbove = 3;
+uint32_t g_emitters2[0x2000][kAbove];
+uint32_t g_pub_emitters2[0x2000][kAbove];
+
+bool is_return_address(uint32_t v)
+{
+    if (v < 0x00401006u || v > 0x00b04fffu) return false;
+    const volatile uint8_t *p = reinterpret_cast<const volatile uint8_t *>(v);
+    if (p[-5] == 0xE8) return true;                                       // call rel32
+    if (p[-2] == 0xFF && (p[-1] & 0xF8) == 0xD0) return true;             // call reg
+    if (p[-2] == 0xFF && (p[-1] & 0xF8) == 0x10 && p[-1] != 0x14 && p[-1] != 0x15) return true;  // call [reg]
+    if (p[-3] == 0xFF && (p[-2] & 0xF8) == 0x50 && p[-2] != 0x54) return true;  // call [reg+disp8]
+    if (p[-6] == 0xFF && ((p[-5] & 0xF8) == 0x90 || p[-5] == 0x15)) return true;  // [reg+disp32] / [abs32]
+    return false;
+}
+
+void callers_above(uint32_t ret, uint32_t esp, uint32_t out[kAbove])
+{
+    int n = 0;
+    for (uint32_t a = esp + 4, end = esp + 4 + 96 * 4; a < end && n < kAbove; a += 4) {
+        const uint32_t v = *(volatile const uint32_t *)a;
+        if (v != ret && is_return_address(v)) out[n++] = v;
+    }
+    for (; n < kAbove; n++) out[n] = 0;
+}
 const void *volatile g_pub_base = nullptr;
 
 constexpr int BD_SEEN_MAX = 6;  // one-shot BeginDisplay caller log
@@ -328,7 +361,7 @@ void h_pub_in(safetyhook::Context &)
     g_pub_t0 = now;
 }
 
-void h_pub_out(safetyhook::Context &)
+void pub_out()
 {
     const int64_t now = qpc_now();
     event(EV_PUB_OUT, now);
@@ -345,6 +378,8 @@ void h_pub_out(safetyhook::Context &)
     if (g_gui_marks_wanted) {
         g_pub_base = nullptr;
         memcpy(g_pub_gui_bits, g_gui_bits, sizeof(g_pub_gui_bits));
+        memcpy(g_pub_emitters, g_emitters, sizeof(g_pub_emitters));
+        memcpy(g_pub_emitters2, g_emitters2, sizeof(g_pub_emitters2));
         g_pub_base = game::g_PrimitiveBase::get();
     }
 }
@@ -359,6 +394,13 @@ void h_submit(safetyhook::Context &ctx)
         InterlockedIncrement(&g_submit_in_build);
     }
     InterlockedIncrement(&g_submit_n);
+    if (g_gui_marks_wanted) {
+        const uint32_t slot = game::g_PrimWriteCount::get();
+        if (slot < 0x2000) {
+            g_emitters[slot] = ret;
+            callers_above(ret, (uint32_t)ctx.esp, g_emitters2[slot]);
+        }
+    }
     if (is_gui_ret(ret)) {
         InterlockedIncrement(&g_gui_records);
         const uint32_t index = game::g_PrimWriteCount::get();  // this record's slot
@@ -416,7 +458,6 @@ const Site SITES[] = {
     {"BuildSceneRecords entry", MC2_BUILDSCENE_ENTRY, h_build_in},
     {"BuildSceneRecords loop done", MC2_BUILDSCENE_LOOP_DONE, h_build_out},
     {"PublishFrame call", MC2_PUBLISH_CALL, h_pub_in},
-    {"PublishFrame return", MC2_PUBLISH_RETURN, h_pub_out},
     {"PgPrimitiveScratchRecord_Submit", MC2_PRIM_SCRATCH_SUBMIT, h_submit},
     {"GUI GRenderer::BeginDisplay", MC2_GUI_BEGIN_DISPLAY, h_gui_begin_display},
 };
@@ -476,9 +517,28 @@ bool set_enabled(const char *value)
     return true;
 }
 
+void on_publish_return()
+{
+    if (g_installed) {
+        pub_out();
+    }
+}
+
 void require_gui_marks()
 {
     g_gui_marks_wanted = true;
+}
+
+uint32_t record_emitter(const void *base, uint32_t index, uint32_t above[3])
+{
+    if (above) above[0] = above[1] = above[2] = 0;
+    if (!g_gui_marks_wanted || base == nullptr || base != g_pub_base || index >= 0x2000) {
+        return 0;
+    }
+    if (above) {
+        for (int i = 0; i < kAbove; i++) above[i] = g_pub_emitters2[index][i];
+    }
+    return g_pub_emitters[index];
 }
 
 int is_gui_record(const void *base, uint32_t index)
@@ -506,7 +566,9 @@ void install()
         ok++;
     }
     g_window_frame0 = hooks::frame_count();
-    MC2VR_LOG("build: %u/%u census hooks installed", ok, (unsigned)SITE_COUNT);
+    g_installed = true;
+    MC2VR_LOG("build: %u/%u census hooks installed (+ the PublishFrame-return tap, hooks/hud.cpp)", ok,
+              (unsigned)SITE_COUNT);
 }
 
 void report_window()

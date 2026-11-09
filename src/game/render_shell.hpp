@@ -16,6 +16,25 @@ namespace mc2vr::game {
 struct RenderShell;  // layout: Ghidra /RenderPath (not needed here yet)
 
 using g_RenderShellPtr = Global<RenderShell *, 0x00dfb2fcu>;  // -> g_RenderShell 0x017ceaf0
+using g_RenderShellPtrB = Global<uint8_t *, 0x00dfb2f8u>;      // the second render-shell pointer (Ghidra plate)
+constexpr uintptr_t kRenderShellViewStride = 0xe80;           // per-sub-view block in g_RenderShellPtrB's object
+constexpr uintptr_t kRenderShellViewPostFlag = 0x3c;          // u8: run the post chain for this sub-view
+using g_GlobalCamCtx = Global<uint8_t *, 0x00e79dfcu>;        // +0x108 u8 enabled, +0x104 the post-chain input (ESI)
+
+// The engine's device bind caches (Dx9_SetRenderTarget / Dx9_SetDepthStencilSurface
+// skip identical binds against them).
+using g_CurRenderTarget = GlobalArray<IDirect3DSurface9 *, 0x01175308u, 4>;
+using g_DepthStencilCache = Global<IDirect3DSurface9 *, 0x011752b4u>;
+
+// End of a sub-view's build (phase 2): post chain + composite, world markers,
+// the HUD and the GUI. Reimplemented (reimpl/render/end_sub_view.hpp); this
+// declares its entry.
+inline constexpr Function<void(uint32_t phase, uint32_t view)> RenderShell_EndSubView{"RenderShell_EndSubView",
+                                                                                      0x0062ee20u, {EAX, EDI}};
+inline constexpr Function<void(uint8_t *shell, uint8_t *cam_input)> PostFx_ChainAndComposite{
+    "PostFx_ChainAndComposite", 0x00468f30u, {ECX, ESI}};
+// LtiRenderer vtable slot 14 (+0x38), called between the world markers and the HUD; role unknown.
+inline constexpr Method<void(uint8_t *shell)> LtiRenderer_Slot14{"LtiRenderer vtbl slot 14", 0x38, {ECX}};
 using g_CurViewType = Global<uint8_t, 0x01169792u>;
 using g_HalfResPassAllowed = Global<uint8_t, 0x01175616u>;
 using g_HalfResPassActive = Global<uint8_t, 0x01175617u>;

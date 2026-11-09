@@ -10,7 +10,9 @@
 #include "vr/cull_frustum.hpp"
 #include "game/addresses.h"
 #include "hooks/site.hpp"
+#include "vr/hud.hpp"
 #include "vr/msaa.hpp"
+#include "vr/world_markers.hpp"
 #include "vr/eye_replay.hpp"
 #include "vr/render_outputs.hpp"
 #include "vr/render_size.hpp"
@@ -295,6 +297,8 @@ void report_window()
     gpu_census::report_window();
     ps_census::report_window();
     msaa::report_window();
+    hud::report_window();
+    world_markers::report_window();
     gui_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();

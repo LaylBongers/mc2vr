@@ -328,6 +328,7 @@ HRESULT __stdcall stretchrect_hook(IDirect3DDevice9 *self, IDirect3DSurface9 *sr
                                    const RECT *dst_rect, D3DTEXTUREFILTERTYPE filter)
 {
     g_stretch_calls++;
+    gui_census::on_stretch_rect(src, dst);
     msaa::before_stretch_rect(src, dst);  // resolves an MSAA stand-in read as the source
     return g_stretchrect_hook->stdcall<HRESULT>(self, src, src_rect, dst, dst_rect,
                                                 filter);

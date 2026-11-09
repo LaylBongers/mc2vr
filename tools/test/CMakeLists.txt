@@ -17,3 +17,5 @@ add_executable(mc2vr_game_entry_test EXCLUDE_FROM_ALL
 target_include_directories(mc2vr_game_entry_test PRIVATE ${PROJECT_SOURCE_DIR}/src/carrier)
 target_link_libraries(mc2vr_game_entry_test PRIVATE mc2vr_game)
 target_link_options(mc2vr_game_entry_test PRIVATE -static -static-libgcc -static-libstdc++)
+# SSE like the carrier: the test clobbers XMM5..XMM7 to check the entry restores them.
+target_compile_options(mc2vr_game_entry_test PRIVATE -msse2 -mfpmath=sse)

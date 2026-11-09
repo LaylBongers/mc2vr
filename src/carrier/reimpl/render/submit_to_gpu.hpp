@@ -16,6 +16,11 @@
 // VR behavior inside it, as direct calls:
 //   - view_rewrite::on_upload_gate at the viewContextData upload (0x00855a78;
 //     a MidHook there while the original runs).
+//   - the HUD layer (vr/hud.hpp): on headset frames the HUD records leave the
+//     walk; pass 1 draws them once into the HUD target, pass 2 skips them, and
+//     each pass ends by compositing the layer into its eye image.
+//   - world markers (vr/world_markers.hpp): each marker quad is moved and
+//     scaled for the pass's eye around its draw.
 //
 // Writes directly: g_InRenderFrame, g_NameHash_PgPrimitiveSubmitToGPU, the
 // precache globals, g_SuppressPresent, g_CurPassObject, g_LastRecViewFlags,

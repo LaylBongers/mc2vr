@@ -12,6 +12,7 @@
 #include "hooks/entry.hpp"
 #include "log.hpp"
 #include "reimpl/render/begin_submit.hpp"
+#include "reimpl/render/end_sub_view.hpp"
 #include "reimpl/render/render_cmd.hpp"
 #include "reimpl/render/submit_to_gpu.hpp"
 
@@ -32,6 +33,7 @@ const std::array kReplacements = {
     replace<game::RenderCmd_ExecuteStream, &reimpl::RenderCmd_ExecuteStream>(0x00856d3fu),
     replace<game::PgPrimitive_SubmitToGPU, &reimpl::PgPrimitive_SubmitToGPU>(0x0085647fu),
     replace<game::LtiRenderer_BeginSubmit, &reimpl::LtiRenderer_BeginSubmit>(0x0074ac2bu),
+    replace<game::RenderShell_EndSubView, &reimpl::RenderShell_EndSubView>(0x0062eebfu),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;

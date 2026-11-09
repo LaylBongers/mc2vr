@@ -14,6 +14,7 @@ add_library(mc2vr_carrier SHARED
     hooks/cull_frustum.cpp
     hooks/device.cpp
     hooks/frame_tick.cpp
+    hooks/hud.cpp
     hooks/install.cpp
     hooks/occluder_boxes.cpp
     hooks/entry.cpp
@@ -23,6 +24,7 @@ add_library(mc2vr_carrier SHARED
     hooks/site.cpp
     # reimpl/: reimplemented game systems (docs/reimpl.md).
     reimpl/render/begin_submit.cpp
+    reimpl/render/end_sub_view.cpp
     reimpl/render/render_cmd.cpp
     reimpl/render/submit_to_gpu.cpp
     # vr/: the VR implementation, plain C++.
@@ -32,6 +34,7 @@ add_library(mc2vr_carrier SHARED
     vr/device_params.cpp
     vr/eye_replay.cpp
     vr/eye_share.cpp
+    vr/hud.cpp
     vr/hud_timing.cpp
     vr/msaa.cpp
     vr/pacing.cpp
@@ -39,6 +42,7 @@ add_library(mc2vr_carrier SHARED
     vr/render_size.cpp
     vr/shader_constants.cpp
     vr/view_rewrite.cpp
+    vr/world_markers.cpp
     vr/vp_camera.cpp
     # debug/: debugging tools, self-contained (conf-gated, default off).
     debug/build_census.cpp

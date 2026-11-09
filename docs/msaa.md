@@ -49,7 +49,7 @@ Live (2026-11-09, full HMD size 2016×2240, Index at 90 Hz):
 - **Quality:** a clear improvement already at 2×. Menus render correctly. World markers depth-test correctly; they are broken with the in-game AA option, which never multisampled the scene depth.
 - **2×:** holds 90 Hz with no late frames. Main-scene GPU time per pass is within noise of the non-MSAA baseline (3.5–3.6 / 2.3 ms against 3.6 / 2.5).
 - **8×:** about +1 ms of GPU time per pass over 2× (4.4–4.6 / 3.3–3.5 ms), 72–87 Hz: below the display rate, so SteamVR halves the rate ([pacing.md](pacing.md)).
-- Default 4×, chosen ahead of the HUD/GUI pipeline work, which is expected to free GPU time. 4× is not measured yet; between 2× and 8×, roughly +0.5 ms per pass over 2× is expected.
+- **4× (default):** 87–90 Hz with no late frames (first run, with `debug_gui_census` on): at the edge of the 90 Hz budget. Chosen ahead of the HUD/GUI pipeline work, which is expected to free GPU time.
 
 OPEN:
 - The DepthBufferCopy resolve averages linear depth at edges; post effects reading it may show thin halos. None reported so far.

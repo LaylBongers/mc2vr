@@ -603,6 +603,28 @@ bool get_game_camera(vp_camera::Camera *out)
     return true;
 }
 
+bool mono_clip_to_eye(const double in[4], double out[4])
+{
+    if (!g_delta_valid) {
+        return false;
+    }
+    for (int r = 0; r < 4; r++) {
+        out[r] = g_delta[r * 4 + 0] * in[0] + g_delta[r * 4 + 1] * in[1] + g_delta[r * 4 + 2] * in[2] +
+                 g_delta[r * 4 + 3] * in[3];
+    }
+    return true;
+}
+
+bool frame_eyes(vp_camera::EyePose out[2])
+{
+    if (current_pose_id() == 0) {
+        return false;
+    }
+    out[0] = g_hmd.eye[0];
+    out[1] = g_hmd.eye[1];
+    return true;
+}
+
 void set_pass_eye(int sign)
 {
     // Pass 1 start (-1 = LEFT): sample the HMD pose ONCE for the whole frame —

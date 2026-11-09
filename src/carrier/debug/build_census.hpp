@@ -25,12 +25,19 @@ bool set_enabled(const char *value);
 // Install the MidHooks (no-op unless enabled or the GUI marks are required).
 void install();
 
+// PublishFrame return (the production hook in hooks/hud.cpp taps it).
+void on_publish_return();
+
 // debug_gui_census: install the hooks for the GUI record marks even with the
 // census itself off (its reports stay off). Before install().
 void require_gui_marks();
 // Whether record `index` of the published list at `base` is a GUI record:
 // 1 / 0, or -1 when unknown (marks not wanted, or a different list).
 int is_gui_record(const void *base, uint32_t index);
+// The return address of the Submit call that emitted record `index` of the
+// published list at `base` (game VA), or 0 when unknown. `above` (3 entries)
+// gets heuristic return addresses further up the stack (0 when none found).
+uint32_t record_emitter(const void *base, uint32_t index, uint32_t above[3] = nullptr);
 
 // 10 s window report (render_dump.cpp's poller); resets the window counters.
 void report_window();

@@ -7,6 +7,7 @@
 #include "hooks/cull_frustum.hpp"
 #include "hooks/device.hpp"
 #include "hooks/frame_tick.hpp"
+#include "hooks/hud.hpp"
 #include "hooks/occluder_boxes.hpp"
 #include "hooks/reimpl.hpp"
 #include "hooks/render_outputs.hpp"
@@ -28,6 +29,7 @@ void install_attach()
     install_render_outputs(); // carrier-owned outputs: setup wrap + restore
     install_render_size();    // render_size=WxH policy
     install_adaptation();     // exposure continuity across render-size switches
+    install_hud();            // HUD layer: record ranges published with the list
     // Device-hook chain root (vsync patch + device VmtHook at creation):
     // RenderSystem_Init calls Direct3DCreate9 during boot, so this must be in
     // place before the game resumes.

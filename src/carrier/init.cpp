@@ -3,7 +3,9 @@
 #include <windows.h>
 
 #include "build_lock.h"
+#include "vr/hud.hpp"
 #include "vr/msaa.hpp"
+#include "vr/world_markers.hpp"
 #include "vr/cull_frustum.hpp"
 #include "hooks/frame_tick.hpp"
 #include "hooks/install.hpp"
@@ -162,11 +164,32 @@ static void load_conf()
             if (!ps_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_ps_census=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "hud_distance") == 0) {
+            // HUD layer distance in metres (vr/hud.hpp, docs/hud.md).
+            if (!hud::set_distance(value)) {
+                MC2VR_LOG("conf: hud_distance=%s not recognized (metres, 0.3-20)", value);
+            }
+        } else if (strcmp(key, "marker_size") == 0) {
+            // World-marker height in degrees (vr/world_markers.hpp, docs/hud.md).
+            if (!world_markers::set_size(value)) {
+                MC2VR_LOG("conf: marker_size=%s not recognized (degrees, 0.5-30)", value);
+            }
+        } else if (strcmp(key, "hud_size") == 0) {
+            // HUD layer width in degrees (vr/hud.hpp, docs/hud.md).
+            if (!hud::set_size(value)) {
+                MC2VR_LOG("conf: hud_size=%s not recognized (degrees, 10-120)", value);
+            }
         } else if (strcmp(key, "msaa") == 0) {
             // Scene MSAA sample count (vr/msaa.hpp, docs/msaa.md). Must
             // precede the first render-target setup.
             if (!msaa::set_samples(value)) {
                 MC2VR_LOG("conf: msaa=%s not recognized (use off|2|4|8)", value);
+            }
+        } else if (strcmp(key, "debug_gui_skip") == 0) {
+            // HUD record classes skipped in turn (changes rendering;
+            // debug/gui_census.hpp).
+            if (!gui_census::set_skip(value)) {
+                MC2VR_LOG("conf: debug_gui_skip=%s not recognized (use cycle|each|markers|callers|off)", value);
             }
         } else if (strcmp(key, "debug_gui_census") == 0) {
             // Draw-time view of the GUI records every 30 s (log-only;

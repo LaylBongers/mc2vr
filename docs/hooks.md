@@ -37,6 +37,8 @@ Code: one file per group in `src/carrier/hooks/`, installed in the order of `hoo
 | `RenderSystem_CheckDevice` restore tail | `0x0074d087` (`mov edx,[0x01175288]` after `RenderSystem_RestoreDeviceResources` / `FUN_00753050`) | MidHook (attach) | render_outputs retake after Reset (setup is not re-run on Reset) |
 | render_size (`render_size=WxH`) | `0x007492f0` OnScreenResize entry (W `[esp+4]`, H EAX), `0x007494d5` its epilogue, `0x00749500` SetupRenderTargets cfg → fields store (ECX/EAX) | MidHook ×3 (attach) | render size policy: inputs rewritten, aspect/mouse post-fixed ([render_resolution.md](render_resolution.md) §1) |
 | bloom adaptive-surface slots (`hooks/adaptation.cpp`) | `0x0074e83d` (ESI = &_AdaptiveLuminanceSurface) / `0x0074e9c3` (EDI = &_pPrevAdaptiveLuminanceSurface), 5-byte log pushes in `PgLtiBloom_CreateSurfaces` | MidHook ×2 (attach) | record where the auto-exposure state lives; saved before / restored after a render-size switch |
+| `PgPrimitive_PublishFrame` return | `0x0074add6` | MidHook (attach) | publishes the HUD/marker record ranges and the world-marker quads with the record list ([hud.md](hud.md)); taps `debug_build_census` |
+| `Hud_DrawQuad` before its renderer call | `0x00617d91` (6-byte `mov ecx,[0x00dfb2f8]`; XMM5/XMM6 = centre, `[esp+0x10]` = vertices, `[ebp+8]` = depth) | MidHook (attach) | each world-marker quad for the per-eye placement ([hud.md](hud.md)) |
 | camera-table fill | `0x0070AEF8` | MidHook | union HMD-pose injection ([camera.md](camera.md)) |
 | view-context builder tan site + camera clearance | `0x0085943B` / `0x007107F9` | MidHook ×2 | culling alignment ([culling.md](culling.md)) |
 

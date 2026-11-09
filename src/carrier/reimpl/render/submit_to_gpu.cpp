@@ -24,6 +24,8 @@
 #include "game/render_shell.hpp"
 #include "vr/adaptation.hpp"
 #include "vr/eye_replay.hpp"
+#include "vr/hud.hpp"
+#include "vr/world_markers.hpp"
 #include "vr/view_rewrite.hpp"
 
 namespace mc2vr::reimpl {
@@ -338,6 +340,8 @@ void submit_record(PgPrimitive *rec)
 
     // ---- command stream + draw 0x8562b4-0x856354 ----
     reimpl::RenderCmd_ExecuteStream(rec->cmdStream, tech, pass);
+    // VR: a world marker's quad placed for this eye (vr/world_markers.hpp).
+    const bool marker = world_markers::before_draw((uint32_t)(rec - g_PrimitiveBase::get()), rec, tech);
     if (tech != nullptr && camera_census::on_draw(rec, tech)) {  // debug tap (true unless a debug skip)
         RenderShell_BindRecordStreams(rec);
         if (g_LastGeometry::get() != rec->geometryObj) {
@@ -363,6 +367,10 @@ void submit_record(PgPrimitive *rec)
         }
     }
 
+    if (marker) {
+        world_markers::after_draw(rec, tech);
+    }
+
     // ---- cache update 0x856359-0x8563a9 (the original's store order) ----
     g_LastScreenIdx::set(rec->screenIdx);
     g_LastViewContextIdx::set(rec->viewContextIdx);
@@ -377,8 +385,15 @@ void submit_record(PgPrimitive *rec)
 
 namespace {
 
-// One submission pass: the original function's body.
-void submit_pass()
+// The HUD records of pass 1, drawn after the walk into the HUD layer.
+constexpr uint32_t kMaxHudRecords = 1024;
+uint16_t g_hud_records[kMaxHudRecords];
+
+// One submission pass: the original function's body. VR: on headset frames
+// the HUD records (vr/hud.hpp) leave the walk; pass 1 draws them once into the
+// HUD layer afterwards, pass 2 skips them; each eye then gets the layer
+// composited.
+void submit_pass(uint32_t pass)
 {
     g_InRenderFrame::set(1);
     if (!begin_pass()) {
@@ -401,16 +416,31 @@ void submit_pass()
     bind_named_textures();
 
     // ---- the sorted record list 0x855874-0x8563af ----
+    const bool hud_layer = hud::active();
+    uint32_t hud_records = 0;
     while (idx != kPrimListEnd) {
-        gui_census::on_record(idx, g_PrimitiveBase::get() + idx);  // debug tap
-        submit_record(g_PrimitiveBase::get() + idx);
+        PgPrimitive *const rec = g_PrimitiveBase::get() + idx;
+        gui_census::on_record(idx, rec);  // debug tap
+        if (hud_layer && hud::is_hud_record(idx)) {
+            if (pass == 1 && hud_records < kMaxHudRecords) g_hud_records[hud_records++] = idx;
+        } else if (!gui_census::skip_record(idx, rec)) {  // debug_gui_skip
+            submit_record(rec);
+        }
         idx = g_PrimitiveSortKeys::at(idx).next;
+    }
+    if (hud_records != 0) {
+        hud::begin_draw();
+        for (uint32_t i = 0; i < hud_records; i++) {
+            submit_record(g_PrimitiveBase::get() + g_hud_records[i]);
+        }
+        hud::end_draw();
     }
     view_rewrite::on_record_shader(nullptr);  // no record after the walk
 
     LtiRenderer_EndSubmit(render_shell());
     end_view_type();
     g_InRenderFrame::set(0);
+    hud::composite(pass);  // after EndSubmit: menus StretchRect main -> front there
 }
 
 } // namespace
@@ -422,9 +452,11 @@ void PgPrimitive_SubmitToGPU()
 {
     adaptation::on_frame_begin();  // exposure restore after a render-size switch
     eye_replay::begin_left_pass();
-    submit_pass();
+    hud::begin_frame();  // after the pass-1 pose sample
+    world_markers::begin_frame();
+    submit_pass(1);
     eye_replay::begin_right_pass();
-    submit_pass();
+    submit_pass(2);
     eye_replay::end_frame();
 }
 

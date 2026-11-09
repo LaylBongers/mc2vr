@@ -3,6 +3,7 @@
 #include "vr/render_outputs.hpp"
 
 #include "debug/gpu_census.hpp"
+#include "debug/gui_census.hpp"
 
 #include <windows.h>
 #include <d3d9.h>
@@ -14,6 +15,7 @@
 #include "game/addresses.h"
 #include "hooks/frame_tick.hpp"
 #include "log.hpp"
+#include "vr/hud.hpp"
 #include "vr/msaa.hpp"
 #include "vr/render_size.hpp"
 
@@ -294,12 +296,14 @@ void on_setup_done()
     render_size::after_setup(); // the mutated stretch re-snapped aspect
     take_over("SetupRenderTargets");
     msaa::ensure(engine_device());
+    hud::ensure(engine_device());
 }
 
 void on_device_restored()
 {
     take_over("device restore");
     msaa::ensure(engine_device());
+    hud::ensure(engine_device());
 }
 
 bool active()
@@ -345,6 +349,7 @@ void on_present(IDirect3DDevice9 *device)
 {
     take_over("present");
     msaa::ensure(device);
+    hud::ensure(device);
     if (!active()) {
         return;
     }
@@ -413,6 +418,7 @@ void on_pass_boundary(uint32_t next_pass)
         g_mirror_updates++;
         g_mirror_frame = hooks::frame_count();
         g_mirror_valid = true;
+        gui_census::on_mirror_refreshed(device, g_mirror);  // debug tap (phase squares)
     } else {
         g_failures++;
     }
@@ -422,6 +428,7 @@ void on_reset(bool before, long hr)
 {
     if (before) {
         msaa::on_reset_before();
+        hud::on_reset_before();
         // Engine slots were released by the engine's pre-Reset path
         // (FUN_0074d1b0 -> LtiRenderer_ReleaseRenderTargets); drop ours so no
         // D3DPOOL_DEFAULT surface survives into Reset.

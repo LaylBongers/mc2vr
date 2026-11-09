@@ -22,7 +22,9 @@ using namespace mc2vr::game;
 
 extern "C" {
 uint32_t g_seen[9];  // eax ecx edx ebx esi edi xmm0 [esp+4] [esp+8]
+uint32_t g_seen_xmm[3];  // xmm1 xmm5 xmm6
 void test_callee();
+void test_callee_xmm();
 }
 
 // Records its registers and two stack arguments, clobbers the callee-saved
@@ -48,6 +50,19 @@ _test_callee:
     mov edi, 0xdead0003
     mov eax, 0x1234
     ret 8
+    .att_syntax prefix
+)");
+
+// Records xmm1/xmm5/xmm6.
+asm(R"(
+    .text
+    .globl _test_callee_xmm
+    .intel_syntax noprefix
+_test_callee_xmm:
+    movd [_g_seen_xmm + 0], xmm1
+    movd [_g_seen_xmm + 4], xmm5
+    movd [_g_seen_xmm + 8], xmm6
+    ret
     .att_syntax prefix
 )");
 
@@ -88,6 +103,11 @@ int main()
                                                                 {XMM0, STK, STK}};
     fl(1.5f, 1, 2);
     CHECK(g_seen[6] == 0x3fc00000u, "xmm0 %08x", g_seen[6]);
+
+    const Function<void(float, float, float)> xf{"test_callee_xmm", (uintptr_t)&test_callee_xmm, {XMM1, XMM5, XMM6}};
+    xf(2.0f, 3.0f, 4.0f);
+    CHECK(g_seen_xmm[0] == 0x40000000u && g_seen_xmm[1] == 0x40400000u && g_seen_xmm[2] == 0x40800000u,
+          "xmm1/5/6 %08x %08x %08x", g_seen_xmm[0], g_seen_xmm[1], g_seen_xmm[2]);
 
     static FakeVtbl vtbl{};
     vtbl.slots[0x88 / 4] = (void *)&fake_method;

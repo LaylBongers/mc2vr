@@ -6,7 +6,8 @@
 #error "the game call shim is i386-only (the game is a 32-bit exe)"
 #endif
 
-// Loads the registers, pushes the stack arguments, calls, then restores ESP
+// Loads the registers (XMM0..XMM7 low lanes too; unused ones get 0), pushes
+// the stack arguments, calls, then restores ESP
 // from EBP — so caller-pop and callee-pop (`ret N`) callees both work. EBX,
 // ESI, EDI, EBP are restored for our C++ caller; EAX is the result. The
 // callee must preserve EBP (every MSVC-compiled function does).
@@ -33,6 +34,13 @@ _mc2vr_game_call:
     jmp 1b
 2:
     movd xmm0, dword ptr [eax + 28]
+    movd xmm1, dword ptr [eax + 40]
+    movd xmm2, dword ptr [eax + 44]
+    movd xmm3, dword ptr [eax + 48]
+    movd xmm4, dword ptr [eax + 52]
+    movd xmm5, dword ptr [eax + 56]
+    movd xmm6, dword ptr [eax + 60]
+    movd xmm7, dword ptr [eax + 64]
     mov ecx, [eax + 8]
     mov edx, [eax + 12]
     mov ebx, [eax + 16]

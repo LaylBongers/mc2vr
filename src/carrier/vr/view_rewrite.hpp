@@ -75,11 +75,20 @@ float world_scale();
 // eye_share forwards it in FRAME_READY.
 uint32_t current_pose_id();
 
+// The two eye poses (LEFT, RIGHT) the current frame renders with, sampled at
+// pass 1. False when the frame has no HMD pose (current_pose_id() == 0).
+bool frame_eyes(vp_camera::EyePose out[2]);
+
 // The RAW (pre-rewrite) game camera decomposed from the most recent
 // viewContextData/ViewProj upload (main pass
 // only). Input for the camtable row-sign calibration and the transfer probe;
 // valid for ~1s after the last main-pass upload.
 bool get_game_camera(vp_camera::Camera *out);
+
+// The current pass's mono -> eye clip-space map (EyeVP · MonoVP⁻¹, the same
+// delta applied to the scene): out = delta · in. False before the pass's
+// first main-pass camera upload or without an HMD pose.
+bool mono_clip_to_eye(const double in[4], double out[4]);
 
 // Per-pass eye override (eye_replay.cpp): pass 1 = -1, pass 2 = +1,
 // 0 = none. hmd_delta requires it (per-pass eye); the pass-1 transition

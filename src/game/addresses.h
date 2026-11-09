@@ -411,6 +411,11 @@
 // block `lea ecx,[esp+8]` before the closing QPC (x87 stack empty there).
 #define MC2_BUILDSCENE_ENTRY ((uintptr_t)0x0085ac50u)
 #define MC2_BUILDSCENE_LOOP_DONE ((uintptr_t)0x0085ad04u)
+// Hud_DrawQuad (0x00617c70) just before its renderer slot-10 call: the 6-byte
+// `mov ecx,[0x00dfb2f8]` after the vertex loop (not a branch target). There:
+// XMM5/XMM6 = the quad's centre, [esp+0x10] = the vertices (stride 0x30; vertex 0
+// y at +0x14 = centre y - half height), [ebp+8] = the depth (float).
+#define MC2_HUD_DRAWQUAD_EMIT ((uintptr_t)0x00617d91u)
 // LtiRenderer_PublishIfNewFrame: `call PgPrimitive_PublishFrame` and its successor.
 #define MC2_PUBLISH_CALL ((uintptr_t)0x0074add1u)
 #define MC2_PUBLISH_RETURN ((uintptr_t)0x0074add6u)

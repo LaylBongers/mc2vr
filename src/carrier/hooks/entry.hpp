@@ -17,8 +17,9 @@
 // The entry saves the caller's registers, reads each parameter from where
 // the declaration puts it, calls ours, and returns like the original: result
 // in EAX, the declared Pops{N} popped. It restores every general register but
-// EAX, so callers that rely on more than the callee-saved registers keep
-// working. XMM registers are not restored (volatile for MSVC code).
+// EAX, and XMM1..XMM7 in full: the engine's custom conventions pass floats in
+// XMM registers, and a caller may keep values in the ones its callee doesn't
+// touch (Hud_DrawQuad's caller keeps x in XMM5 across calls).
 #pragma once
 
 #include <bit>
@@ -38,10 +39,11 @@ namespace entry_abi {
 // entry.cpp, which hard-codes these offsets).
 struct EntryFrame {
     uint32_t eax, ecx, edx, ebx, esi, edi;  // +0 .. +20
-    uint32_t xmm0;                          // +24 (low lane)
-    const uint32_t *stack;                  // +28 (first = [esp+4] at the original's entry)
+    const uint32_t *stack;                  // +24 (first = [esp+4] at the original's entry)
+    uint32_t pad;                           // +28
+    uint32_t xmm[8][4];                     // +32: XMM0..XMM7, all four lanes
 };
-static_assert(sizeof(EntryFrame) == 32);
+static_assert(sizeof(EntryFrame) == 160);
 
 // One per replacement; the stub hands it to the asm entry.
 struct EntryInfo {
@@ -66,8 +68,11 @@ inline uint32_t entry_arg(const game::FnInfo &fn, const EntryFrame *f, size_t i)
     case game::Loc::EBX: return f->ebx;
     case game::Loc::ESI: return f->esi;
     case game::Loc::EDI: return f->edi;
-    case game::Loc::XMM0: return f->xmm0;
+    case game::Loc::XMM0: return f->xmm[0][0];
     case game::Loc::AL: return f->eax & 0xff;
+    case game::Loc::XMM1: case game::Loc::XMM2: case game::Loc::XMM3: case game::Loc::XMM4:
+    case game::Loc::XMM5: case game::Loc::XMM6: case game::Loc::XMM7:
+        return f->xmm[1 + (int)fn.params[i].loc - (int)game::Loc::XMM1][0];
     }
     return 0;
 }
