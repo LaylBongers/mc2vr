@@ -52,21 +52,10 @@ constexpr size_t SLOT_SetVertexShaderConstantF = 94;
 // and must not receive the eye shift.
 constexpr size_t SLOT_SetRenderTarget = 37;
 constexpr size_t SLOT_StretchRect = 34;
-constexpr size_t SLOT_Surface_GetDesc = 12;
 // IDirect3D9::CreateDevice (d3d9.h method order, cross-checked against the
 // game's observed use: RenderSystem_Init reads the adapter count through
 // IDirect3D9 vtable +0x10 = slot 4 GetAdapterCount).
 constexpr size_t SLOT_D3D9_CreateDevice = 16;
-
-// COM x86 convention: __stdcall, this as first stack argument.
-using Present_t = HRESULT(__stdcall *)(void *, const RECT *, const RECT *, HWND, const RGNDATA *);
-using EndScene_t = HRESULT(__stdcall *)(void *);
-using BeginScene_t = HRESULT(__stdcall *)(void *);
-using Reset_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
-using SetRenderTarget_t = HRESULT(__stdcall *)(void *, DWORD, void *);
-using StretchRect_t = HRESULT(__stdcall *)(void *, void *, const RECT *,
-                                           void *, const RECT *, DWORD);
-using SetVertexShaderConstantF_t = HRESULT(__stdcall *)(void *, UINT, const float *, UINT);
 
 // Leaked by design (see device.hpp).
 safetyhook::VmtHook *g_vmt_hook = nullptr;
@@ -78,7 +67,7 @@ safetyhook::VmHook *g_tcl_hook = nullptr;
 safetyhook::VmHook *g_setvsconstf_hook = nullptr;
 safetyhook::VmHook *g_setrt_hook = nullptr;
 safetyhook::VmHook *g_stretchrect_hook = nullptr;
-void *g_device = nullptr;
+IDirect3DDevice9 *g_device = nullptr;
 bool g_params_logged = false;
 
 // Per-call statistics. Present/BeginScene/EndScene/Reset all fire on the
@@ -100,7 +89,7 @@ SafetyHookInline g_d3dcreate9_hook;          // game's IAT thunk, installed at a
 safetyhook::VmtHook *g_d3d9_vmt_hook = nullptr;  // IDirect3D9, leaked by design
 safetyhook::VmHook *g_createdevice_hook = nullptr; // leaked by design
 
-bool hook_device(void *device);
+bool hook_device(IDirect3DDevice9 *device);
 
 // IDirect3D9::CreateDevice — the device's birth. Runs on the engine's main
 // thread inside RenderSystem_CreateDevice (itself inside the first
@@ -109,9 +98,10 @@ bool hook_device(void *device);
 // device call (incl. the setup tail's GetRenderTarget/GetDepthStencilSurface)
 // precedes our hooks. Replaces the old polling capture, which raced the main
 // thread (live 2026-11-08: hooks landed while SetupRenderTargets was running).
-HRESULT __stdcall createdevice_hook(void *self, UINT adapter, DWORD device_type,
+HRESULT __stdcall createdevice_hook(IDirect3D9 *self, UINT adapter, D3DDEVTYPE device_type,
                                      HWND focus_window, DWORD behavior_flags,
-                                     D3DPRESENT_PARAMETERS *pp, void **out_device)
+                                     D3DPRESENT_PARAMETERS *pp,
+                                     IDirect3DDevice9 **out_device)
 {
     D3DPRESENT_PARAMETERS used = {};
     if (pp != nullptr) {
@@ -137,9 +127,9 @@ HRESULT __stdcall createdevice_hook(void *self, UINT adapter, DWORD device_type,
 // import. Main thread, called exactly once (RenderSystem_Init guards on
 // g_D3D9 NULL); the fresh IDirect3D9 is unshared at this point, so the VmtHook
 // (vptr swap, aligned store) is safe without thread suspension.
-void *__stdcall d3dcreate9_hook(UINT sdk_version)
+IDirect3D9 *__stdcall d3dcreate9_hook(UINT sdk_version)
 {
-    void *d3d = g_d3dcreate9_hook.stdcall<void *>(sdk_version);
+    IDirect3D9 *d3d = g_d3dcreate9_hook.stdcall<IDirect3D9 *>(sdk_version);
     if (d3d == nullptr || g_d3d9_vmt_hook != nullptr) {
         return d3d;
     }
@@ -183,7 +173,7 @@ void burst_log(const char *what, uint64_t n, const char *extra)
 
 LARGE_INTEGER g_window_start = {};
 
-HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
+HRESULT __stdcall present_hook(IDirect3DDevice9 *self, const RECT *src, const RECT *dst,
                                HWND hwnd, const RGNDATA *dirty)
 {
     g_present.total++;
@@ -246,7 +236,7 @@ HRESULT __stdcall present_hook(void *self, const RECT *src, const RECT *dst,
     return g_present_hook->stdcall<HRESULT>(self, src, dst, hwnd, dirty);
 }
 
-HRESULT __stdcall beginscene_hook(void *self)
+HRESULT __stdcall beginscene_hook(IDirect3DDevice9 *self)
 {
     g_beginscene.total++;
     g_beginscene.window++;
@@ -256,7 +246,7 @@ HRESULT __stdcall beginscene_hook(void *self)
     return g_beginscene_hook->stdcall<HRESULT>(self);
 }
 
-HRESULT __stdcall endscene_hook(void *self)
+HRESULT __stdcall endscene_hook(IDirect3DDevice9 *self)
 {
     g_endscene.total++;
     g_endscene.window++;
@@ -270,7 +260,7 @@ HRESULT __stdcall endscene_hook(void *self)
 // (render_size.cpp) answers RenderSystem_CheckDevice's per-frame call ONCE
 // with D3DERR_DEVICENOTRESET — the engine then runs its own device-lost
 // recovery (release -> Reset -> OnScreenResize -> restore) at the new size.
-HRESULT __stdcall tcl_hook(void *self)
+HRESULT __stdcall tcl_hook(IDirect3DDevice9 *self)
 {
     if (render_size::consume_forced_reset(__builtin_return_address(0))) {
         return D3DERR_DEVICENOTRESET;
@@ -278,7 +268,7 @@ HRESULT __stdcall tcl_hook(void *self)
     return g_tcl_hook->stdcall<HRESULT>(self);
 }
 
-HRESULT __stdcall reset_hook(void *self, D3DPRESENT_PARAMETERS *pp)
+HRESULT __stdcall reset_hook(IDirect3DDevice9 *self, D3DPRESENT_PARAMETERS *pp)
 {
     g_reset.total++;
     g_reset.window++;
@@ -330,8 +320,9 @@ uint64_t g_stretch_calls = 0;
 
 // StretchRect: observed (rt_probe) and forwarded; the hook also provides the
 // original-method trampoline for the carrier's own blits (blit_surfaces).
-HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
-                                   void *dst, const RECT *dst_rect, DWORD filter)
+HRESULT __stdcall stretchrect_hook(IDirect3DDevice9 *self, IDirect3DSurface9 *src,
+                                   const RECT *src_rect, IDirect3DSurface9 *dst,
+                                   const RECT *dst_rect, D3DTEXTUREFILTERTYPE filter)
 {
     g_stretch_calls++;
     rt_probe::on_stretch_rect(src, dst, __builtin_return_address(0));
@@ -339,7 +330,8 @@ HRESULT __stdcall stretchrect_hook(void *self, void *src, const RECT *src_rect,
                                                 filter);
 }
 
-HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
+HRESULT __stdcall setrendertarget_hook(IDirect3DDevice9 *self, DWORD index,
+                                       IDirect3DSurface9 *surface)
 {
     // Observed, never altered: the pass gate for the view rewrite.
     rt_probe::on_set_render_target(index, surface, __builtin_return_address(0));
@@ -348,9 +340,7 @@ HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
         UINT w = 0, h = 0;
         if (surface) {
             D3DSURFACE_DESC desc = {};
-            auto get_desc = (HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *))
-                (*(void ***)surface)[SLOT_Surface_GetDesc];
-            if (SUCCEEDED(get_desc(surface, &desc))) {
+            if (SUCCEEDED(surface->GetDesc(&desc))) {
                 w = desc.Width;
                 h = desc.Height;
             }
@@ -362,7 +352,7 @@ HRESULT __stdcall setrendertarget_hook(void *self, DWORD index, void *surface)
     return hr;
 }
 
-HRESULT __stdcall setvsconstf_hook(void *self, UINT start, const float *data, UINT count)
+HRESULT __stdcall setvsconstf_hook(IDirect3DDevice9 *self, UINT start, const float *data, UINT count)
 {
     g_setvsconst_calls++;
     if (g_setvsconst_calls <= BURST_LOG_CALLS) {
@@ -410,7 +400,7 @@ namespace {
 // Called from createdevice_hook (main thread; the engine has not seen the
 // device yet). A second CreateDevice (device re-creation) re-hooks the new
 // object; the trampolines stay valid — every device shares DXVK's vtable.
-bool hook_device(void *device)
+bool hook_device(IDirect3DDevice9 *device)
 {
     QueryPerformanceFrequency(&g_qpc_freq);
 
@@ -493,18 +483,18 @@ safetyhook::VmHook *hook_method(size_t slot, void *destination, unsigned *error)
     return new safetyhook::VmHook(std::move(*hook)); // leaked by design
 }
 
-bool stretch_surfaces(void *src, const RECT *src_rect, void *dst, const RECT *dst_rect,
-                      uint32_t filter)
+bool stretch_surfaces(IDirect3DSurface9 *src, const RECT *src_rect, IDirect3DSurface9 *dst,
+                      const RECT *dst_rect, uint32_t filter)
 {
     if (!g_device || !g_stretchrect_hook || !src || !dst) {
         return false;
     }
     // Through the trampoline (no re-entry into the pass-2 redirect logic).
     return SUCCEEDED(g_stretchrect_hook->stdcall<HRESULT>(g_device, src, src_rect, dst,
-                                                          dst_rect, (DWORD)filter));
+                                                          dst_rect, (D3DTEXTUREFILTERTYPE)filter));
 }
 
-bool blit_surfaces(void *src, void *dst)
+bool blit_surfaces(IDirect3DSurface9 *src, IDirect3DSurface9 *dst)
 {
     if (!g_device || !g_stretchrect_hook || !src || !dst) {
         return false;
@@ -513,7 +503,7 @@ bool blit_surfaces(void *src, void *dst)
     // Through the trampoline, NOT the hooked vtable: the carrier's own
     // blits must not re-enter the device hooks (rt_probe classification).
     const HRESULT hr = g_stretchrect_hook->stdcall<HRESULT>(
-        g_device, src, nullptr, dst, nullptr, 0 /* D3DTEXF_NONE */);
+        g_device, src, nullptr, dst, nullptr, D3DTEXF_NONE);
     if (FAILED(hr)) {
         static bool logged = false;
         if (!logged) {

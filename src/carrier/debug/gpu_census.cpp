@@ -1,7 +1,7 @@
 #include "gpu_census.hpp"
 
 #include <windows.h>
-#include <d3d9.h>  // types/constants only
+#include <d3d9.h>
 
 #include <cstdint>
 #include <cstring>
@@ -14,15 +14,6 @@ namespace mc2vr::gpu_census {
 
 namespace {
 
-constexpr size_t DSLOT_CreateQuery = 118;
-constexpr size_t QSLOT_Issue = 6;
-constexpr size_t QSLOT_GetData = 7;
-constexpr size_t COM_Release = 2;
-using CreateQuery_t = HRESULT(__stdcall *)(void *, D3DQUERYTYPE, void **);
-using QueryIssue_t = HRESULT(__stdcall *)(void *, DWORD);
-using QueryGetData_t = HRESULT(__stdcall *)(void *, void *, DWORD, DWORD);
-using Release_t = ULONG(__stdcall *)(void *);
-
 enum Cat : uint8_t { CAT_MAIN, CAT_ATLAS, CAT_SQUARE, CAT_OTHER, CAT_CARRIER, CAT_N };
 const char *const kCat[CAT_N] = {"main", "atlas", "square", "other", "carrier"};
 constexpr int kPasses = 3;  // 0 = between passes, 1 = left, 2 = right
@@ -34,9 +25,9 @@ constexpr int kReadAge = 3;  // read a record this many frames after it closed
 struct Frame {
     bool used = false;      // issued, results not yet read
     int n = 0;              // segments
-    void *ts[kMaxSeg + 1] = {};
-    void *disjoint = nullptr;
-    void *freq = nullptr;
+    IDirect3DQuery9 *ts[kMaxSeg + 1] = {};
+    IDirect3DQuery9 *disjoint = nullptr;
+    IDirect3DQuery9 *freq = nullptr;
     uint8_t pass[kMaxSeg] = {};
     uint8_t cat[kMaxSeg] = {};
     uint32_t draws[kMaxSeg] = {};
@@ -45,7 +36,7 @@ struct Frame {
 };
 
 bool g_enabled = false;
-void *g_device = nullptr;
+IDirect3DDevice9 *g_device = nullptr;
 Frame g_ring[kRing];
 int g_cur = -1;           // open frame index
 uint64_t g_frames = 0;    // frames opened
@@ -69,29 +60,29 @@ double qpc_ms()
     return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
 }
 
-void *create_query(D3DQUERYTYPE type)
+IDirect3DQuery9 *create_query(D3DQUERYTYPE type)
 {
     if (g_device == nullptr) return nullptr;
-    void *q = nullptr;
-    if (FAILED(((CreateQuery_t)(*(void ***)g_device)[DSLOT_CreateQuery])(g_device, type, &q))) {
+    IDirect3DQuery9 *q = nullptr;
+    if (FAILED(g_device->CreateQuery(type, &q))) {
         return nullptr;
     }
     return q;
 }
 
-void issue(void *q, DWORD flags)
+void issue(IDirect3DQuery9 *q, DWORD flags)
 {
-    if (q) ((QueryIssue_t)(*(void ***)q)[QSLOT_Issue])(q, flags);
+    if (q) q->Issue(flags);
 }
 
-bool get(void *q, void *out, DWORD size)
+bool get(IDirect3DQuery9 *q, void *out, DWORD size)
 {
-    return q && ((QueryGetData_t)(*(void ***)q)[QSLOT_GetData])(q, out, size, 0) == S_OK;
+    return q && q->GetData(out, size, 0) == S_OK;
 }
 
-void release(void *&q)
+void release(IDirect3DQuery9 *&q)
 {
-    if (q) ((Release_t)(*(void ***)q)[COM_Release])(q);
+    if (q) q->Release();
     q = nullptr;
 }
 
@@ -99,7 +90,7 @@ bool ensure_queries(Frame &f)
 {
     if (f.disjoint == nullptr) f.disjoint = create_query(D3DQUERYTYPE_TIMESTAMPDISJOINT);
     if (f.freq == nullptr) f.freq = create_query(D3DQUERYTYPE_TIMESTAMPFREQ);
-    for (void *&q : f.ts) {
+    for (IDirect3DQuery9 *&q : f.ts) {
         if (q == nullptr) q = create_query(D3DQUERYTYPE_TIMESTAMP);
     }
     return f.disjoint && f.freq && f.ts[0];
@@ -254,7 +245,7 @@ void on_reset()
     for (Frame &f : g_ring) {
         release(f.disjoint);
         release(f.freq);
-        for (void *&q : f.ts) release(q);
+        for (IDirect3DQuery9 *&q : f.ts) release(q);
         f.used = false;
         f.n = 0;
     }

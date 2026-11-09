@@ -1,5 +1,5 @@
 // Shadow verification of the RenderCmd_ExecuteStream reimplementation
-// (reimpl/render/render_cmd.cpp) against the original (debug_reimpl_shadow=on).
+// (reimpl/render/render_cmd.cpp) against the original (debug_reimpl=shadow).
 
 #include <array>
 #include <cstdio>

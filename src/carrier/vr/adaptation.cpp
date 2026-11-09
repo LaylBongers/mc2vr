@@ -3,7 +3,7 @@
 #include "vr/adaptation.hpp"
 
 #include <windows.h>
-#include <d3d9.h> // types only
+#include <d3d9.h>
 
 #include <cstdint>
 #include <cstring>
@@ -18,22 +18,11 @@ namespace mc2vr::adaptation {
 
 namespace {
 
-constexpr size_t DSLOT_UpdateSurface = 30;
-constexpr size_t DSLOT_GetRenderTargetData = 32;
-constexpr size_t DSLOT_CreateOffscreenPlainSurface = 36;
-constexpr size_t SSLOT_Release = 2;
-constexpr size_t SSLOT_GetDesc = 12;
-constexpr size_t SSLOT_LockRect = 13;
-constexpr size_t SSLOT_UnlockRect = 14;
-
-using GetDesc_t = HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *);
-using Release_t = ULONG(__stdcall *)(void *);
-
 constexpr int SLOTS = 3; // adaptive, prev adaptive, g_pAdaptiveDest
 
 struct Slot {
-    void **holder = nullptr;  // where the engine keeps the surface pointer
-    void *sysmem = nullptr;   // SYSTEMMEM copy (survives Reset)
+    IDirect3DSurface9 **holder = nullptr;  // where the engine keeps the surface pointer
+    IDirect3DSurface9 *sysmem = nullptr; // SYSTEMMEM copy (survives Reset)
     UINT w = 0, h = 0;
     D3DFORMAT fmt = D3DFMT_UNKNOWN;
     bool pending = false;
@@ -74,13 +63,10 @@ float half_to_float(uint16_t h)
 }
 
 // Format a SYSTEMMEM 1x1 surface's first pixel (fp16 RGBA / fp32 R).
-void fmt_pixel(void *sysmem, D3DFORMAT fmt, char *out, size_t size)
+void fmt_pixel(IDirect3DSurface9 *sysmem, D3DFORMAT fmt, char *out, size_t size)
 {
     D3DLOCKED_RECT lr = {};
-    void **vt = *(void ***)sysmem;
-    if (FAILED(((HRESULT(__stdcall *)(void *, D3DLOCKED_RECT *, const RECT *, DWORD))
-                    vt[SSLOT_LockRect])(sysmem, &lr, nullptr, D3DLOCK_READONLY)) ||
-        !lr.pBits) {
+    if (FAILED(sysmem->LockRect(&lr, nullptr, D3DLOCK_READONLY)) || !lr.pBits) {
         _snprintf(out, size, "(lock failed)");
         out[size - 1] = '\0';
         return;
@@ -96,56 +82,53 @@ void fmt_pixel(void *sysmem, D3DFORMAT fmt, char *out, size_t size)
         _snprintf(out, size, "fmt=%u raw=%08x", (unsigned)fmt, *(const uint32_t *)lr.pBits);
     }
     out[size - 1] = '\0';
-    ((HRESULT(__stdcall *)(void *))vt[SSLOT_UnlockRect])(sysmem);
+    sysmem->UnlockRect();
 }
 
-bool desc_of(void *s, D3DSURFACE_DESC *d)
+bool desc_of(IDirect3DSurface9 *s, D3DSURFACE_DESC *d)
 {
-    return s && SUCCEEDED(((GetDesc_t)(*(void ***)s)[SSLOT_GetDesc])(s, d));
+    return s && SUCCEEDED(s->GetDesc(d));
 }
 
 } // namespace
 
 void init()
 {
-    g_slots[2].holder = (void **)MC2_G_ADAPTIVE_DEST;
+    g_slots[2].holder = (IDirect3DSurface9 **)MC2_G_ADAPTIVE_DEST;
 }
 
-void on_adaptive_slot(void **holder)
+void on_adaptive_slot(IDirect3DSurface9 **holder)
 {
     g_slots[0].holder = holder;
 }
 
-void on_prev_adaptive_slot(void **holder)
+void on_prev_adaptive_slot(IDirect3DSurface9 **holder)
 {
     g_slots[1].holder = holder;
 }
 
 void save()
 {
-    void *device = render_outputs::device();
+    IDirect3DDevice9 *device = render_outputs::device();
     if (!device) {
         return;
     }
-    void **vt = *(void ***)device;
     int saved = 0;
     for (int i = 0; i < SLOTS; i++) {
         Slot &s = g_slots[i];
         s.pending = false;
-        void *surf = s.holder ? *s.holder : nullptr;
+        IDirect3DSurface9 *surf = s.holder ? *s.holder : nullptr;
         D3DSURFACE_DESC d = {};
         if (!desc_of(surf, &d) || d.MultiSampleType != D3DMULTISAMPLE_NONE) {
             continue;
         }
         if (s.sysmem && (s.w != d.Width || s.h != d.Height || s.fmt != d.Format)) {
-            ((Release_t)(*(void ***)s.sysmem)[SSLOT_Release])(s.sysmem);
+            s.sysmem->Release();
             s.sysmem = nullptr;
         }
         if (!s.sysmem) {
-            auto create = (HRESULT(__stdcall *)(void *, UINT, UINT, D3DFORMAT, D3DPOOL, void **,
-                                                HANDLE *))vt[DSLOT_CreateOffscreenPlainSurface];
-            if (FAILED(create(device, d.Width, d.Height, d.Format, D3DPOOL_SYSTEMMEM, &s.sysmem,
-                              nullptr)) ||
+            if (FAILED(device->CreateOffscreenPlainSurface(d.Width, d.Height, d.Format,
+                                                           D3DPOOL_SYSTEMMEM, &s.sysmem, nullptr)) ||
                 !s.sysmem) {
                 s.sysmem = nullptr;
                 continue;
@@ -154,8 +137,7 @@ void save()
             s.h = d.Height;
             s.fmt = d.Format;
         }
-        auto grab = (HRESULT(__stdcall *)(void *, void *, void *))vt[DSLOT_GetRenderTargetData];
-        if (SUCCEEDED(grab(device, surf, s.sysmem))) {
+        if (SUCCEEDED(device->GetRenderTargetData(surf, s.sysmem))) {
             s.pending = true;
             saved++;
             if (i == 1) { // prev = the persistent adapted value (op 0x16 copies it)
@@ -178,20 +160,18 @@ void on_reset_done()
 }
 
 // Write every saved slot back into the engine's current surfaces.
-int apply_saved(void *device)
+int apply_saved(IDirect3DDevice9 *device)
 {
     int restored = 0;
     for (int i = 0; i < SLOTS; i++) {
         Slot &s = g_slots[i];
-        void *surf = s.holder ? *s.holder : nullptr;
+        IDirect3DSurface9 *surf = s.holder ? *s.holder : nullptr;
         D3DSURFACE_DESC d = {};
         if (!s.sysmem || !desc_of(surf, &d) || d.Width != s.w || d.Height != s.h ||
             d.Format != s.fmt) {
             continue;
         }
-        auto update = (HRESULT(__stdcall *)(void *, void *, const RECT *, void *, const POINT *))(
-            *(void ***)device)[DSLOT_UpdateSurface];
-        if (SUCCEEDED(update(device, s.sysmem, nullptr, surf, nullptr))) {
+        if (SUCCEEDED(device->UpdateSurface(s.sysmem, nullptr, surf, nullptr))) {
             restored++;
         }
     }
@@ -202,7 +182,7 @@ void on_frame_begin()
 {
     if (g_hold_frames > 0) {
         g_hold_frames--;
-        if (void *device = render_outputs::device()) {
+        if (IDirect3DDevice9 *device = render_outputs::device()) {
             apply_saved(device);
         }
         return;
@@ -210,14 +190,14 @@ void on_frame_begin()
     if (!g_reset_done) {
         return;
     }
-    void *device = nullptr;
+    IDirect3DDevice9 *device = nullptr;
     int restored = 0;
     for (int i = 0; i < SLOTS; i++) {
         Slot &s = g_slots[i];
         if (!s.pending) {
             continue;
         }
-        void *surf = s.holder ? *s.holder : nullptr;
+        IDirect3DSurface9 *surf = s.holder ? *s.holder : nullptr;
         if (!surf) {
             continue; // not re-created (yet) — keep it pending
         }
@@ -232,9 +212,7 @@ void on_frame_begin()
                 return;
             }
         }
-        auto update = (HRESULT(__stdcall *)(void *, void *, const RECT *, void *, const POINT *))(
-            *(void ***)device)[DSLOT_UpdateSurface];
-        const HRESULT hr = update(device, s.sysmem, nullptr, surf, nullptr);
+        const HRESULT hr = device->UpdateSurface(s.sysmem, nullptr, surf, nullptr);
         s.pending = false;
         if (SUCCEEDED(hr)) {
             restored++;

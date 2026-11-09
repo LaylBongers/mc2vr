@@ -1,6 +1,6 @@
 // RenderCmd_ExecuteStream (0x008569d0) — reimplementation.
 //
-// STATUS: replaces the original; gameplay shadow check pending. Ghidra plate:
+// STATUS: live 2026-11-09 (shadow-verified over 66.6 M streams; A/B shows no cost). Ghidra plate:
 // RenderCmd_ExecuteStream. Note: docs/reverse_engineering/render_cmd.md.
 // Original: cdecl, called only by PgPrimitive_SubmitToGPU (0x008562be).
 // Calls: game/dx9.hpp, game/render_cmd.hpp, game/render_shell.hpp functions;

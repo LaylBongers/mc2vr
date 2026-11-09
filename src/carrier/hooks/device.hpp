@@ -21,6 +21,7 @@
 #pragma once
 
 #include <windows.h>
+#include <d3d9.h> // types only
 #include <cstddef>
 #include <cstdint>
 
@@ -41,11 +42,12 @@ bool install_d3d9_gate();
 // Full-surface StretchRect through the ORIGINAL device method (bypasses the
 // hook chain entirely — the carrier's own captures/resolves; render thread
 // only).
-bool blit_surfaces(void *src, void *dst);
+bool blit_surfaces(IDirect3DSurface9 *src, IDirect3DSurface9 *dst);
 
 // StretchRect with explicit rects/filter through the ORIGINAL device method
 // (render thread only). Used by render_outputs' monitor mirror.
-bool stretch_surfaces(void *src, const RECT *src_rect, void *dst, const RECT *dst_rect,
+bool stretch_surfaces(IDirect3DSurface9 *src, const RECT *src_rect, IDirect3DSurface9 *dst,
+                      const RECT *dst_rect,
                       uint32_t filter);
 
 // ---- Debug-only slot hooks ---------------------------------------------------

@@ -20,13 +20,17 @@
 
 #include <cstdint>
 
+#include <windows.h>
+#include <d3d9.h> // types only
+
 namespace mc2vr::eye_share {
 
 // Called from eye_replay::set_pass at the pass boundaries with the live
 // device + the carrier front (nullptr when not owned yet — skipped).
 // `next_pass`: 2 = boundary 1->2 (capture LEFT), 0 = boundary 2->0 (capture
 // RIGHT).
-void on_pass_boundary(uint32_t next_pass, void *device, void *source);
+void on_pass_boundary(uint32_t next_pass, IDirect3DDevice9 *device,
+                      IDirect3DSurface9 *source);
 
 // Called from eye_replay::on_reset — all surfaces are gone (the device will
 // be recreated; the ring re-creates lazily on the next boundary).

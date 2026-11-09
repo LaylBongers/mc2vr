@@ -13,6 +13,9 @@
 
 #include <cstdint>
 
+#include <windows.h>
+#include <d3d9.h> // types only
+
 namespace mc2vr::ps_census {
 
 bool set_enabled(const char *value);
@@ -20,7 +23,7 @@ bool enabled();
 
 void on_pass(uint32_t pass);  // eye_replay::set_pass entry: 1, 2, 0
 void on_set_rt(uint32_t w, uint32_t h);
-void on_set_ps(void *ps);
+void on_set_ps(IDirect3DPixelShader9 *ps);
 void on_draw();
 void on_reset();
 

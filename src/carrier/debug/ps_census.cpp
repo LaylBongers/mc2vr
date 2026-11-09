@@ -1,7 +1,7 @@
 #include "ps_census.hpp"
 
 #include <windows.h>
-#include <d3d9.h>  // types/constants only
+#include <d3d9.h>
 
 #include <cstdint>
 #include <cstring>
@@ -15,17 +15,6 @@ namespace mc2vr::ps_census {
 
 namespace {
 
-constexpr size_t DSLOT_CreateQuery = 118;
-constexpr size_t QSLOT_Issue = 6;
-constexpr size_t QSLOT_GetData = 7;
-constexpr size_t PSLOT_GetFunction = 4;  // IDirect3DPixelShader9
-constexpr size_t COM_Release = 2;
-using CreateQuery_t = HRESULT(__stdcall *)(void *, D3DQUERYTYPE, void **);
-using QueryIssue_t = HRESULT(__stdcall *)(void *, DWORD);
-using QueryGetData_t = HRESULT(__stdcall *)(void *, void *, DWORD, DWORD);
-using GetFunction_t = HRESULT(__stdcall *)(void *, void *, UINT *);
-using Release_t = ULONG(__stdcall *)(void *);
-
 constexpr uint32_t kSampleEvery = 8;
 constexpr int kSeg = 4096;
 constexpr int kPasses = 3;
@@ -35,26 +24,26 @@ const char *const kCat[CAT_N] = {"main", "atlas", "square", "other"};
 struct Rec {
     bool pending = false;
     int n = 0;
-    std::vector<void *> ts, occ;  // grown on demand (queries kept for reuse)
-    void *disjoint = nullptr, *freq = nullptr;
-    void *ps[kSeg];
+    std::vector<IDirect3DQuery9 *> ts, occ;  // grown on demand (queries kept for reuse)
+    IDirect3DQuery9 *disjoint = nullptr, *freq = nullptr;
+    IDirect3DPixelShader9 *ps[kSeg];
     uint8_t pass[kSeg];
     uint8_t cat[kSeg];
     uint16_t draws[kSeg];
 };
 
 bool g_enabled = false;
-void *g_device = nullptr;
+IDirect3DDevice9 *g_device = nullptr;
 Rec g_rec[2];
 int g_cur = -1;
 uint64_t g_frames = 0;
 uint32_t g_pass = 0;
 uint8_t g_cat = CAT_OTHER;
-void *g_ps = nullptr;
+IDirect3DPixelShader9 *g_ps = nullptr;
 
 // ---- per-shader aggregation ----------------------------------------------------
 struct Shader {
-    void *obj;
+    IDirect3DPixelShader9 *obj;
     uint32_t hash, size;
     double gpu[kPasses];
     uint64_t pix[kPasses];
@@ -68,26 +57,26 @@ uint64_t w_frames = 0, w_unread = 0, w_overflow = 0;
 double w_gpu_total[kPasses] = {};
 uint64_t w_pix_total[kPasses][CAT_N] = {};
 
-void *create_query(D3DQUERYTYPE type)
+IDirect3DQuery9 *create_query(D3DQUERYTYPE type)
 {
-    void *q = nullptr;
+    IDirect3DQuery9 *q = nullptr;
     if (g_device == nullptr ||
-        FAILED(((CreateQuery_t)(*(void ***)g_device)[DSLOT_CreateQuery])(g_device, type, &q))) {
+        FAILED(g_device->CreateQuery(type, &q))) {
         return nullptr;
     }
     return q;
 }
-void issue(void *q, DWORD flags)
+void issue(IDirect3DQuery9 *q, DWORD flags)
 {
-    if (q) ((QueryIssue_t)(*(void ***)q)[QSLOT_Issue])(q, flags);
+    if (q) q->Issue(flags);
 }
-bool get(void *q, void *out, DWORD size)
+bool get(IDirect3DQuery9 *q, void *out, DWORD size)
 {
-    return q && ((QueryGetData_t)(*(void ***)q)[QSLOT_GetData])(q, out, size, 0) == S_OK;
+    return q && q->GetData(out, size, 0) == S_OK;
 }
-void release(void *&q)
+void release(IDirect3DQuery9 *&q)
 {
-    if (q) ((Release_t)(*(void ***)q)[COM_Release])(q);
+    if (q) q->Release();
     q = nullptr;
 }
 
@@ -103,7 +92,7 @@ uint32_t fnv1a(const uint8_t *p, size_t n)
 
 // Lookup; with `create`, register (and hash) a newly seen shader — only while
 // it is bound (SetPixelShader), when the object is certainly alive.
-Shader *shader_for(void *obj, bool create)
+Shader *shader_for(IDirect3DPixelShader9 *obj, bool create)
 {
     for (int i = 0; i < g_sh_n; i++) {
         if (g_sh[i].obj == obj) return &g_sh[i];
@@ -114,10 +103,10 @@ Shader *shader_for(void *obj, bool create)
     s.obj = obj;
     if (obj) {
         UINT size = 0;
-        auto getf = (GetFunction_t)(*(void ***)obj)[PSLOT_GetFunction];
-        if (SUCCEEDED(getf(obj, nullptr, &size)) && size > 0 && size < (1u << 20)) {
+        IDirect3DPixelShader9 *ps = obj;
+        if (SUCCEEDED(ps->GetFunction(nullptr, &size)) && size > 0 && size < (1u << 20)) {
             std::vector<uint8_t> buf(size);
-            if (SUCCEEDED(getf(obj, buf.data(), &size))) {
+            if (SUCCEEDED(ps->GetFunction(buf.data(), &size))) {
                 s.hash = fnv1a(buf.data(), size);
                 s.size = size;
             }
@@ -261,7 +250,7 @@ void on_set_rt(uint32_t w, uint32_t h)
     open_segment();
 }
 
-void on_set_ps(void *ps)
+void on_set_ps(IDirect3DPixelShader9 *ps)
 {
     if (!g_enabled || ps == g_ps) return;
     g_ps = ps;
@@ -279,8 +268,8 @@ void on_draw()
 void on_reset()
 {
     for (Rec &r : g_rec) {
-        for (void *&q : r.ts) release(q);
-        for (void *&q : r.occ) release(q);
+        for (IDirect3DQuery9 *&q : r.ts) release(q);
+        for (IDirect3DQuery9 *&q : r.occ) release(q);
         r.ts.clear();
         r.occ.clear();
         release(r.disjoint);

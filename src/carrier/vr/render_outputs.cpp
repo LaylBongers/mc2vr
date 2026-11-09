@@ -4,7 +4,7 @@
 #include "debug/gpu_census.hpp"
 
 #include <windows.h>
-#include <d3d9.h> // types only
+#include <d3d9.h>
 
 #include <cstdint>
 #include <cstring>
@@ -19,33 +19,17 @@ namespace mc2vr::render_outputs {
 
 namespace {
 
-// Device / surface vtable slots (d3d9.h order).
-constexpr size_t DSLOT_GetBackBuffer = 18;
-constexpr size_t DSLOT_CreateRenderTarget = 28;
-constexpr size_t DSLOT_CreateDepthStencilSurface = 29;
-constexpr size_t DSLOT_ColorFill = 35;
-constexpr size_t SSLOT_AddRef = 1;
-constexpr size_t SSLOT_Release = 2;
-constexpr size_t SSLOT_GetDesc = 12;
-
-using CreateSurf_t = HRESULT(__stdcall *)(void *, UINT, UINT, D3DFORMAT, D3DMULTISAMPLE_TYPE,
-                                          DWORD, BOOL, void **, HANDLE *);
-using GetBackBuffer_t = HRESULT(__stdcall *)(void *, UINT, UINT, D3DBACKBUFFER_TYPE, void **);
-using ColorFill_t = HRESULT(__stdcall *)(void *, void *, const RECT *, D3DCOLOR);
-using Ref_t = ULONG(__stdcall *)(void *);
-using GetDesc_t = HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *);
-
 // Carrier surfaces (one ref each held by us; engine slots hold their own).
-void *g_front = nullptr;  // RT, engine front desc (+ requested MSAA)
-void *g_depth = nullptr;  // DS, engine auto-depth desc (+ requested MSAA)
-void *g_mirror = nullptr; // non-MSAA RT, front size: the LEFT monitor image
-void *g_scratch = nullptr; // non-MSAA RT, front size: on-demand front resolve (dumps)
+IDirect3DSurface9 *g_front = nullptr;  // RT, engine front desc (+ requested MSAA)
+IDirect3DSurface9 *g_depth = nullptr;  // DS, engine auto-depth desc (+ requested MSAA)
+IDirect3DSurface9 *g_mirror = nullptr; // non-MSAA RT, front size: the LEFT monitor image
+IDirect3DSurface9 *g_scratch = nullptr; // non-MSAA RT, front size: on-demand front resolve (dumps)
 // Pointers we released at Reset; engine slots still holding them must be
 // overwritten without a Release (they are dead).
-void *g_retired_front = nullptr;
-void *g_retired_depth = nullptr;
+IDirect3DSurface9 *g_retired_front = nullptr;
+IDirect3DSurface9 *g_retired_depth = nullptr;
 
-void *g_real_bb = nullptr; // swapchain backbuffer (identity only, no ref held)
+IDirect3DSurface9 *g_real_bb = nullptr; // swapchain backbuffer (identity only, no ref held)
 bool g_have_msaa = false;
 D3DMULTISAMPLE_TYPE g_msaa = D3DMULTISAMPLE_NONE;
 DWORD g_msaa_q = 0;
@@ -67,40 +51,41 @@ bool g_skip_armed = false; // we set g_SuppressPresent for the current pass 1
 
 // ---- engine holders -------------------------------------------------------------
 
-void **slot(uintptr_t off)
+// Engine holders of IDirect3DSurface9 pointers (game memory: the one cast).
+IDirect3DSurface9 **slot(uintptr_t off)
 {
-    return (void **)(MC2_G_RENDERSHELL + off);
+    return (IDirect3DSurface9 **)(MC2_G_RENDERSHELL + off);
 }
-void **auto_depth_ref()
+IDirect3DSurface9 **auto_depth_ref()
 {
-    return (void **)MC2_G_DX9_AUTODEPTH_REF;
+    return (IDirect3DSurface9 **)MC2_G_DX9_AUTODEPTH_REF;
 }
 
-void *engine_device()
+IDirect3DDevice9 *engine_device()
 {
     const uintptr_t lti = *(volatile uintptr_t *)MC2_G_LTIRENDERER;
-    return lti ? *(void **)(lti + MC2_LTIRENDERER_DX9STATE_OFF) : nullptr;
+    return lti ? *(IDirect3DDevice9 **)(lti + MC2_LTIRENDERER_DX9STATE_OFF) : nullptr;
 }
 
-void add_ref(void *p)
+void add_ref(IDirect3DSurface9 *p)
 {
-    ((Ref_t)(*(void ***)p)[SSLOT_AddRef])(p);
+    p->AddRef();
 }
-void release(void *p)
+void release(IDirect3DSurface9 *p)
 {
-    ((Ref_t)(*(void ***)p)[SSLOT_Release])(p);
+    p->Release();
 }
-bool get_desc(void *p, D3DSURFACE_DESC *d)
+bool get_desc(IDirect3DSurface9 *p, D3DSURFACE_DESC *d)
 {
-    return p && SUCCEEDED(((GetDesc_t)(*(void ***)p)[SSLOT_GetDesc])(p, d));
+    return p && SUCCEEDED(p->GetDesc(d));
 }
 
 // Move one OWNING engine slot from its current surface to ours: Release the
 // displaced surface exactly as the engine would have, AddRef ours for the
 // Release the engine will issue. Dead (retired) pointers are just overwritten.
-bool transfer(void **holder, void *ours)
+bool transfer(IDirect3DSurface9 **holder, IDirect3DSurface9 *ours)
 {
-    void *old = *holder;
+    IDirect3DSurface9 *old = *holder;
     if (old == ours) {
         return false;
     }
@@ -122,7 +107,9 @@ bool render_dims(uint32_t *w, uint32_t *h)
     return *w != 0 && *h != 0;
 }
 
-bool create_surface(void *device, size_t slot_index, D3DSURFACE_DESC d, void **out,
+// depth=false: CreateRenderTarget (non-lockable); depth=true:
+// CreateDepthStencilSurface (no discard).
+bool create_surface(IDirect3DDevice9 *device, bool depth, D3DSURFACE_DESC d, IDirect3DSurface9 **out,
                     const char *what)
 {
     uint32_t rw = 0, rh = 0;
@@ -132,9 +119,12 @@ bool create_surface(void *device, size_t slot_index, D3DSURFACE_DESC d, void **o
     }
     const D3DMULTISAMPLE_TYPE ms = g_have_msaa ? g_msaa : d.MultiSampleType;
     const DWORD msq = g_have_msaa ? g_msaa_q : d.MultiSampleQuality;
-    void *s = nullptr;
-    const HRESULT hr = ((CreateSurf_t)(*(void ***)device)[slot_index])(
-        device, d.Width, d.Height, d.Format, ms, msq, FALSE, &s, nullptr);
+    IDirect3DSurface9 *s = nullptr;
+    const HRESULT hr =
+        depth ? device->CreateDepthStencilSurface(d.Width, d.Height, d.Format, ms, msq, FALSE,
+                                                  &s, nullptr)
+              : device->CreateRenderTarget(d.Width, d.Height, d.Format, ms, msq, FALSE, &s,
+                                           nullptr);
     if (FAILED(hr) || !s) {
         g_failures++;
         MC2VR_LOG("outputs: create %s %ux%u fmt=%u ms=%u FAILED hr=%08lx", what, d.Width,
@@ -149,8 +139,8 @@ bool create_surface(void *device, size_t slot_index, D3DSURFACE_DESC d, void **o
 
 bool table_owned()
 {
-    void *ref = *slot(MC2_RS_RT_FRONTREF_OFF);
-    void *adr = *auto_depth_ref();
+    IDirect3DSurface9 *ref = *slot(MC2_RS_RT_FRONTREF_OFF);
+    IDirect3DSurface9 *adr = *auto_depth_ref();
     return g_front && g_depth && *slot(MC2_RS_RT_FRONT_OFF) == g_front &&
            (ref == g_front || ref == nullptr) && *slot(MC2_RS_RT_AUTODEPTH_OFF) == g_depth &&
            (adr == g_depth || adr == nullptr);
@@ -159,37 +149,37 @@ bool table_owned()
 // Install the carrier front/depth into every engine holder (idempotent).
 void take_over(const char *reason)
 {
-    void **front_slot = slot(MC2_RS_RT_FRONT_OFF);
-    void **ref_slot = slot(MC2_RS_RT_FRONTREF_OFF);
-    void **auto_slot = slot(MC2_RS_RT_AUTODEPTH_OFF);
-    void **scene_slot = slot(MC2_RS_RT_SCENEDEPTH_OFF);
+    IDirect3DSurface9 **front_slot = slot(MC2_RS_RT_FRONT_OFF);
+    IDirect3DSurface9 **ref_slot = slot(MC2_RS_RT_FRONTREF_OFF);
+    IDirect3DSurface9 **auto_slot = slot(MC2_RS_RT_AUTODEPTH_OFF);
+    IDirect3DSurface9 **scene_slot = slot(MC2_RS_RT_SCENEDEPTH_OFF);
     if (!*front_slot || !*auto_slot) {
         return; // table not (or no longer) set up — nothing to own
     }
     if (table_owned()) {
         return;
     }
-    void *device = engine_device();
+    IDirect3DDevice9 *device = engine_device();
     if (!device) {
         return;
     }
 
-    void *old_front = *front_slot;
-    void *old_auto = *auto_slot;
+    IDirect3DSurface9 *old_front = *front_slot;
+    IDirect3DSurface9 *old_auto = *auto_slot;
 
     // Our surfaces copy the engine's own descs (behavior-neutral: same size,
     // format; MSAA = what the engine requested for its swapchain).
     if (!g_front && old_front != g_retired_front) {
         D3DSURFACE_DESC d = {};
         if (!get_desc(old_front, &d) ||
-            !create_surface(device, DSLOT_CreateRenderTarget, d, &g_front, "front")) {
+            !create_surface(device, false, d, &g_front, "front")) {
             return;
         }
     }
     if (!g_depth && old_auto != g_retired_depth) {
         D3DSURFACE_DESC d = {};
         if (!get_desc(old_auto, &d) ||
-            !create_surface(device, DSLOT_CreateDepthStencilSurface, d, &g_depth, "depth")) {
+            !create_surface(device, true, d, &g_depth, "depth")) {
             return;
         }
     }
@@ -238,22 +228,20 @@ void take_over(const char *reason)
               g_depth, scene_alias ? " (+ scene-depth alias)" : "");
 }
 
-void *real_backbuffer(void *device)
+IDirect3DSurface9 *real_backbuffer(IDirect3DDevice9 *device)
 {
     if (g_real_bb || !device) {
         return g_real_bb;
     }
-    void *bb = nullptr;
-    if (SUCCEEDED(((GetBackBuffer_t)(*(void ***)device)[DSLOT_GetBackBuffer])(
-            device, 0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) &&
-        bb) {
+    IDirect3DSurface9 *bb = nullptr;
+    if (SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) && bb) {
         release(bb); // identity only; the swapchain keeps it alive
         g_real_bb = bb;
     }
     return g_real_bb;
 }
 
-bool create_resolved(void *device, void **out, const char *what)
+bool create_resolved(IDirect3DDevice9 *device, IDirect3DSurface9 **out, const char *what)
 {
     if (*out) {
         return true;
@@ -262,9 +250,9 @@ bool create_resolved(void *device, void **out, const char *what)
     if (!get_desc(g_front, &d)) {
         return false;
     }
-    void *s = nullptr;
-    const HRESULT hr = ((CreateSurf_t)(*(void ***)device)[DSLOT_CreateRenderTarget])(
-        device, d.Width, d.Height, d.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &s, nullptr);
+    IDirect3DSurface9 *s = nullptr;
+    const HRESULT hr = device->CreateRenderTarget(d.Width, d.Height, d.Format,
+                                                  D3DMULTISAMPLE_NONE, 0, FALSE, &s, nullptr);
     if (FAILED(hr) || !s) {
         g_failures++;
         MC2VR_LOG("outputs: create %s FAILED hr=%08lx", what, (unsigned long)hr);
@@ -312,29 +300,29 @@ bool active()
     return table_owned();
 }
 
-void *front()
+IDirect3DSurface9 *front()
 {
     return active() ? g_front : nullptr;
 }
 
-void *capture_source()
+IDirect3DSurface9 *capture_source()
 {
     return g_transition_frame ? nullptr : front();
 }
 
-void *device()
+IDirect3DDevice9 *device()
 {
     return engine_device();
 }
 
-void *mirror()
+IDirect3DSurface9 *mirror()
 {
     return active() && g_mirror_valid ? g_mirror : nullptr;
 }
 
-void *resolve_front()
+IDirect3DSurface9 *resolve_front()
 {
-    void *dev = engine_device();
+    IDirect3DDevice9 *dev = engine_device();
     if (!active() || !dev || !create_resolved(dev, &g_scratch, "resolve scratch")) {
         return nullptr;
     }
@@ -348,13 +336,13 @@ void note_requested_msaa(uint32_t type, uint32_t quality)
     g_msaa_q = quality;
 }
 
-void on_present(void *device)
+void on_present(IDirect3DDevice9 *device)
 {
     take_over("present");
     if (!active()) {
         return;
     }
-    void *bb = real_backbuffer(device);
+    IDirect3DSurface9 *bb = real_backbuffer(device);
     if (!bb) {
         return;
     }
@@ -362,15 +350,14 @@ void on_present(void *device)
     if (g_transition_frame) {
         // Reset transition frame: black (SwapEffect DISCARD — the backbuffer
         // must still be written before this Present).
-        ((ColorFill_t)(*(void ***)device)[DSLOT_ColorFill])(device, bb, nullptr,
-                                                           D3DCOLOR_XRGB(0, 0, 0));
+        device->ColorFill(bb, nullptr, D3DCOLOR_XRGB(0, 0, 0));
         return;
     }
 
     // Source: the LEFT mirror while the stereo passes run (refreshed at 1->2);
     // otherwise (no passes) the front itself holds the latest final frame.
     const uint64_t frame = hooks::frame_count();
-    void *src = (g_mirror_valid && frame - g_mirror_frame <= 2) ? g_mirror : g_front;
+    IDirect3DSurface9 *src = (g_mirror_valid && frame - g_mirror_frame <= 2) ? g_mirror : g_front;
 
     D3DSURFACE_DESC sd = {}, bd = {};
     if (!get_desc(src, &sd) || !get_desc(bb, &bd)) {
@@ -386,8 +373,7 @@ void on_present(void *device)
         }
     }
     if (bars) {
-        ((ColorFill_t)(*(void ***)device)[DSLOT_ColorFill])(device, bb, nullptr,
-                                                           D3DCOLOR_XRGB(0, 0, 0));
+        device->ColorFill(bb, nullptr, D3DCOLOR_XRGB(0, 0, 0));
     }
     gpu_census::carrier_begin();
     const bool shown = device::stretch_surfaces(src, nullptr, bb, &r,
@@ -410,7 +396,7 @@ void on_pass_boundary(uint32_t next_pass)
     if (next_pass != 2 || !active() || g_transition_frame) {
         return;
     }
-    void *device = engine_device();
+    IDirect3DDevice9 *device = engine_device();
     if (!device || !create_resolved(device, &g_mirror, "mirror")) {
         return;
     }
@@ -463,7 +449,7 @@ void on_reset(bool before, long hr)
         bool held = false;
         for (uintptr_t off : {MC2_RS_RT_FRONT_OFF, MC2_RS_RT_FRONTREF_OFF,
                               MC2_RS_RT_AUTODEPTH_OFF, MC2_RS_RT_SCENEDEPTH_OFF}) {
-            void *p = *slot(off);
+            IDirect3DSurface9 *p = *slot(off);
             held |= (p && (p == g_retired_front || p == g_retired_depth));
         }
         if (*auto_depth_ref() &&

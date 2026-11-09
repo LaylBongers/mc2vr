@@ -1,6 +1,7 @@
 #include "probes.hpp"
 
 #include <windows.h>
+#include <d3d9.h> // types only
 
 #include <cstdint>
 
@@ -46,19 +47,19 @@ bool data_write_restore()
 bool call_vm_thunk()
 {
     // The thunk is 6 bytes of plaintext .text that jmp into the SecuROM VM
-    // stub. void* (void): zero args means cdecl/stdcall are identical on
+    // stub. IDirect3DDevice9* (void): zero args means cdecl/stdcall are identical on
     // i386, so a plain call is the "correct convention" by construction.
     // Signature verified in Ghidra: isThunk=true, callers use the return
     // value directly as the IDirect3DDevice9*.
-    using GetD3DDevice_t = void *(*)();
+    using GetD3DDevice_t = IDirect3DDevice9 *(*)();
 
-    void *device = ((GetD3DDevice_t)MC2_GETD3DDEVICE_THUNK)();
+    IDirect3DDevice9 *device = ((GetD3DDevice_t)MC2_GETD3DDEVICE_THUNK)();
 
     // NOTE: reaching this line at all is the pass — the VM stub executed from
     // injected code and returned cleanly. If it ever crashes instead, the
     // absence of this log line (and a dead game) is the failure signal.
     MC2VR_LOG("probe (b) direct VM-stub call GetD3DDevice() @ %p -> %p (%s)",
-              (void *)MC2_GETD3DDEVICE_THUNK, device,
+              (void *)MC2_GETD3DDEVICE_THUNK, (void *)device,
               device ? "device exists" : "NULL — UNEXPECTED, init waits for the device first");
     return true;
 }

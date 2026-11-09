@@ -1,5 +1,8 @@
 #pragma once
 
+#include <windows.h>
+#include <d3d9.h> // types only
+
 // HDR eye-adaptation continuity across carrier-driven device resets
 // (render-size switches, docs/render_resolution.md;
 // RE: docs/reverse_engineering/hdr_adaptation.md).
@@ -19,8 +22,8 @@ void init();
 
 // The bloom object's surface creation (hooks/adaptation.cpp): where it keeps
 // the adaptive-luminance pair.
-void on_adaptive_slot(void **holder);
-void on_prev_adaptive_slot(void **holder);
+void on_adaptive_slot(IDirect3DSurface9 **holder);
+void on_prev_adaptive_slot(IDirect3DSurface9 **holder);
 
 // Main thread, right before a forced device reset (surfaces still alive).
 void save();

@@ -26,40 +26,40 @@ safetyhook::VmHook *g_setps_hook = nullptr;
 safetyhook::VmHook *g_draw_hooks[4] = {};
 
 // debug_ps_census: pixel-shader binds.
-HRESULT __stdcall setps_hook(void *self, void *ps)
+HRESULT __stdcall setps_hook(IDirect3DDevice9 *self, IDirect3DPixelShader9 *ps)
 {
     ps_census::on_set_ps(ps);
     return g_setps_hook->stdcall<HRESULT>(self, ps);
 }
 
 // debug_gpu_census / debug_ps_census: draw-call counting.
-HRESULT __stdcall draw_hook(void *self, DWORD a, DWORD b, DWORD c)
+HRESULT __stdcall draw_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, UINT c)
 {
     gpu_census::on_draw();
     ps_census::on_draw();
     return g_draw_hooks[0]->stdcall<HRESULT>(self, a, b, c);
 }
-HRESULT __stdcall drawindexed_hook(void *self, DWORD a, INT b, UINT c, UINT d, UINT e, UINT f)
+HRESULT __stdcall drawindexed_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, INT b, UINT c, UINT d, UINT e, UINT f)
 {
     gpu_census::on_draw();
     ps_census::on_draw();
     return g_draw_hooks[1]->stdcall<HRESULT>(self, a, b, c, d, e, f);
 }
-HRESULT __stdcall drawup_hook(void *self, DWORD a, UINT b, const void *c, UINT d)
+HRESULT __stdcall drawup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, const void *c, UINT d)
 {
     gpu_census::on_draw();
     ps_census::on_draw();
     return g_draw_hooks[2]->stdcall<HRESULT>(self, a, b, c, d);
 }
-HRESULT __stdcall drawindexedup_hook(void *self, DWORD a, UINT b, UINT c, UINT d, const void *e,
-                                     DWORD f, const void *g, UINT h)
+HRESULT __stdcall drawindexedup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, UINT c, UINT d,
+                                     const void *e, D3DFORMAT f, const void *g, UINT h)
 {
     gpu_census::on_draw();
     ps_census::on_draw();
     return g_draw_hooks[3]->stdcall<HRESULT>(self, a, b, c, d, e, f, g, h);
 }
 
-void on_device(void * /*device*/)
+void on_device(IDirect3DDevice9 * /*device*/)
 {
     if (ps_census::enabled()) {
         if (safetyhook::VmHook *hook = device::hook_method(SLOT_SetPixelShader,
@@ -99,7 +99,7 @@ void on_device(void * /*device*/)
 
 } // namespace
 
-void install(void *device)
+void install(IDirect3DDevice9 *device)
 {
     on_device(device);
 }

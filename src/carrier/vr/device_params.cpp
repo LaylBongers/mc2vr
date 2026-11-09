@@ -11,15 +11,6 @@ namespace mc2vr::device_params {
 
 namespace {
 
-// IDirect3DSwapChain9::GetPresentParameters / IUnknown::Release /
-// IDirect3DDevice9::GetSwapChain (d3d9.h method order).
-constexpr size_t SLOT_Release = 2;
-constexpr size_t SLOT_GetSwapChain = 14;
-constexpr size_t SLOT_SC_GetPresentParameters = 9;
-
-using GetSwapChain_t = HRESULT(__stdcall *)(void *, UINT, void **);
-using GetPresentParams_t = HRESULT(__stdcall *)(void *, D3DPRESENT_PARAMETERS *);
-
 // ---- Pacing: vsync=off (CreateDevice/Reset interval patch) ----------
 // The frame's two Presents (present-prev at each BeginSubmit) each block on
 // a 60 Hz vsync slot -> ~30 Hz game (live-log-proven). vsync=off forces
@@ -109,21 +100,20 @@ DWORD apply_behavior_policy(DWORD behavior_flags)
 
 // ---- Present-parameter logging (main thread, first Present) ---------------
 
-void log_present_params(void *device)
+void log_present_params(IDirect3DDevice9 *device)
 {
-    void **vt = *(void ***)device;
-    void *swapchain = nullptr;
-    HRESULT hr = ((GetSwapChain_t)vt[SLOT_GetSwapChain])(device, 0, &swapchain);
+    IDirect3DSwapChain9 *swapchain = nullptr;
+    HRESULT hr = device->GetSwapChain(0, &swapchain);
     if (FAILED(hr) || !swapchain) {
         MC2VR_LOG("D3D: GetSwapChain(0) failed hr=%08lx", (unsigned long)hr);
         return;
     }
 
     D3DPRESENT_PARAMETERS pp = {};
-    hr = ((GetPresentParams_t)(*(void ***)swapchain)[SLOT_SC_GetPresentParameters])(swapchain, &pp);
+    hr = swapchain->GetPresentParameters(&pp);
 
-    // Release the AddRef from GetSwapChain through the raw vtable.
-    ((HRESULT(__stdcall *)(void *))(*(void ***)swapchain)[SLOT_Release])(swapchain);
+    // Release the AddRef from GetSwapChain.
+    swapchain->Release();
 
     if (FAILED(hr)) {
         MC2VR_LOG("D3D: GetPresentParameters failed hr=%08lx", (unsigned long)hr);

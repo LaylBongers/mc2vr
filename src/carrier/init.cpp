@@ -42,9 +42,6 @@ namespace mc2vr {
 
 // Numeric conf values: true and *out set only on a clean, fully-consumed
 // parse; otherwise logs and leaves the setting alone.
-// debug_reimpl_shadow: verify reimplemented functions instead of replacing.
-static bool g_reimpl_shadow = false;
-
 static bool parse_double(const char *key, const char *value, double *out)
 {
     char *end = nullptr;
@@ -183,13 +180,16 @@ static void load_conf()
             if (!trace::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_stub_trace=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "debug_reimpl_shadow") == 0) {
-            // Verify the reimplemented functions instead of replacing (docs/reimpl.md).
-            if (strcmp(value, "on") == 0 || strcmp(value, "off") == 0) {
-                g_reimpl_shadow = strcmp(value, "on") == 0;
-                hooks::set_reimpl_shadow(g_reimpl_shadow);
+        } else if (strcmp(key, "debug_reimpl") == 0) {
+            // Reimplemented functions: replace (default) | shadow | off (docs/reimpl.md).
+            if (strcmp(value, "replace") == 0) {
+                hooks::set_reimpl_mode(hooks::ReimplMode::Replace);
+            } else if (strcmp(value, "shadow") == 0) {
+                hooks::set_reimpl_mode(hooks::ReimplMode::Shadow);
+            } else if (strcmp(value, "off") == 0) {
+                hooks::set_reimpl_mode(hooks::ReimplMode::Off);
             } else {
-                MC2VR_LOG("conf: debug_reimpl_shadow=%s not recognized (use on|off)", value);
+                MC2VR_LOG("conf: debug_reimpl=%s not recognized (use replace|shadow|off)", value);
             }
         } else if (strcmp(key, "debug_build_census") == 0) {
             // Scene -> draw-record build census (log-only; debug/build_census.hpp).
@@ -400,7 +400,7 @@ void init()
 
     adaptation::init();         // VR state that needs no hook (before the hooks fire)
     hooks::install_attach();    // the VR implementation's hooks (hooks/install.cpp)
-    if (g_reimpl_shadow) {
+    if (hooks::reimpl_mode() == hooks::ReimplMode::Shadow) {
         shadow::install();      // verify reimplementations instead (docs/reimpl.md)
     }
     // Debug tools (each a no-op unless enabled in the conf).

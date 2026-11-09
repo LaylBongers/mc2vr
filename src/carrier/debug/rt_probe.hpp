@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+#include <windows.h>
+#include <d3d9.h> // types only
+
 // Render-target / render-size instrumentation
 // (docs/reverse_engineering/render_target_table.md, rt_dims_source.md).
 // LOG-ONLY: every handler observes and forwards; nothing is altered.
@@ -18,7 +21,7 @@ void install_early();
 
 // From hooks/device.cpp hook_device: the creation/getter census slots
 // (device::hook_method). No-op unless debug_rt_probe=on.
-void install_device_hooks(void *device);
+void install_device_hooks(IDirect3DDevice9 *device);
 
 // SetupRenderTargets entry (called by render_outputs' wrapper, main thread).
 void on_setup_enter(void *self);
@@ -28,9 +31,9 @@ void on_osr_enter(uint32_t w, uint32_t h, uintptr_t self, uintptr_t esp);
 
 // Device-hook taps (hooks/device.cpp, render thread). `ret` = the device
 // method's return address (the immediate caller).
-void on_present(void *device);
-void on_set_render_target(uint32_t index, void *surface, void *ret);
-void on_stretch_rect(void *src, void *dst, void *ret);
+void on_present(IDirect3DDevice9 *device);
+void on_set_render_target(uint32_t index, IDirect3DSurface9 *surface, void *ret);
+void on_stretch_rect(IDirect3DSurface9 *src, IDirect3DSurface9 *dst, void *ret);
 void on_reset(bool before, long hr);
 
 } // namespace mc2vr::rt_probe

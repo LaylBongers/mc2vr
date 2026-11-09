@@ -15,11 +15,11 @@ Directory rules: [code_structure.md](code_structure.md).
 
 ## Replacement and shadow verification
 
-Reimplementations are simply installed: an inline hook on the original entry (`hooks/reimpl.cpp`). There are no per-function switches. When a replacement misbehaves, `git` bisects it like any other change.
+Reimplementations are simply installed: an inline hook on the original entry (`hooks/reimpl.cpp`). There are no per-function switches; `debug_reimpl=off` keeps all the originals, for A/B runs. When a replacement misbehaves, `git` bisects it like any other change.
 
 Inside reimplemented code, calls to other reimplemented functions are plain C++ calls. `game::` callables are only for code that is still original. A cdecl original whose caller relies only on callee-saved registers is replaced by our function directly; `ExecuteStream` is one. Any other convention needs an entry thunk generated from its `Function` declaration (not written yet).
 
-Shadow verification (`debug_reimpl_shadow=on`) is a debugging aid for small, tricky functions where a mistake is invisible on screen. It doesn't scale to subsystems, and it is optional. With it on, the originals run, and ours are dry-run alongside and compared:
+Shadow verification (`debug_reimpl=shadow`) is a debugging aid for small, tricky functions where a mistake is invisible on screen. It doesn't scale to subsystems, and it is optional. With it on, the originals run, and ours are dry-run alongside and compared:
 - A per-thread `CallInterceptor` records our `game::` calls without executing them.
 - The globals we write are snapshotted before the dry run and restored after it.
 - MidHooks capture the original's callee calls. The two call sequences and end states are compared at the caller's return site. Opaque arguments (an HRESULT, the device pointer) are not compared.
@@ -29,7 +29,8 @@ Larger subsystems are verified at their outer boundary instead, e.g. by diffing 
 
 ## Status
 
-- `RenderCmd_ExecuteStream`: replaces the original (2026-11-08). The shadow check in gameplay is pending ([reverse_engineering/render_cmd.md](reverse_engineering/render_cmd.md)).
+- `RenderCmd_ExecuteStream`: replaces the original. Shadow-verified 2026-11-09: 66.6 M streams in gameplay, identical call sequences ([reverse_engineering/render_cmd.md](reverse_engineering/render_cmd.md)). Live since 2026-11-09, with no visual issues. A/B in the same scene against `debug_reimpl=off`: both held 90 Hz, and the replay pass took 1.65 ms with ours vs 1.97 ms with the original, within run-to-run noise.
+- **Call-path cost:** a `game::Function` call costs about 8 ns under Wine, against 1 ns for a direct call. The time goes into the runtime register-frame fill; TLS is not the cost. That's irrelevant at `ExecuteStream`'s volume. Before routing heavier code through it (`SubmitToGPU`), the call can be specialized at compile time from the declaration.
 - Next: `PgPrimitive_SubmitToGPU` ([reverse_engineering/frame_chain.md](reverse_engineering/frame_chain.md)). The aim is to fold the stereo replay, the per-eye camera upload gate and the replay drain skip into explicit extension points, and to make a HUD render-target split possible ([reverse_engineering/gui_renderer.md](reverse_engineering/gui_renderer.md)).
 
 ## Tests

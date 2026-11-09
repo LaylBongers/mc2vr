@@ -1,7 +1,7 @@
 #include "vr/eye_replay.hpp"
 
 #include <windows.h>
-#include <d3d9.h> // type/layout constants only
+#include <d3d9.h>
 
 #include <cmath>
 #include <cstdio>
@@ -30,19 +30,6 @@
 namespace mc2vr::eye_replay {
 
 namespace {
-
-// Device + surface vtable slots (d3d9.h order, runtime-pinned).
-constexpr size_t DSLOT_GetRenderTargetData = 32;
-constexpr size_t DSLOT_CreateOffscreenPlainSurface = 36;
-constexpr size_t SSLOT_LockRect = 13; // IDirect3DSurface9 vtable (d3d9.h): GetContainer=11, GetDesc=12, LockRect=13, UnlockRect=14. The 2026-10-04 crash: slot 10 = GetType ignores its args and returns a small positive D3DRESOURCETYPE, which passed SUCCEEDED() and left pBits uninitialized -> read through a garbage pointer.
-constexpr size_t SSLOT_UnlockRect = 14;
-constexpr size_t SSLOT_GetDesc = 12;
-constexpr size_t SSLOT_Release = 2;
-
-using DevCall_t = HRESULT(__stdcall *)(void *);
-using SurfaceDesc_t = HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *);
-using LockRect_t = HRESULT(__stdcall *)(void *, D3DLOCKED_RECT *, const RECT *, DWORD);
-using Release_t = HRESULT(__stdcall *)(void *);
 
 uint32_t g_dump_frames = 0;
 float g_dump_delay_s = 15.0f;
@@ -193,11 +180,11 @@ bool dump_attempt_due()
 // X8R8G8B8=22) and fp16 HDR (A16B16G16R16F=113); anything else is logged and
 // skipped rather than misread. The eye dumps are the per-eye LDR FINALS
 // (composite + HUD): the HUD sits at the same screen position in both eyes.
-bool dump_surface(void *device, const char *tag, void *surface, uint64_t frame)
+bool dump_surface(IDirect3DDevice9 *device, const char *tag, IDirect3DSurface9 *surface,
+                  uint64_t frame)
 {
     D3DSURFACE_DESC desc = {};
-    if (!device || !surface ||
-        FAILED(((SurfaceDesc_t)(*(void ***)surface)[SSLOT_GetDesc])(surface, &desc)) ||
+    if (!device || !surface || FAILED(surface->GetDesc(&desc)) ||
         desc.MultiSampleType != D3DMULTISAMPLE_NONE) {
         g_dump_failures++;
         return false; // GetRenderTargetData needs a resolved (non-MSAA) RT
@@ -217,25 +204,18 @@ bool dump_surface(void *device, const char *tag, void *surface, uint64_t frame)
         }
         return false;
     }
-    void **vt = *(void ***)device;
-
     D3DLOCKED_RECT locked = {};
-    void *sysmem = nullptr;
-    // CreateOffscreenPlainSurface(w, h, fmt, SYSTEMMEM=1, &sysmem, NULL)
-    auto create = (HRESULT(__stdcall *)(void *, UINT, UINT, D3DFORMAT, D3DPOOL,
-                                         void **, void *))vt[DSLOT_CreateOffscreenPlainSurface];
-    HRESULT hr = create(device, desc.Width, desc.Height,
-                        desc.Format, D3DPOOL_SYSTEMMEM, &sysmem, nullptr);
+    IDirect3DSurface9 *sysmem = nullptr;
+    HRESULT hr = device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format,
+                                                     D3DPOOL_SYSTEMMEM, &sysmem, nullptr);
     if (FAILED(hr) || !sysmem) {
         g_dump_failures++;
         MC2VR_LOG("eye: dump %s FAILED at CreateOffscreenPlainSurface hr=%08lx", tag, (unsigned long)hr);
         return false;
     }
-    auto grab = (HRESULT(__stdcall *)(void *, void *, void *))vt[DSLOT_GetRenderTargetData];
-    hr = grab(device, surface, sysmem);
-    void **sys_vt = *(void ***)sysmem; // sysmem's OWN vtable (not the RT's)
+    hr = device->GetRenderTargetData(surface, sysmem);
     if (SUCCEEDED(hr)) {
-        hr = ((LockRect_t)sys_vt[SSLOT_LockRect])(sysmem, &locked, nullptr, 0);
+        hr = sysmem->LockRect(&locked, nullptr, 0);
     }
     if (SUCCEEDED(hr)) {
         const uint32_t w = desc.Width;
@@ -244,8 +224,8 @@ bool dump_surface(void *device, const char *tag, void *surface, uint64_t frame)
             g_dump_failures++;
             MC2VR_LOG("eye: dump %s FAILED — bad lock (pBits=%p pitch=%d)",
                       tag, locked.pBits, (int)locked.Pitch);
-            ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
-            ((Release_t)sys_vt[SSLOT_Release])(sysmem);
+            sysmem->UnlockRect();
+            sysmem->Release();
             return false;
         }
         // Empty probe: subsample every 64 bytes (8 px at fp16). A fully
@@ -268,8 +248,8 @@ bool dump_surface(void *device, const char *tag, void *surface, uint64_t frame)
                               "(loading/video; %llu attempts so far)",
                               tag, (unsigned long long)g_dump_empty);
                 }
-                ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
-                ((Release_t)sys_vt[SSLOT_Release])(sysmem);
+                sysmem->UnlockRect();
+                sysmem->Release();
                 return false;
             }
         }
@@ -330,20 +310,20 @@ bool dump_surface(void *device, const char *tag, void *surface, uint64_t frame)
                 g_dumps_written++;
                 MC2VR_LOG("eye: dumped %s eye -> %ls (%ux%u)", tag, path, w, h);
                 delete[] bgr;
-                ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
-                ((Release_t)sys_vt[SSLOT_Release])(sysmem);
+                sysmem->UnlockRect();
+                sysmem->Release();
                 return true;
             }
             g_dump_failures++;
             MC2VR_LOG("eye: dump %s FAILED to write BMP", tag);
             delete[] bgr;
         }
-        ((DevCall_t)sys_vt[SSLOT_UnlockRect])(sysmem);
+        sysmem->UnlockRect();
     } else {
         g_dump_failures++;
         MC2VR_LOG("eye: dump %s FAILED hr=%08lx", tag, (unsigned long)hr);
     }
-    ((Release_t)sys_vt[SSLOT_Release])(sysmem);
+    sysmem->Release();
     return false;
 }
 

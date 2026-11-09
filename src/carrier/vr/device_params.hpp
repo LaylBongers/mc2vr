@@ -29,6 +29,6 @@ void copy_back_params(D3DPRESENT_PARAMETERS *engine, const D3DPRESENT_PARAMETERS
 DWORD apply_behavior_policy(DWORD behavior_flags);
 
 // Logs the swapchain's actual present params (main thread; first Present).
-void log_present_params(void *device);
+void log_present_params(IDirect3DDevice9 *device);
 
 } // namespace mc2vr::device_params

@@ -16,7 +16,7 @@
 #include <safetyhook.hpp>
 
 #include <windows.h>
-#include <d3d9.h> // types only
+#include <d3d9.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -159,9 +159,8 @@ bool in_d3d9_module(void *obj)
     return module == GetModuleHandleW(L"d3d9.dll");
 }
 
-// Resource description via the object's own vtable (IDirect3DResource9
-// GetType = slot 10; surface GetDesc = 12; texture GetLevelCount = 13,
-// GetLevelDesc = 17). Only for objects whose vtable lives in d3d9.dll.
+// Resource description via the object's own methods. Only for objects whose
+// vtable lives in d3d9.dll.
 void describe_resource(void *obj, char *out, size_t size)
 {
     if (!obj) {
@@ -176,16 +175,16 @@ void describe_resource(void *obj, char *out, size_t size)
         out[size - 1] = '\0';
         return;
     }
-    void **vt = *(void ***)obj;
-    const DWORD type = ((DWORD(__stdcall *)(void *))vt[10])(obj);
+    const DWORD type = static_cast<IDirect3DResource9 *>(obj)->GetType();
     D3DSURFACE_DESC d = {};
     HRESULT hr = E_FAIL;
     DWORD levels = 0;
     if (type == D3DRTYPE_SURFACE) {
-        hr = ((HRESULT(__stdcall *)(void *, D3DSURFACE_DESC *))vt[12])(obj, &d);
+        hr = static_cast<IDirect3DSurface9 *>(obj)->GetDesc(&d);
     } else if (type == D3DRTYPE_TEXTURE) {
-        levels = ((DWORD(__stdcall *)(void *))vt[13])(obj);
-        hr = ((HRESULT(__stdcall *)(void *, UINT, D3DSURFACE_DESC *))vt[17])(obj, 0, &d);
+        auto *tex = static_cast<IDirect3DTexture9 *>(obj);
+        levels = tex->GetLevelCount();
+        hr = tex->GetLevelDesc(0, &d);
     }
     if (FAILED(hr)) {
         _snprintf(out, size, "%p type=%lu (no desc)", obj, (unsigned long)type);
@@ -202,8 +201,8 @@ void describe_resource(void *obj, char *out, size_t size)
 
 LARGE_INTEGER g_qpc_freq = {};
 LARGE_INTEGER g_window_start = {};
-void *g_device = nullptr;
-void *g_backbuffer = nullptr; // cached at snapshot time (ref released immediately)
+IDirect3DDevice9 *g_device = nullptr;
+IDirect3DSurface9 *g_backbuffer = nullptr; // cached at snapshot time (ref released immediately)
 bool g_internal = false;      // our own device calls — getter taps ignore them
 const char *g_pending = "first-present";
 void *g_last_table[MC2_RS_RT_TABLE_SLOTS] = {};
@@ -216,7 +215,7 @@ const char *cls_name(uint8_t c)
     static const char *n[C_COUNT] = {"main", "front", "frontRef", "backbuffer", "other", "null"};
     return c < C_COUNT ? n[c] : "?";
 }
-uint8_t classify(void *s)
+uint8_t classify(const void *s)
 {
     if (!s) {
         return C_NULL;
@@ -348,14 +347,14 @@ void refresh_backbuffer()
     if (!g_device) {
         return;
     }
-    void *bb = nullptr;
+    IDirect3DSurface9 *bb = nullptr;
     g_internal = true;
-    const HRESULT hr = ((HRESULT(__stdcall *)(void *, UINT, UINT, D3DBACKBUFFER_TYPE, void **))(
-        *(void ***)g_device)[18])(g_device, 0, 0, D3DBACKBUFFER_TYPE_MONO, &bb);
+    const HRESULT hr =
+        g_device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb);
     g_internal = false;
     if (SUCCEEDED(hr) && bb) {
         g_backbuffer = bb;
-        ((ULONG(__stdcall *)(void *))(*(void ***)bb)[2])(bb); // drop our ref; keep identity
+        bb->Release(); // drop our ref; keep identity
     }
 }
 
@@ -575,7 +574,7 @@ void on_setup_enter(void *self)
     g_pending = "after-SetupRenderTargets";
 }
 
-void on_present(void *device)
+void on_present(IDirect3DDevice9 *device)
 {
     if (!g_enabled) {
         return;
@@ -604,7 +603,7 @@ void on_present(void *device)
     }
 }
 
-void on_set_render_target(uint32_t index, void *surface, void *ret)
+void on_set_render_target(uint32_t index, IDirect3DSurface9 *surface, void *ret)
 {
     if (!g_enabled || index != 0) {
         return;
@@ -623,7 +622,7 @@ void on_set_render_target(uint32_t index, void *surface, void *ret)
     }
 }
 
-void on_stretch_rect(void *src, void *dst, void *ret)
+void on_stretch_rect(IDirect3DSurface9 *src, IDirect3DSurface9 *dst, void *ret)
 {
     if (!g_enabled) {
         return;
@@ -661,7 +660,7 @@ void on_reset(bool before, long hr)
 namespace {
 
 void on_create(Create kind, uint32_t w, uint32_t h, uint32_t fmt, uint32_t usage, uint32_t pool,
-               long hr, void *object, void *ret)
+               long hr, IDirect3DResource9 *object, void *ret)
 {
     if (!g_enabled) {
         return;
@@ -693,7 +692,7 @@ void on_create(Create kind, uint32_t w, uint32_t h, uint32_t fmt, uint32_t usage
               pass_idx(), (unsigned long long)hooks::frame_count(), r, s);
 }
 
-void on_getter(Getter kind, uint32_t index, void *result, void *ret)
+void on_getter(Getter kind, uint32_t index, IUnknown *result, void *ret)
 {
     if (!g_enabled || g_internal) {
         return;
@@ -731,8 +730,9 @@ safetyhook::VmHook *g_createplain_hook = nullptr;
 safetyhook::VmHook *g_getrt_hook = nullptr;
 safetyhook::VmHook *g_getds_hook = nullptr;
 
-HRESULT __stdcall createtexture_hook(void *self, UINT w, UINT h, UINT levels, DWORD usage,
-                                     D3DFORMAT fmt, D3DPOOL pool, void **out, HANDLE *shared)
+HRESULT __stdcall createtexture_hook(IDirect3DDevice9 *self, UINT w, UINT h, UINT levels, DWORD usage,
+                                     D3DFORMAT fmt, D3DPOOL pool, IDirect3DTexture9 **out,
+                                     HANDLE *shared)
 {
     const HRESULT hr = g_createtexture_hook->stdcall<HRESULT>(self, w, h, levels, usage, fmt,
                                                               pool, out, shared);
@@ -741,8 +741,8 @@ HRESULT __stdcall createtexture_hook(void *self, UINT w, UINT h, UINT levels, DW
     return hr;
 }
 
-HRESULT __stdcall creatert_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
-                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL lockable, void **out,
+HRESULT __stdcall creatert_hook(IDirect3DDevice9 *self, UINT w, UINT h, D3DFORMAT fmt,
+                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL lockable, IDirect3DSurface9 **out,
                                 HANDLE *shared)
 {
     const HRESULT hr = g_creatert_hook->stdcall<HRESULT>(self, w, h, fmt, ms, msq, lockable, out,
@@ -752,8 +752,8 @@ HRESULT __stdcall creatert_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
     return hr;
 }
 
-HRESULT __stdcall createds_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
-                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL discard, void **out,
+HRESULT __stdcall createds_hook(IDirect3DDevice9 *self, UINT w, UINT h, D3DFORMAT fmt,
+                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL discard, IDirect3DSurface9 **out,
                                 HANDLE *shared)
 {
     const HRESULT hr = g_createds_hook->stdcall<HRESULT>(self, w, h, fmt, ms, msq, discard, out,
@@ -763,8 +763,8 @@ HRESULT __stdcall createds_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
     return hr;
 }
 
-HRESULT __stdcall createplain_hook(void *self, UINT w, UINT h, D3DFORMAT fmt, D3DPOOL pool,
-                                   void **out, HANDLE *shared)
+HRESULT __stdcall createplain_hook(IDirect3DDevice9 *self, UINT w, UINT h, D3DFORMAT fmt, D3DPOOL pool,
+                                   IDirect3DSurface9 **out, HANDLE *shared)
 {
     const HRESULT hr = g_createplain_hook->stdcall<HRESULT>(self, w, h, fmt, pool, out, shared);
     on_create(Create::OffscreenPlain, w, h, (uint32_t)fmt, 0, (uint32_t)pool, (long)hr,
@@ -772,7 +772,7 @@ HRESULT __stdcall createplain_hook(void *self, UINT w, UINT h, D3DFORMAT fmt, D3
     return hr;
 }
 
-HRESULT __stdcall getswapchain_hook(void *self, UINT index, void **out)
+HRESULT __stdcall getswapchain_hook(IDirect3DDevice9 *self, UINT index, IDirect3DSwapChain9 **out)
 {
     const HRESULT hr = g_getswapchain_hook->stdcall<HRESULT>(self, index, out);
     on_getter(Getter::SwapChain, index, SUCCEEDED(hr) && out ? *out : nullptr,
@@ -780,8 +780,8 @@ HRESULT __stdcall getswapchain_hook(void *self, UINT index, void **out)
     return hr;
 }
 
-HRESULT __stdcall getbackbuffer_hook(void *self, UINT swapchain, UINT index,
-                                     D3DBACKBUFFER_TYPE type, void **out)
+HRESULT __stdcall getbackbuffer_hook(IDirect3DDevice9 *self, UINT swapchain, UINT index,
+                                     D3DBACKBUFFER_TYPE type, IDirect3DSurface9 **out)
 {
     const HRESULT hr = g_getbackbuffer_hook->stdcall<HRESULT>(self, swapchain, index, type, out);
     on_getter(Getter::BackBuffer, index, SUCCEEDED(hr) && out ? *out : nullptr,
@@ -789,7 +789,7 @@ HRESULT __stdcall getbackbuffer_hook(void *self, UINT swapchain, UINT index,
     return hr;
 }
 
-HRESULT __stdcall getrt_hook(void *self, DWORD index, void **out)
+HRESULT __stdcall getrt_hook(IDirect3DDevice9 *self, DWORD index, IDirect3DSurface9 **out)
 {
     const HRESULT hr = g_getrt_hook->stdcall<HRESULT>(self, index, out);
     on_getter(Getter::RenderTarget, index, SUCCEEDED(hr) && out ? *out : nullptr,
@@ -797,7 +797,7 @@ HRESULT __stdcall getrt_hook(void *self, DWORD index, void **out)
     return hr;
 }
 
-HRESULT __stdcall getds_hook(void *self, void **out)
+HRESULT __stdcall getds_hook(IDirect3DDevice9 *self, IDirect3DSurface9 **out)
 {
     const HRESULT hr = g_getds_hook->stdcall<HRESULT>(self, out);
     on_getter(Getter::DepthStencil, 0, SUCCEEDED(hr) && out ? *out : nullptr,
@@ -805,7 +805,7 @@ HRESULT __stdcall getds_hook(void *self, void **out)
     return hr;
 }
 
-void on_device(void * /*device*/)
+void on_device(IDirect3DDevice9 * /*device*/)
 {
     if (!g_enabled) {
         return;
@@ -848,7 +848,7 @@ void on_device(void * /*device*/)
 
 } // namespace
 
-void install_device_hooks(void *device)
+void install_device_hooks(IDirect3DDevice9 *device)
 {
     on_device(device);
 }

@@ -23,16 +23,17 @@ const std::array kReplacements = {
                 reinterpret_cast<void *>(&reimpl::RenderCmd_ExecuteStream)},
 };
 
-bool g_shadow = false;
+ReimplMode g_mode = ReimplMode::Replace;
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;
 
 } // namespace
 
-void set_reimpl_shadow(bool on) { g_shadow = on; }
+void set_reimpl_mode(ReimplMode mode) { g_mode = mode; }
+ReimplMode reimpl_mode() { return g_mode; }
 
 const Replacement *replaced_at(uintptr_t va)
 {
-    if (g_shadow) {
+    if (g_mode != ReimplMode::Replace) {
         return nullptr;
     }
     for (const Replacement &r : kReplacements) {
@@ -45,9 +46,10 @@ const Replacement *replaced_at(uintptr_t va)
 
 void install_reimpl()
 {
-    if (g_shadow) {
-        MC2VR_LOG("reimpl: debug_reimpl_shadow=on — originals kept, %u reimplementations verified instead",
-                  (unsigned)kReplacements.size());
+    if (g_mode != ReimplMode::Replace) {
+        MC2VR_LOG("reimpl: debug_reimpl=%s — originals kept (%u reimplementations %s)",
+                  g_mode == ReimplMode::Shadow ? "shadow" : "off", (unsigned)kReplacements.size(),
+                  g_mode == ReimplMode::Shadow ? "verified instead" : "unused");
         return;
     }
     for (size_t i = 0; i < kReplacements.size(); i++) {

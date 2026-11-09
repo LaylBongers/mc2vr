@@ -14,9 +14,9 @@ namespace {
 SafetyHookMid g_adapt_mid, g_prev_mid;
 
 // ESI = &bloom->_AdaptiveLuminanceSurface at the creation log site.
-void adapt_midhook(safetyhook::Context &ctx) { adaptation::on_adaptive_slot((void **)ctx.esi); }
+void adapt_midhook(safetyhook::Context &ctx) { adaptation::on_adaptive_slot((IDirect3DSurface9 **)ctx.esi); }
 // EDI = &bloom->_pPrevAdaptiveLuminanceSurface.
-void prev_midhook(safetyhook::Context &ctx) { adaptation::on_prev_adaptive_slot((void **)ctx.edi); }
+void prev_midhook(safetyhook::Context &ctx) { adaptation::on_prev_adaptive_slot((IDirect3DSurface9 **)ctx.edi); }
 
 } // namespace
 

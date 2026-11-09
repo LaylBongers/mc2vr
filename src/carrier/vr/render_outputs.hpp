@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+#include <windows.h>
+#include <d3d9.h> // types only
+
 // Carrier-owned frame outputs (docs/render_outputs.md).
 //
 // The engine draws its final frame (gameplay composite via render-command
@@ -32,16 +35,16 @@ void on_device_restored();
 bool active();
 // The carrier front (capture source; MSAA as the engine requested), or
 // nullptr when not active (boot before setup, mid-Reset).
-void *front();
+IDirect3DSurface9 *front();
 // The eye-capture source for this pass boundary: front(), or nullptr during
 // the post-Reset transition frame (its HDR exposure is invalid — white).
-void *capture_source();
+IDirect3DSurface9 *capture_source();
 // The engine's D3D device (g_LtiRenderer->dx9State), or nullptr.
-void *device();
+IDirect3DDevice9 *device();
 // The resolved LEFT image of the current frame (valid after 1->2), or nullptr.
-void *mirror();
+IDirect3DSurface9 *mirror();
 // Resolve the front into a non-MSAA scratch RT and return it (dumps), or nullptr.
-void *resolve_front();
+IDirect3DSurface9 *resolve_front();
 
 // CreateDevice/Reset parameter policy (device.cpp): the MSAA the engine asked
 // for (applied to the carrier front/depth) — the swapchain itself runs
@@ -49,7 +52,7 @@ void *resolve_front();
 void note_requested_msaa(uint32_t type, uint32_t quality);
 
 // device.cpp taps (main thread).
-void on_present(void *device);
+void on_present(IDirect3DDevice9 *device);
 void on_reset(bool before, long hr);
 
 // eye_replay pass boundaries (next pass: 1 = pass 1 start, 2 = pass 1 done,

@@ -1,4 +1,4 @@
-// Shadow verification of reimplementations (debug_reimpl_shadow=on;
+// Shadow verification of reimplementations (debug_reimpl=shadow;
 // docs/reimpl.md). The originals keep running; each reimplementation is
 // dry-run alongside and compared (harness.hpp). One spec per function
 // (render_cmd.cpp, ...), all installed by install().

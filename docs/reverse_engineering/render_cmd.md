@@ -11,8 +11,12 @@ Each draw record's `cmdStream` (`PgPrimitive+0x2c`) is a dword stream: an opcode
 - **Op 22:** device `StretchRect` (vtable `+0x88`), not "SetStreamSource" as earlier notes and `stream_capture` labeled it. Op 18 ignores its own payload.
 - **Bad opcode:** an opcode > 26 makes the original spin forever. The reimplementation stops and reports it.
 
+## Verified
+
+- **Shadow run, 2026-11-09:** 66.6 M streams in gameplay; every call sequence matched the original. The only end-state differences were in `g_RenderCmdPassObject`. `RenderCmd_BeginSurfacePass` / `EndSurfacePass` also write it (1 / 2), and the dry run doesn't execute callees, so the harness no longer compares it.
+- **Live, 2026-11-09:** replaces the original, with no visual issues and no measurable frame cost (A/B: [../reimpl.md](../reimpl.md)).
+
 ## OPEN
 
-- Shadow verification in gameplay (`debug_reimpl_shadow=on`, `reimpl:` log lines).
-- With the reimplementation installed, `debug_stream_capture`'s opcode MidHook (`0x008569f5`, inside the original) no longer fires; capture needs `debug_reimpl_shadow=on`, which leaves the original running.
+- With the reimplementation installed, `debug_stream_capture`'s opcode MidHook (`0x008569f5`, inside the original) no longer fires; capture needs `debug_reimpl=shadow`, which leaves the original running.
 - The roles of the pass helpers behind ops 16/17/21/25 (`RenderCmd_{Begin,End}SurfacePass`, `FUN_0074af30`, `RenderShell_BeginHalfResPass`).
