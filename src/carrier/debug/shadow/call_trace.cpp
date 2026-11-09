@@ -17,7 +17,7 @@ bool same_function(const game::FnInfo &a, const game::FnInfo &b)
 
 void CallTrace::add(const game::FnInfo &fn, const uint32_t *args)
 {
-    if (n_ >= kCapacity) {
+    if (n_ >= capacity_) {
         overflow_ = true;
         return;
     }
@@ -28,8 +28,9 @@ void CallTrace::add(const game::FnInfo &fn, const uint32_t *args)
     }
 }
 
-Divergence compare(const CallTrace &original, const CallTrace &reimpl)
+Divergence compare(const CallTrace &original, const CallTrace &reimpl, uintptr_t stack_lo, uintptr_t stack_hi)
 {
+    const auto on_stack = [&](uint32_t v) { return v >= stack_lo && v < stack_hi; };
     const uint32_t n = original.size() < reimpl.size() ? original.size() : reimpl.size();
     for (uint32_t i = 0; i < n; i++) {
         const Call &a = original[i];
@@ -38,7 +39,7 @@ Divergence compare(const CallTrace &original, const CallTrace &reimpl)
             return {false, i};
         }
         for (uint8_t k = 0; k < a.fn->argc; k++) {
-            if (!a.fn->params[k].opaque && a.args[k] != b.args[k]) {
+            if (!a.fn->params[k].opaque && a.args[k] != b.args[k] && !(on_stack(a.args[k]) && on_stack(b.args[k]))) {
                 return {false, i};
             }
         }

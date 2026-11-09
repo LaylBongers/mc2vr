@@ -1,7 +1,8 @@
 // Shadow verification of the RenderCmd_ExecuteStream reimplementation
-// (reimpl/render/render_cmd.cpp) against the original (debug_reimpl=shadow).
+// (reimpl/render/render_cmd.cpp) against the original (debug_reimpl=shadow:RenderCmd_ExecuteStream).
 
 #include <array>
+#include <cstring>
 #include <cstdio>
 
 #include "game/dx9.hpp"
@@ -78,10 +79,24 @@ struct ExecuteStreamShadow {
 
 } // namespace
 
-void install()
+bool install_render_cmd()
 {
-    const bool ok = Harness<ExecuteStreamShadow>::install();
-    MC2VR_LOG("shadow: RenderCmd_ExecuteStream %s", ok ? "verifying" : "install FAILED");
+    return Harness<ExecuteStreamShadow>::install();
+}
+
+bool install(const char *name)
+{
+    bool ok;
+    if (strcmp(name, "RenderCmd_ExecuteStream") == 0) {
+        ok = install_render_cmd();
+    } else if (strcmp(name, "PgPrimitive_SubmitToGPU") == 0) {
+        ok = install_submit_to_gpu();
+    } else {
+        MC2VR_LOG("shadow: unknown function '%s' (RenderCmd_ExecuteStream | PgPrimitive_SubmitToGPU)", name);
+        return false;
+    }
+    MC2VR_LOG("shadow: %s %s", name, ok ? "verifying" : "install FAILED");
+    return ok;
 }
 
 } // namespace mc2vr::shadow

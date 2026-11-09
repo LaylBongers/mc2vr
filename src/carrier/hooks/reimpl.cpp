@@ -21,6 +21,8 @@ const std::array kReplacements = {
     // cdecl; the caller (PgPrimitive_SubmitToGPU) relies only on callee-saved registers.
     Replacement{"RenderCmd_ExecuteStream", 0x008569d0u, 0x00856d3fu,
                 reinterpret_cast<void *>(&reimpl::RenderCmd_ExecuteStream)},
+    // Its entry is the stereo replay hook, which runs ours (hooks/submit_to_gpu.cpp).
+    Replacement{"PgPrimitive_SubmitToGPU", 0x00855690u, 0x0085647fu, nullptr},
 };
 
 ReimplMode g_mode = ReimplMode::Replace;
@@ -54,6 +56,10 @@ void install_reimpl()
     }
     for (size_t i = 0; i < kReplacements.size(); i++) {
         const Replacement &r = kReplacements[i];
+        if (r.ours == nullptr) {
+            MC2VR_LOG("reimpl: %s @ %08x replaced (by its own hook)", r.name, (unsigned)r.lo);
+            continue;
+        }
         // Created directly: the guard in site.hpp would refuse our own range.
         auto hook = SafetyHookInline::create(reinterpret_cast<uint8_t *>(r.lo), reinterpret_cast<uint8_t *>(r.ours));
         if (hook) {

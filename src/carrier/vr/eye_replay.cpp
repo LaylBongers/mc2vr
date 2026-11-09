@@ -426,13 +426,13 @@ double g_replay_ms_sum = 0.0;
 double g_replay_ms_max = 0.0;
 } // namespace
 
-void run_frame(void (*submit)())
+void run_frame(void (*pass1)(), void (*pass2)())
 {
     adaptation::on_frame_begin();  // exposure restore after a render-size switch
     set_pass(1);                   // pass 1 = LEFT eye
     // Two passes -> two present-prevs per frame; skip pass 1's (duplicate).
     render_outputs::begin_present_skip();
-    submit();
+    pass1();
 
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
@@ -440,7 +440,7 @@ void run_frame(void (*submit)())
 
     render_outputs::end_present_skip();
     set_pass(2);  // pass 2 = RIGHT eye
-    submit();
+    pass2();
 
     QueryPerformanceCounter(&t1);
     const double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)freq.QuadPart;

@@ -2,7 +2,7 @@
 //
 // Each one is an inline hook on the original's entry. The table also gives
 // each original's code range: hooks/site.hpp refuses other hooks inside a
-// replaced original. debug_reimpl=shadow|off replaces nothing (the originals
+// replaced original. debug_reimpl=shadow:<fn>|off replaces nothing (the originals
 // run; with shadow, debug/shadow verifies ours), and nothing is refused.
 #pragma once
 
@@ -13,7 +13,7 @@ namespace mc2vr::hooks {
 struct Replacement {
     const char *name;  // Ghidra name of the original
     uintptr_t lo, hi;  // the original's code, [lo, hi)
-    void *ours;        // same convention as the original
+    void *ours;        // same convention as the original; nullptr = installed by its own hook file
 };
 
 // mc2vr.conf debug_reimpl (default replace), before any hook is installed.

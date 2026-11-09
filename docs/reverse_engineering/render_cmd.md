@@ -13,10 +13,10 @@ Each draw record's `cmdStream` (`PgPrimitive+0x2c`) is a dword stream: an opcode
 
 ## Verified
 
-- **Shadow run, 2026-11-09:** 66.6 M streams in gameplay; every call sequence matched the original. The only end-state differences were in `g_RenderCmdPassObject`. `RenderCmd_BeginSurfacePass` / `EndSurfacePass` also write it (1 / 2), and the dry run doesn't execute callees, so the harness no longer compares it.
-- **Live, 2026-11-09:** replaces the original, with no visual issues and no measurable frame cost (A/B: [../reimpl.md](../reimpl.md)).
+- **Faithful:** the shadow run's call sequences match the original's. `g_RenderCmdPassObject` is left out of the end-state comparison, because `RenderCmd_BeginSurfacePass` / `EndSurfacePass` also write it (1 / 2) and a dry run doesn't execute callees.
+- **No frame cost** against the original (A/B in the same scene).
 
 ## OPEN
 
-- With the reimplementation installed, `debug_stream_capture`'s opcode MidHook (`0x008569f5`, inside the original) no longer fires; capture needs `debug_reimpl=shadow`, which leaves the original running.
+- `debug_stream_capture`'s opcode MidHook (`0x008569f5`) sits inside the original, so it only fires while the original runs (`debug_reimpl=off`, or `shadow:<function>`).
 - The roles of the pass helpers behind ops 16/17/21/25 (`RenderCmd_{Begin,End}SurfacePass`, `FUN_0074af30`, `RenderShell_BeginHalfResPass`).

@@ -42,6 +42,9 @@ namespace mc2vr {
 
 // Numeric conf values: true and *out set only on a clean, fully-consumed
 // parse; otherwise logs and leaves the setting alone.
+// debug_reimpl=shadow:<function>: which reimplementation to verify.
+static char g_shadow_target[64] = "";
+
 static bool parse_double(const char *key, const char *value, double *out)
 {
     char *end = nullptr;
@@ -181,15 +184,16 @@ static void load_conf()
                 MC2VR_LOG("conf: debug_stub_trace=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_reimpl") == 0) {
-            // Reimplemented functions: replace (default) | shadow | off (docs/reimpl.md).
+            // Reimplemented functions: replace (default) | shadow:<function> | off (docs/reimpl.md).
             if (strcmp(value, "replace") == 0) {
                 hooks::set_reimpl_mode(hooks::ReimplMode::Replace);
-            } else if (strcmp(value, "shadow") == 0) {
+            } else if (strncmp(value, "shadow:", 7) == 0 && value[7] != '\0') {
                 hooks::set_reimpl_mode(hooks::ReimplMode::Shadow);
+                snprintf(g_shadow_target, sizeof(g_shadow_target), "%s", value + 7);
             } else if (strcmp(value, "off") == 0) {
                 hooks::set_reimpl_mode(hooks::ReimplMode::Off);
             } else {
-                MC2VR_LOG("conf: debug_reimpl=%s not recognized (use replace|shadow|off)", value);
+                MC2VR_LOG("conf: debug_reimpl=%s not recognized (use replace | shadow:<function> | off)", value);
             }
         } else if (strcmp(key, "debug_build_census") == 0) {
             // Scene -> draw-record build census (log-only; debug/build_census.hpp).
@@ -401,7 +405,7 @@ void init()
     adaptation::init();         // VR state that needs no hook (before the hooks fire)
     hooks::install_attach();    // the VR implementation's hooks (hooks/install.cpp)
     if (hooks::reimpl_mode() == hooks::ReimplMode::Shadow) {
-        shadow::install();      // verify reimplementations instead (docs/reimpl.md)
+        shadow::install(g_shadow_target);  // verify one reimplementation instead (docs/reimpl.md)
     }
     // Debug tools (each a no-op unless enabled in the conf).
     render::install_early();

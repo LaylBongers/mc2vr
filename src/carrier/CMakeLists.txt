@@ -25,6 +25,7 @@ add_library(mc2vr_carrier SHARED
     hooks/view_rewrite.cpp
     # reimpl/: reimplemented game systems (docs/reimpl.md).
     reimpl/render/render_cmd.cpp
+    reimpl/render/submit_to_gpu.cpp
     # vr/: the VR implementation, plain C++.
     vr/adaptation.cpp
     vr/camera_table.cpp
@@ -49,12 +50,19 @@ add_library(mc2vr_carrier SHARED
     debug/rt_probe.cpp
     debug/shadow/call_trace.cpp
     debug/shadow/render_cmd.cpp
+    debug/shadow/submit_to_gpu.cpp
     debug/stream_capture.cpp
     debug/stub_trace.cpp
     debug/vm_dump.cpp
     debug/wait_census.cpp
     debug/watch.cpp
 )
+
+# Reimplemented engine code does float math like the original: scalar SSE
+# (mulss/addss), not the i686 default x87, whose extended precision would
+# change the rounding of e.g. a*b+c.
+file(GLOB MC2VR_REIMPL_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/reimpl/*/*.cpp)
+set_source_files_properties(${MC2VR_REIMPL_SOURCES} PROPERTIES COMPILE_OPTIONS "-msse2;-mfpmath=sse")
 
 # MinGW would otherwise name it libmc2vr_carrier.dll; LoadLibraryW in the
 # launcher and the deploy script both expect mc2vr_carrier.dll.

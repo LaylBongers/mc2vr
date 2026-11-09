@@ -17,7 +17,7 @@ Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races
 - The carrier stays thin (inject + install + mod host); gameplay mod logic would go in a separate hot-swappable module the carrier hosts.
 - Install everything at attach; hooks on objects that don't exist yet chain off the object's creation (or the first Present), on the engine's own thread — never poll from a side thread.
 - The carrier never blocks on the [host](host.md); no host ⇒ the game runs as before, logged once.
-- Reimplemented game systems live in `src/carrier/reimpl/` and replace their originals (`hooks/reimpl.cpp`; [reimpl.md](reimpl.md)). `debug_reimpl=shadow` verifies them instead, and `debug_reimpl=off` keeps the originals for A/B runs. Directory layout: [code_structure.md](code_structure.md).
+- Reimplemented game systems live in `src/carrier/reimpl/` and replace their originals (`hooks/reimpl.cpp`; [reimpl.md](reimpl.md)). `debug_reimpl=shadow:<function>` verifies them instead, and `debug_reimpl=off` keeps the originals for A/B runs. Directory layout: [code_structure.md](code_structure.md).
 
 ## Debug modules
 

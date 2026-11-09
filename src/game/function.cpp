@@ -9,25 +9,14 @@
 namespace mc2vr::game {
 
 namespace {
-
 thread_local CallInterceptor *t_interceptor = nullptr;
-
-// Register/stack image handed to the assembly shim. Offsets are hard-coded
-// in the asm below.
-struct CallFrame {
-    uint32_t target;                       // +0
-    uint32_t eax, ecx, edx, ebx, esi, edi; // +4 .. +24
-    uint32_t xmm0;                         // +28 (low lane)
-    const uint32_t *stack;                 // +32 (first = [esp+4] at the callee)
-    uint32_t nstack;                       // +36
-};
-static_assert(sizeof(CallFrame) == 40);
-
 } // namespace
 
-} // namespace mc2vr::game
+namespace abi {
+int g_interceptors = 0;
+} // namespace abi
 
-extern "C" uint32_t mc2vr_game_call(const mc2vr::game::CallFrame *frame);
+} // namespace mc2vr::game
 
 // Loads the registers, pushes the stack arguments, calls, then restores ESP
 // from EBP — so caller-pop and callee-pop (`ret N`) callees both work. EBX,
@@ -74,39 +63,24 @@ _mc2vr_game_call:
 
 namespace mc2vr::game {
 
-void set_thread_interceptor(CallInterceptor *ic) { t_interceptor = ic; }
+void set_thread_interceptor(CallInterceptor *ic)
+{
+    if (ic != nullptr && t_interceptor == nullptr) {
+        __atomic_add_fetch(&abi::g_interceptors, 1, __ATOMIC_RELAXED);
+    } else if (ic == nullptr && t_interceptor != nullptr) {
+        __atomic_sub_fetch(&abi::g_interceptors, 1, __ATOMIC_RELAXED);
+    }
+    t_interceptor = ic;
+}
+
 CallInterceptor *thread_interceptor() { return t_interceptor; }
 
 namespace abi {
 
-uint32_t invoke(const FnInfo &fn, const uint32_t *args)
+// An interceptor exists on some thread: this thread's, if any, takes the call.
+uint32_t intercepted_call(const FnInfo &fn, const uint32_t *args)
 {
-    if (t_interceptor != nullptr) {
-        return t_interceptor->on_call(fn, args);
-    }
-    CallFrame f{};
-    uint32_t stack[kMaxParams];
-    for (uint8_t i = 0; i < fn.argc; i++) {
-        const uint32_t v = args[i];
-        switch (fn.params[i].loc) {
-        case Loc::Stack: stack[f.nstack++] = v; break;
-        case Loc::EAX: f.eax = v; break;
-        case Loc::ECX: f.ecx = v; break;
-        case Loc::EDX: f.edx = v; break;
-        case Loc::EBX: f.ebx = v; break;
-        case Loc::ESI: f.esi = v; break;
-        case Loc::EDI: f.edi = v; break;
-        case Loc::XMM0: f.xmm0 = v; break;
-        }
-    }
-    f.stack = stack;
-    if (fn.kind == FnInfo::Kind::Method) {
-        const uint32_t vtbl = *reinterpret_cast<const uint32_t *>((uintptr_t)args[0]);
-        f.target = *reinterpret_cast<const uint32_t *>((uintptr_t)(vtbl + fn.vtbl_offset));
-    } else {
-        f.target = (uint32_t)fn.va;
-    }
-    return mc2vr_game_call(&f);
+    return t_interceptor != nullptr ? t_interceptor->on_call(fn, args) : real_call(fn, args);
 }
 
 } // namespace abi

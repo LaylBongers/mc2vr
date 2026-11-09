@@ -8,8 +8,22 @@
 #include <cstdint>
 
 #include "game/function.hpp"
+#include "game/global.hpp"
 
 namespace mc2vr::game {
+
+struct LtiRenderer;  // layout: Ghidra (only the fields below are used here)
+
+using g_LtiRenderer = Global<uint8_t *, 0x01175288u>;  // LtiRenderer*; NULL until the engine builds it
+constexpr uintptr_t kLtiRendererDevice = 0x5bc;       // IDirect3DDevice9 * (dx9State)
+constexpr uintptr_t kLtiRendererFlags = 0x5e4;        // u32; bit 4 = occlusion queries on
+
+// The device as the engine reads it inline: g_LtiRenderer ? ->dx9State : NULL.
+inline IDirect3DDevice9 *lti_device()
+{
+    uint8_t *const lti = g_LtiRenderer::get();
+    return lti != nullptr ? *reinterpret_cast<IDirect3DDevice9 **>(lti + kLtiRendererDevice) : nullptr;
+}
 
 // VM-slot thunk (calling it is fine, hooking it is not — securom_vm.md).
 inline constexpr Function<IDirect3DDevice9 *()> GetD3DDevice{"GetD3DDevice", 0x0047f2f0u};
@@ -46,6 +60,34 @@ inline constexpr Function<HRESULT(DWORD count, const D3DRECT *rects, DWORD flags
 // Logs a failed HRESULT with its source location; AL = failed.
 inline constexpr Function<bool(HRESULT hr, const char *file, uint32_t line)> Dx9_CheckHResult{
     "Dx9_CheckHResult", 0x0074d620u, {opaque(ESI), STK, STK}};
+
+// A shader-constant binding inside a technique/pass object: register range.
+// count == 0 = not used by this shader (every upload is gated on it).
+struct ShaderConstParam {
+    uint32_t start_reg;
+    uint32_t count;
+};
+static_assert(sizeof(ShaderConstParam) == 8);
+
+// dev->Set{Vertex,Pixel}ShaderConstant{F,B}(param.start_reg, data, param.count);
+// EAX = &param, callee pops the data pointer.
+inline constexpr Function<void(const ShaderConstParam *param, const void *data)> Dx9_SetVertexShaderConstantF{
+    "Dx9_SetVertexShaderConstantF", 0x00749200u, {EAX, STK}};
+inline constexpr Function<void(const ShaderConstParam *param, const void *data)> Dx9_SetPixelShaderConstantF{
+    "Dx9_SetPixelShaderConstantF", 0x0084f150u, {EAX, STK}};
+inline constexpr Function<void(const ShaderConstParam *param, const void *data)> Dx9_SetPixelShaderConstantB{
+    "Dx9_SetPixelShaderConstantB", 0x00853e60u, {EAX, STK}};
+
+// Device methods the engine calls directly (vtable offsets from d3d9.h order).
+inline constexpr Method<HRESULT(IDirect3DDevice9 *, IDirect3DVertexShader9 *shader)> Device_SetVertexShader{
+    "IDirect3DDevice9::SetVertexShader", 0x170};
+inline constexpr Method<HRESULT(IDirect3DDevice9 *, UINT start_reg, const float *data, UINT vec4_count)>
+    Device_SetVertexShaderConstantF{"IDirect3DDevice9::SetVertexShaderConstantF", 0x178};
+inline constexpr Method<HRESULT(IDirect3DDevice9 *, IDirect3DIndexBuffer9 *indices)> Device_SetIndices{
+    "IDirect3DDevice9::SetIndices", 0x1a0};
+inline constexpr Method<HRESULT(IDirect3DDevice9 *, UINT start_reg, const float *data, UINT vec4_count)>
+    Device_SetPixelShaderConstantF{"IDirect3DDevice9::SetPixelShaderConstantF", 0x1b4};
+inline constexpr Method<HRESULT(IDirect3DQuery9 *, DWORD flags)> Query_Issue{"IDirect3DQuery9::Issue", 0x18};
 
 inline constexpr Method<HRESULT(IDirect3DDevice9 *, IDirect3DSurface9 *src, const RECT *src_rect,
                                 IDirect3DSurface9 *dst, const RECT *dst_rect, D3DTEXTUREFILTERTYPE filter)>

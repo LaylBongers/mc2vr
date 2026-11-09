@@ -28,7 +28,7 @@ namespace mc2vr::game {
 
 constexpr size_t kMaxParams = 8;
 
-enum class Loc : uint8_t { Stack, EAX, ECX, EDX, EBX, ESI, EDI, XMM0 };
+enum class Loc : uint8_t { Stack, EAX, ECX, EDX, EBX, ESI, EDI, XMM0, AL };  // AL: EAX low byte only
 
 struct Param {
     Loc loc = Loc::Stack;
@@ -47,6 +47,7 @@ inline constexpr Param EBX{Loc::EBX};
 inline constexpr Param ESI{Loc::ESI};
 inline constexpr Param EDI{Loc::EDI};
 inline constexpr Param XMM0{Loc::XMM0};
+inline constexpr Param AL{Loc::AL};  // the callee reads only AL; the rest of EAX is not an input
 constexpr Param opaque(Param p) { return Param{p.loc, true}; }
 
 // Type-erased description of a Function (what the shim and the shadow
@@ -66,9 +67,62 @@ struct FnInfo {
 
 namespace abi {
 
+// Register/stack image handed to the assembly shim (function.cpp; the asm
+// hard-codes these offsets).
+struct CallFrame {
+    uint32_t target;                       // +0
+    uint32_t eax, ecx, edx, ebx, esi, edi; // +4 .. +24
+    uint32_t xmm0;                         // +28 (low lane)
+    const uint32_t *stack;                 // +32 (first = [esp+4] at the callee)
+    uint32_t nstack;                       // +36
+};
+static_assert(sizeof(CallFrame) == 40);
+
+extern "C" uint32_t mc2vr_game_call(const CallFrame *frame);  // the asm shim
+uint32_t intercepted_call(const FnInfo &fn, const uint32_t *args);  // this thread's interceptor, or real_call
+extern int g_interceptors;  // interceptors installed on any thread (shadow runs only)
+
+// The real call: builds the register/stack image and calls the shim.
+// Inlined into each Function call; `fn` is a constexpr declaration, so the
+// parameter loop folds into direct stores.
+[[gnu::always_inline]] inline uint32_t real_call(const FnInfo &fn, const uint32_t *args)
+{
+    CallFrame f{};
+    uint32_t stack[kMaxParams];
+    for (uint8_t i = 0; i < fn.argc; i++) {
+        const uint32_t v = args[i];
+        switch (fn.params[i].loc) {
+        case Loc::Stack: stack[f.nstack++] = v; break;
+        case Loc::EAX: f.eax = v; break;
+        case Loc::ECX: f.ecx = v; break;
+        case Loc::EDX: f.edx = v; break;
+        case Loc::EBX: f.ebx = v; break;
+        case Loc::ESI: f.esi = v; break;
+        case Loc::EDI: f.edi = v; break;
+        case Loc::XMM0: f.xmm0 = v; break;
+        case Loc::AL: f.eax = v & 0xff; break;
+        }
+    }
+    f.stack = stack;
+    if (fn.kind == FnInfo::Kind::Method) {
+        const uint32_t vtbl = *reinterpret_cast<const uint32_t *>((uintptr_t)args[0]);
+        f.target = *reinterpret_cast<const uint32_t *>((uintptr_t)(vtbl + fn.vtbl_offset));
+    } else {
+        f.target = (uint32_t)fn.va;
+    }
+    return mc2vr_game_call(&f);
+}
+
 // Executes a call: through the current thread's CallInterceptor if one is
-// set, otherwise for real (function.cpp). Returns EAX after the call.
-uint32_t invoke(const FnInfo &fn, const uint32_t *args);
+// set, otherwise for real. Returns EAX after the call. The interceptor check
+// is a plain global (no emulated-TLS lookup) unless one exists somewhere.
+[[gnu::always_inline]] inline uint32_t invoke(const FnInfo &fn, const uint32_t *args)
+{
+    if (__builtin_expect(__atomic_load_n(&g_interceptors, __ATOMIC_RELAXED) != 0, 0)) {
+        return intercepted_call(fn, args);
+    }
+    return real_call(fn, args);
+}
 
 template <class T>
 constexpr uint32_t to_u32(T v)
@@ -120,15 +174,17 @@ struct Function<R(Args...)> {
         static_assert(sizeof...(Args) == 0, "parameters need their locations");
     }
 
-    R operator()(Args... args) const
+    [[gnu::always_inline]] R operator()(Args... args) const
     {
         const uint32_t a[sizeof...(Args) + 1] = {abi::to_u32(args)..., 0};
         return abi::from_eax<R>(abi::invoke(info, a));
     }
 };
 
-// A virtual method called through the object's vtable (stdcall, all on the
-// stack, `this` first). `this` is opaque for comparison.
+// A virtual method called through the object's vtable, `this` first. By
+// default stdcall (everything on the stack, COM style); pass the locations to
+// declare another convention, e.g. thiscall: {opaque(ECX)}. `this` is opaque
+// for comparison by default.
 template <class Sig>
 struct Method;
 
@@ -143,8 +199,15 @@ struct Method<R(This, Args...)> {
         info.params[0] = opaque(STK);
         for (size_t i = 1; i <= sizeof...(Args); i++) info.params[i] = STK;
     }
+    template <size_t N>
+    constexpr Method(const char *name, uint16_t vtbl_offset, const Param (&params)[N])
+        : info{name, 0, vtbl_offset, FnInfo::Kind::Method, (uint8_t)N, {}}
+    {
+        static_assert(N == sizeof...(Args) + 1, "one Param per parameter, `this` included");
+        for (size_t i = 0; i < N; i++) info.params[i] = params[i];
+    }
 
-    R operator()(This self, Args... args) const
+    [[gnu::always_inline]] R operator()(This self, Args... args) const
     {
         const uint32_t a[] = {abi::to_u32(self), abi::to_u32(args)...};
         return abi::from_eax<R>(abi::invoke(info, a));

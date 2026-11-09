@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "game/addresses.h"
+#include "hooks/reimpl.hpp"
 #include "hooks/site.hpp"
 #include "log.hpp"
 #include "vr/view_rewrite.hpp"
@@ -32,6 +33,11 @@ void vcd_midhook(safetyhook::Context &ctx)
 
 void install_view_rewrite()
 {
+    if (replaced_at(MC2_VCD_UPLOAD_CMP) != nullptr) {
+        // Our PgPrimitive_SubmitToGPU calls view_rewrite::on_upload_gate itself.
+        MC2VR_LOG("view: upload gate folded into the PgPrimitive_SubmitToGPU reimplementation");
+        return;
+    }
     // Plaintext .text MidHook (same pattern as the debug MidHooks). Failure
     // is non-fatal: the map stays INVALID and the rewrite idles.
     if (!create_mid(g_vcd_mid, MC2_VCD_UPLOAD_CMP, vcd_midhook, "view upload-gate MidHook")) {
