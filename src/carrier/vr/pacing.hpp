@@ -22,7 +22,8 @@ bool render_gate(Mc2IpcState *st);
 // CPU queues the right eye while the GPU still draws the left (DXVK tracks
 // resource hazards itself). debug_keep_replay_drain=on restores the drain.
 // on_drain_check_busy(): BeginSubmit's drain check saw the GPU busy
-// (hooks/pacing.cpp); true = report it idle (skip the drain).
+// (called by reimpl/render/begin_submit.cpp); true = report it idle (skip
+// the drain).
 bool on_drain_check_busy();
 bool keep_replay_drain();
 bool set_keep_replay_drain(const char *value);

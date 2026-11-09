@@ -15,7 +15,7 @@ Carrier side, `src/carrier/vr/pacing.cpp`, while the session is VISIBLE/FOCUSED:
 
 Both waits are bounded so neither side can hang the other: carrier gate 50 ms, host pair wait 100 ms (the host only waits while pairs arrived in the last 500 ms). Log lines: `pace:` (gate waits, fed dt vs `g_Dt`, governor mode/rate), `submit:` (fresh/late/stale, wait times).
 
-The stereo replay pass skips `LtiRenderer_BeginSubmit`'s per-submit GPU drain (MidHook on its drain check `0x0074ab5f`), so the CPU queues the right eye while the GPU still draws the left; DXVK's own hazard tracking covers buffer reuse. `debug_keep_replay_drain=on` restores the drain.
+The stereo replay pass skips `LtiRenderer_BeginSubmit`'s per-submit GPU drain (a condition at the drain check in our `LtiRenderer_BeginSubmit`, [reimpl.md](reimpl.md)), so the CPU queues the right eye while the GPU still draws the left; DXVK's own hazard tracking covers buffer reuse. `debug_keep_replay_drain=on` restores the drain.
 
 Head-pose consistency of the rendered pair: [camera.md](camera.md).
 

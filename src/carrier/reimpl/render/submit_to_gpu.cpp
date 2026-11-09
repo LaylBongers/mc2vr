@@ -7,6 +7,7 @@
 
 #include "reimpl/render/submit_to_gpu.hpp"
 
+#include "reimpl/render/begin_submit.hpp"
 #include "reimpl/render/render_cmd.hpp"
 
 #include <windows.h>
@@ -153,7 +154,7 @@ bool begin_pass()  // 0x8556a7-0x855754
             RenderShell_PrecacheFinish();
         }
     }
-    return LtiRenderer_BeginSubmit(render_shell());
+    return reimpl::LtiRenderer_BeginSubmit(render_shell());  // ours; the original is a vtable call (slot 15)
 }
 
 void submit_record(PgPrimitive *rec)

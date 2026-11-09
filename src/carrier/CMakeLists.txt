@@ -16,12 +16,13 @@ add_library(mc2vr_carrier SHARED
     hooks/frame_tick.cpp
     hooks/install.cpp
     hooks/occluder_boxes.cpp
-    hooks/pacing.cpp
+    hooks/entry.cpp
     hooks/reimpl.cpp
     hooks/render_outputs.cpp
     hooks/render_size.cpp
     hooks/site.cpp
     # reimpl/: reimplemented game systems (docs/reimpl.md).
+    reimpl/render/begin_submit.cpp
     reimpl/render/render_cmd.cpp
     reimpl/render/submit_to_gpu.cpp
     # vr/: the VR implementation, plain C++.
@@ -39,7 +40,6 @@ add_library(mc2vr_carrier SHARED
     vr/view_rewrite.cpp
     vr/vp_camera.cpp
     # debug/: debugging tools, self-contained (conf-gated, default off).
-    debug/beginsubmit_probe.cpp
     debug/build_census.cpp
     debug/camera_census.cpp
     debug/census_hooks.cpp

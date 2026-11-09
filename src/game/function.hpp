@@ -15,6 +15,11 @@
 //
 // Only the inputs a callee actually reads are declared. Registers an original
 // caller happens to leave set (leftovers from earlier code) are not modeled.
+//
+// A declaration also describes the entry of a reimplemented original
+// (src/carrier/hooks/entry.hpp). That needs the bytes the original pops on return
+// (`ret N`): pass Pops{N} after the parameters. Calls don't need it (the shim
+// restores ESP either way), so it is only declared where an entry uses it.
 #pragma once
 
 #include <bit>
@@ -44,6 +49,11 @@ inline constexpr Param EDI{Loc::EDI};
 inline constexpr Param XMM0{Loc::XMM0};
 inline constexpr Param AL{Loc::AL};  // the callee reads only AL; the rest of EAX is not an input
 
+// Bytes of stack arguments the original pops itself (`ret N`); 0 = the caller pops.
+struct Pops {
+    uint16_t bytes;
+};
+
 // Type-erased description of a Function (what the call shim needs).
 struct FnInfo {
     enum class Kind : uint8_t {
@@ -56,6 +66,7 @@ struct FnInfo {
     Kind kind;
     uint8_t argc;
     Param params[kMaxParams];
+    uint16_t pops;          // Pops; entries only
 };
 
 namespace abi {
@@ -148,6 +159,12 @@ struct Function<R(Args...)> {
     {
         static_assert(N == sizeof...(Args), "one Param per parameter");
         for (size_t i = 0; i < N; i++) info.params[i] = params[i];
+    }
+    template <size_t N>
+    constexpr Function(const char *name, uintptr_t va, const Param (&params)[N], Pops pops)
+        : Function(name, va, params)
+    {
+        info.pops = pops.bytes;
     }
     constexpr Function(const char *name, uintptr_t va)
         : info{name, va, 0, FnInfo::Kind::Direct, 0, {}}

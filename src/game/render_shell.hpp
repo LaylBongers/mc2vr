@@ -31,11 +31,16 @@ inline constexpr Function<void()> RenderShell_BeginHalfResPass{"RenderShell_Begi
 constexpr uintptr_t kRenderShellObject = 0x017ceaf0u;  // g_RenderShell (g_RenderShellPtr points here)
 inline RenderShell *render_shell() { return reinterpret_cast<RenderShell *>(kRenderShellObject); }
 
-// Slot 15 LtiRenderer_BeginSubmit 0x0074aaa0 (Present prev, BeginScene, GPU sync, clear). AL = go.
-inline constexpr Method<bool(RenderShell *)> LtiRenderer_BeginSubmit{"LtiRenderer_BeginSubmit", 0x3c,
-                                                                     {ECX}};
+// Slot 15 LtiRenderer_BeginSubmit (Present prev, BeginScene, GPU sync, clear). AL = go.
+// Reimplemented (reimpl/render/begin_submit.hpp); this declares its entry.
+inline constexpr Function<bool(RenderShell *self)> LtiRenderer_BeginSubmit{"LtiRenderer_BeginSubmit", 0x0074aaa0u,
+                                                                           {ECX}};
 // Slot 22 LtiRenderer_EndSubmit 0x0074ac30 (EndScene).
 inline constexpr Method<bool(RenderShell *)> LtiRenderer_EndSubmit{"LtiRenderer_EndSubmit", 0x58, {ECX}};
+
+// One frame's GPU submission; called by RenderShell_RenderFrameTimed.
+// Reimplemented (reimpl/render/submit_to_gpu.hpp); this declares its entry.
+inline constexpr Function<void()> PgPrimitive_SubmitToGPU{"PgPrimitive_SubmitToGPU", 0x00855690u};
 
 // ---- per-frame submit state -----------------------------------------------------------
 using g_InRenderFrame = Global<uint8_t, 0x01175615u>;
@@ -94,7 +99,13 @@ using s_PgPrimitive_SubmitToGPU = Global<const char, 0x00be85b0u>;      // "PgPr
 using s_FinishedPrecacheRender = Global<const char, 0x00be85ccu>;       // "- Finished PrecacheRender %i\n"
 using s_PrecacheRenderingComplete = Global<const char, 0x00be85ecu>;    // "Precache Rendering Complete.\n"
 
-// RenderShell field read by the view-type-7 frame end.
-constexpr uintptr_t kRenderShellRT0Surface = 0x3e90;  // IDirect3DSurface9 *
+// RenderShell fields (the view-type-7 frame end, BeginSubmit).
+constexpr uintptr_t kRenderShellDevice = 0x2d28;          // IDirect3DDevice9 * (BeginSubmit's query device)
+constexpr uintptr_t kRenderShellRT0Surface = 0x3e90;      // IDirect3DSurface9 *
+constexpr uintptr_t kRenderShellDepthSurface = 0x3ea0;    // IDirect3DSurface9 *
+constexpr uintptr_t kRenderShellSkipClear = 0x4448;       // u32; nonzero = BeginSubmit does not clear
+
+// ---- BeginSubmit -------------------------------------------------------------------
+using g_InD3DScene = Global<uint8_t, 0x0117526cu>;  // set after BeginScene succeeds
 
 } // namespace mc2vr::game

@@ -7,7 +7,6 @@
 #include <cmath>
 #include <cstdint>
 
-#include "debug/beginsubmit_probe.hpp"
 #include "debug/wait_census.hpp"
 #include "game/addresses.h"
 #include "hooks/site.hpp"
@@ -146,9 +145,6 @@ bool install()
     g_frame_tick_hook = std::move(*result);
     MC2VR_LOG("hooks: installed FrameTick @ %p (trap-based install, no external suspension)",
               (void *)MC2_GAMESHELL_FRAMETICK);
-
-    // BeginSubmit MidHook probe (debug, instrument-only; non-fatal).
-    beginsubmit_probe::install();
 
     return true;
 }

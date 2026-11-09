@@ -10,13 +10,17 @@ Directory rules: [code_structure.md](code_structure.md).
   - Typed data: structs with `static_assert`s on their offsets (`pg_primitive.hpp`), stream formats (`render_cmd.hpp`'s `rcmd::` commands), and fixed-address globals as `Global<T, VA>` under their Ghidra names.
   - Original functions as typed callables, `Function<R(Args...)>` / `Method<...>` (`function.hpp`): the Ghidra name, the VA, and each parameter's location (`EAX`, `ESI`, `XMM0`, `STK`, ...). A call reads like C++: `Dx9_SetRenderState(D3DRS_CLIPPLANEENABLE, mask)`. One i386 shim (`function.cpp`) loads the registers, pushes the stack arguments and restores ESP afterwards, so callee-pop works too. Only the inputs a callee actually reads are declared.
 - **`src/carrier/reimpl/<subsystem>/`:** the reimplementations. Each reads like the original, handler by handler, through `game::` types and functions. It calls `vr/` code directly where it implements VR behavior. Each header records the original VA, the status, what it calls, and which globals it writes. The Ghidra plate notes the reimplementation.
-- **`src/carrier/hooks/reimpl.cpp`:** the replacement list, one line per reimplementation (name, the original's code range, our function). `hooks/site.hpp` refuses any other hook inside a replaced original's code. Such a hook would silently stop firing; it has to become a direct call in the reimplementation.
+- **`src/carrier/hooks/reimpl.cpp`:** the replacement list, one line per reimplementation: `replace<game::Original, &reimpl::Original>(end of the original's code)`. `hooks/site.hpp` refuses any other hook inside a replaced original's code. Such a hook would silently stop firing; it has to become a direct call in the reimplementation.
 
 ## Replacement
 
 A reimplementation is mandatory once it's in: an inline hook on the original's entry (`hooks/reimpl.cpp`). There are no switches back to the original; regressions are bisected with `git`. Once VR behavior is folded in, a reimplementation is no longer equivalent to the original anyway.
 
-Inside reimplemented code, calls to other reimplemented functions are plain C++ calls, and `game::` callables are only for code that is still original. A cdecl/void original whose caller relies only on callee-saved registers is replaced by our function directly; both current ones are. Any other convention needs an entry thunk generated from its `Function` declaration (not written yet).
+A reimplementation is plain C++ with the original's signature (`bool LtiRenderer_BeginSubmit(RenderShell *self)`), in our own ABI. Calls between reimplemented functions are plain C++ calls, so they can be used as the reimplementation grows; `game::` callables are only for code that is still original. No compiler-specific convention annotations.
+
+Game code still calls the original's address with the original's convention. The hook there jumps to an entry generated from the original's `Function` declaration (`hooks/entry.hpp`, the inverse of the call shim; the convention facts stay in the `game/` declaration). A per-replacement stub (`push info; jmp`) hands the shared asm entry (`hooks/entry.cpp`) its adapter. The entry saves the caller's registers, the adapter reads each parameter from its declared location and calls ours, and the entry returns like the original: result in EAX, every other general register restored, the declared `Pops{N}` bytes popped. Float (x87) and 64-bit returns are not supported yet (`static_assert`). Once every caller of an original is reimplemented, its entry is never reached.
+
+Inside reimplemented code, prefer native calls (the device, Win32, our log) over the game's wrappers, except where the game keeps state around the call (the `Dx9_*` caches, [hooks.md](hooks.md)).
 
 ## Verifying a new reimplementation
 
@@ -34,9 +38,9 @@ Things that produced false differences:
 
 - `RenderCmd_ExecuteStream`: replaces the original. Verified against it (dry run: identical call sequences in gameplay), no frame cost ([reverse_engineering/render_cmd.md](reverse_engineering/render_cmd.md)).
 - `PgPrimitive_SubmitToGPU`: replaces the original and renders the stereo frame, a LEFT and a RIGHT pass ([stereo.md](stereo.md)). The `view_rewrite` upload gate is a direct call in it. Verified against the original (paired passes: identical call sequences in gameplay) ([reverse_engineering/submit_to_gpu.md](reverse_engineering/submit_to_gpu.md)).
+- `LtiRenderer_BeginSubmit`: replaces the original (this in ECX, returns AL). Device calls, `Sleep` and failure logging are native. Ours calls the replay-pass drain skip directly at the drain check ([pacing.md](pacing.md)); `SubmitToGPU` calls it as a plain C++ call instead of through vtable slot 15. Not compared against the original call for call: it already deviates on purpose (native calls, our logging, the drain skip), so a comparison would mostly report those. Verified in gameplay instead: one Present and two BeginScene/EndScene per frame (pass 1's Present skipped), the drain skipped once per frame, no failures, 90 Hz unchanged, no visual issues.
 - **Call-path cost:** a `game::Function` call costs about 5 ns under Wine, against 1 ns for a direct call. Frame-building is inlined per declaration; the rest is the generic asm shim. Native calls (`__cdecl`/`__stdcall`/`__fastcall`/`__thiscall`) where the convention fits would get closer to 1 ns, but each declaration would then need the callee's pop count.
 - OPEN, candidates for the next reimplementations:
-  - `LtiRenderer_BeginSubmit` (`0x0074aaa0`): Present prev, BeginScene, GPU sync, clear. That would turn the right-eye drain skip, now a MidHook at `0x0074ab5f` ([pacing.md](pacing.md)), into a plain condition.
   - The HUD: the Scaleform records (2-row `Mvp`/`TexGen` shaders, about 130 draws per frame) pass through our `SubmitToGPU`, which is where a HUD render-target split could go ([hud.md](hud.md), [reverse_engineering/gui_renderer.md](reverse_engineering/gui_renderer.md)).
 
 ## Tests
@@ -44,3 +48,4 @@ Things that produced false differences:
 We only test what nothing else verifies. A test whose expected values come from the same reading of the disassembly as the code just repeats it. Faithfulness is checked against the original itself, in the game.
 
 - `tools/test/test_call_shim.cpp` (`mc2vr_call_shim_test`, i386, run under Wine) covers the hand-written asm call shim. A shim bug in the game would show up as a crash far from its cause. Build and run: `cmake --build build/win32 --target mc2vr_call_shim_test && wine build/win32/bin/mc2vr_call_shim_test.exe`.
+- `tools/test/test_game_entry.cpp` (`mc2vr_game_entry_test`, same) covers the entry for replacements: register and stack parameters, AL bools, XMM0, the callee-pop return, the result and the restored registers. Same build and run with `mc2vr_game_entry_test`.

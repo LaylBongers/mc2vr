@@ -8,7 +8,6 @@
 #include "hooks/device.hpp"
 #include "hooks/frame_tick.hpp"
 #include "hooks/occluder_boxes.hpp"
-#include "hooks/pacing.hpp"
 #include "hooks/reimpl.hpp"
 #include "hooks/render_outputs.hpp"
 #include "hooks/render_size.hpp"
@@ -19,10 +18,10 @@ void install_attach()
 {
     install_reimpl();         // first: the guard refuses hooks inside replaced originals.
                               // SubmitToGPU's replacement renders the stereo frame and
-                              // calls view_rewrite's upload gate itself.
+                              // calls view_rewrite's upload gate itself; BeginSubmit's
+                              // calls the replay-pass drain skip.
     install();                // GameShell_FrameTick: frame counter, timing
     install_post_update();    // FrameTick slot-5 site: host-event drain
-    install_pacing();         // replay-pass GPU drain skip (LtiRenderer_BeginSubmit)
     install_camera_table();   // HMD pose injection at g_CameraTable
     install_cull_frustum();   // HMD cull frustum
     install_occluder_boxes(); // occlusion-query boxes off (VR smearing)

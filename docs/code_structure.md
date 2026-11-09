@@ -9,7 +9,7 @@ How the source is organized, and the reasoning behind the split. It describes th
 - **`src/common/`**: the shared-memory contract between carrier and host (`mc2vr_ipc.h`) and small shared math.
 - **`src/game/`** (`mc2vr_game` library): facts about `Mercenaries2.exe`, without mod behavior, mirroring the Ghidra project and keyed to the exe hash.
   - Typed data: structs with offset `static_assert`s, and `Global<T, VA>` globals under their Ghidra names.
-  - Original functions as typed callables (`function.hpp`).
+  - Original functions as typed callables (`function.hpp`): parameter locations and callee pops. The call shim that makes them callable lives here too.
   - `addresses.h` holds hook/probe sites and older offset macros; the typed headers are the newer form.
 - **`src/carrier/`**: the injected DLL; layout below.
 - **`tools/`**: offline tools (`securom_trace.py`, `analyze_dumps.py`) and the tests in `tools/test/` ([reimpl.md](reimpl.md#tests)).
@@ -20,7 +20,7 @@ How the source is organized, and the reasoning behind the split. It describes th
 - **`hooks/`:** the attachments to game code: hook objects, the callbacks that decode registers and stack, code patches, and the D3D9 vtable hooks.
   - `install.cpp` lists them in install order.
   - `site.hpp` creates hooks and refuses sites inside replaced originals, where a hook would silently never fire.
-  - `reimpl.cpp` lists the reimplementations that replace originals.
+  - `reimpl.cpp` lists the reimplementations that replace originals; `entry.hpp` generates the entry each one is reached through from the original's `game/` declaration.
   - Keeping this in one place makes the full set of patches to the game visible, and keeps VR code free of register-level detail.
 - **`reimpl/`:** reimplemented game systems ([reimpl.md](reimpl.md)), written to read like the original through `game::` types and functions. They call `vr/` directly where they implement VR behavior, which is the reason for reimplementing something at all.
 - **`vr/`:** the VR implementation as plain C++: camera, view rewrite, eye images, render outputs and sizing, pacing, device parameters, shader constant tables.

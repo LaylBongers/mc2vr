@@ -7,7 +7,11 @@
 #include <array>
 #include <utility>
 
+#include "game/render_cmd.hpp"
+#include "game/render_shell.hpp"
+#include "hooks/entry.hpp"
 #include "log.hpp"
+#include "reimpl/render/begin_submit.hpp"
 #include "reimpl/render/render_cmd.hpp"
 #include "reimpl/render/submit_to_gpu.hpp"
 
@@ -15,17 +19,19 @@ namespace mc2vr::hooks {
 
 namespace {
 
-// Each entry's convention must match the original's exactly as its callers
-// use it: plain cdecl/stdcall replacements go in directly; register
-// conventions need an entry thunk (none yet).
+// Ours (Fn) replaces the original declared by Decl (game/), whose code ends
+// at hi. Game code reaches ours through the entry generated from Decl
+// (hooks/entry.hpp), which adapts the original's convention.
+template <const auto &Decl, auto Fn>
+constexpr Replacement replace(uintptr_t hi)
+{
+    return Replacement{Decl.info.name, Decl.info.va, hi, &kEntry<Decl, Fn>};
+}
+
 const std::array kReplacements = {
-    // cdecl; the caller (PgPrimitive_SubmitToGPU) relies only on callee-saved registers.
-    Replacement{"RenderCmd_ExecuteStream", 0x008569d0u, 0x00856d3fu,
-                reinterpret_cast<void *>(&reimpl::RenderCmd_ExecuteStream)},
-    // void(void); the caller (RenderShell_RenderFrameTimed) relies only on
-    // callee-saved registers. Ours renders the stereo frame (both eyes).
-    Replacement{"PgPrimitive_SubmitToGPU", 0x00855690u, 0x0085647fu,
-                reinterpret_cast<void *>(&reimpl::PgPrimitive_SubmitToGPU)},
+    replace<game::RenderCmd_ExecuteStream, &reimpl::RenderCmd_ExecuteStream>(0x00856d3fu),
+    replace<game::PgPrimitive_SubmitToGPU, &reimpl::PgPrimitive_SubmitToGPU>(0x0085647fu),
+    replace<game::LtiRenderer_BeginSubmit, &reimpl::LtiRenderer_BeginSubmit>(0x0074ac2bu),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;
@@ -46,8 +52,13 @@ void install_reimpl()
 {
     for (size_t i = 0; i < kReplacements.size(); i++) {
         const Replacement &r = kReplacements[i];
+        void *const entry = make_entry(r.entry);
+        if (entry == nullptr) {
+            MC2VR_LOG("reimpl: %s @ %08x: entry stub FAILED — original runs", r.name, (unsigned)r.lo);
+            continue;
+        }
         // Created directly: the guard in site.hpp would refuse our own range.
-        auto hook = SafetyHookInline::create(reinterpret_cast<uint8_t *>(r.lo), reinterpret_cast<uint8_t *>(r.ours));
+        auto hook = SafetyHookInline::create(reinterpret_cast<uint8_t *>(r.lo), reinterpret_cast<uint8_t *>(entry));
         if (hook) {
             g_hooks[i] = std::move(*hook);
         }

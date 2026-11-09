@@ -22,15 +22,6 @@
 // timing sanity, install ack.
 #define MC2_GAMESHELL_FRAMETICK ((uintptr_t)0x00630e10u)
 
-// LtiRenderer_BeginSubmit (0x0074aaa0, plaintext .text, vtable slot 15 of
-// LtiRenderer_vtbl 0x00bd38e8) — thiscall (this in ECX). Every frame:
-// Present(prev frame) then BeginScene (runtime evidence). A MidHook
-// probe at its entry reads ECX (this) and [ESP] (return address) to answer
-// two open questions: which vtable the live object holds (base vs the
-// derived RenderShell override 'Flush') and who drives the frame (the
-// encrypted thunk_FUN_0256b6f0 is the suspect).
-#define MC2_LTI_BEGINSUBMIT ((uintptr_t)0x0074aaa0u)
-
 // ---- instrument sites (instruction-level, verified by disassembly) ----
 
 // RenderQueue_SubmitWorldPackets per-view loop head: `lea eax,[eax+0x12865e0]`.
@@ -432,11 +423,6 @@
 #define MC2_FRAMERATE_MODE_A ((uintptr_t)0x01750870u)
 #define MC2_FRAMERATE_MODE_B ((uintptr_t)0x0175086cu)
 #define MC2_FRAMERATE_RATE ((uintptr_t)0x01750874u)
-
-// LtiRenderer_BeginSubmit GPU drain: `cmp eax,1` right after the first
-// GetData(query, 0, 0, D3DGETDATA_FLUSH) (0x0074ab5d); EAX = 1 (S_FALSE)
-// enters the Sleep(0) spin until the GPU is idle, anything else exits.
-#define MC2_LTI_BEGINSUBMIT_DRAIN_CHECK ((uintptr_t)0x0074ab5fu)
 
 // Scene -> draw-record build (docs/reverse_engineering/scene_record_build.md;
 // plates in Ghidra). All plaintext .text MidHook sites, no branch targets
