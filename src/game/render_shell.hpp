@@ -33,9 +33,9 @@ inline RenderShell *render_shell() { return reinterpret_cast<RenderShell *>(kRen
 
 // Slot 15 LtiRenderer_BeginSubmit 0x0074aaa0 (Present prev, BeginScene, GPU sync, clear). AL = go.
 inline constexpr Method<bool(RenderShell *)> LtiRenderer_BeginSubmit{"LtiRenderer_BeginSubmit", 0x3c,
-                                                                     {opaque(ECX)}};
+                                                                     {ECX}};
 // Slot 22 LtiRenderer_EndSubmit 0x0074ac30 (EndScene).
-inline constexpr Method<bool(RenderShell *)> LtiRenderer_EndSubmit{"LtiRenderer_EndSubmit", 0x58, {opaque(ECX)}};
+inline constexpr Method<bool(RenderShell *)> LtiRenderer_EndSubmit{"LtiRenderer_EndSubmit", 0x58, {ECX}};
 
 // ---- per-frame submit state -----------------------------------------------------------
 using g_InRenderFrame = Global<uint8_t, 0x01175615u>;

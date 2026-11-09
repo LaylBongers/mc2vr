@@ -7,6 +7,8 @@
 
 #include "reimpl/render/submit_to_gpu.hpp"
 
+#include "reimpl/render/render_cmd.hpp"
+
 #include <windows.h>
 #include <d3d9.h>
 
@@ -16,8 +18,9 @@
 #include "game/dx9.hpp"
 #include "game/lti.hpp"
 #include "game/pg_primitive.hpp"
-#include "game/render_cmd.hpp"
 #include "game/render_shell.hpp"
+#include "vr/adaptation.hpp"
+#include "vr/eye_replay.hpp"
 #include "vr/view_rewrite.hpp"
 
 namespace mc2vr::reimpl {
@@ -123,7 +126,7 @@ void end_view_type()
 }
 
 // Returns false when the frame is skipped (the original's early exits).
-bool begin_frame()  // 0x8556a7-0x855754
+bool begin_pass()  // 0x8556a7-0x855754
 {
     if (g_NameHash_PgPrimitiveSubmitToGPU::get() == 0) {
         g_NameHash_PgPrimitiveSubmitToGPU::set(Lti_LazyNameHash(s_PgPrimitive_SubmitToGPU::ptr()));
@@ -328,10 +331,7 @@ void submit_record(PgPrimitive *rec)
     }
 
     // ---- command stream + draw 0x8562b4-0x856354 ----
-    // Through the game entry (not reimpl:: directly) so the call is recorded
-    // like the original's by the paired verification; it lands in our
-    // reimplementation when that replaces the original.
-    game::RenderCmd_ExecuteStream(rec->cmdStream, tech, pass);
+    reimpl::RenderCmd_ExecuteStream(rec->cmdStream, tech, pass);
     if (tech != nullptr) {
         RenderShell_BindRecordStreams(rec);
         if (g_LastGeometry::get() != rec->geometryObj) {
@@ -369,10 +369,13 @@ void submit_record(PgPrimitive *rec)
 
 } // namespace
 
-void PgPrimitive_SubmitToGPU()
+namespace {
+
+// One submission pass: the original function's body.
+void submit_pass()
 {
     g_InRenderFrame::set(1);
-    if (!begin_frame()) {
+    if (!begin_pass()) {
         g_InRenderFrame::set(0);
         return;
     }
@@ -400,6 +403,21 @@ void PgPrimitive_SubmitToGPU()
     LtiRenderer_EndSubmit(render_shell());
     end_view_type();
     g_InRenderFrame::set(0);
+}
+
+} // namespace
+
+// VR: one frame is two complete passes over the same records, LEFT then
+// RIGHT; each pass resets its own draw-state caches, so the second
+// re-submits the identical frame for the other eye.
+void PgPrimitive_SubmitToGPU()
+{
+    adaptation::on_frame_begin();  // exposure restore after a render-size switch
+    eye_replay::begin_left_pass();
+    submit_pass();
+    eye_replay::begin_right_pass();
+    submit_pass();
+    eye_replay::end_frame();
 }
 
 } // namespace mc2vr::reimpl

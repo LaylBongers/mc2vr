@@ -274,10 +274,8 @@ void finalize_frame(uint64_t frame)
 
 // ---- public entry points -------------------------------------------------------
 
-void on_opcode(uint32_t esp, uint32_t ebp, uint32_t eax)
+void on_command(const uint32_t *cmd, const uint32_t *stream, uint32_t arg2, uint32_t arg3)
 {
-    // (eax = opcode; unused here — render_dump.cpp keeps the histogram.)
-    (void)eax;
     if (!g_enabled) {
         return;
     }
@@ -292,14 +290,9 @@ void on_opcode(uint32_t esp, uint32_t ebp, uint32_t eax)
     }
     g_hook_cmds++;
 
-    // First command of a stream? At the hooked `cmp eax,0x1a` the live stack
-    // is: [esp+0x10]=return addr, [esp+0x14]=stream, [esp+0x18/0x1c]=args 2/3.
-    const uint32_t *stream = *(const uint32_t **)(uintptr_t)(esp + 0x14);
-    if ((const uint32_t *)(uintptr_t)ebp != stream) {
-        return;
+    if (cmd != stream) {
+        return;  // only a stream's first command walks the stream
     }
-    const uint32_t arg2 = *(const uint32_t *)(uintptr_t)(esp + 0x18);
-    const uint32_t arg3 = *(const uint32_t *)(uintptr_t)(esp + 0x1c);
 
     // Walk + copy the whole stream.
     uint32_t cmds = 0;

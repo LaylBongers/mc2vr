@@ -9,7 +9,7 @@ Premises (proven, do not re-litigate; RE detail: [draw_camera_chain.md](reverse_
 
 ## Second draw pass
 
-Streams carry no draws, so the per-eye pass re-invokes `PgPrimitive_SubmitToGPU` wholesale (InlineHook at entry — the record walk re-runs state + draws; VCD uploads re-issue through the slot-94 rewrite, which keys on the pass). Code: `src/carrier/hooks/submit_to_gpu.cpp` (the replay hook), `src/carrier/vr/eye_replay.cpp` (`run_frame`, the pass sequence); the stream tap is the debug tool `src/carrier/debug/stream_capture.cpp`. Replay must use copied pointers (dedupe global `0x011697b8`). Pass 1 = LEFT, pass 2 = RIGHT; the replay happens after the frame's GPU-sync point (event-query spin in `LtiRenderer_BeginSubmit`) and costs ~3.2 ms.
+Streams carry no draws, so each eye is a complete submission pass: the `PgPrimitive_SubmitToGPU` reimplementation runs its record walk twice, LEFT then RIGHT, with state and draws each time. The VCD uploads re-issue through the slot-94 rewrite, which keys on the pass. Code: `src/carrier/reimpl/render/submit_to_gpu.cpp` (the two passes), `src/carrier/vr/eye_replay.cpp` (the pass boundaries). Replay must use copied pointers (dedupe global `0x011697b8`). Pass 1 = LEFT, pass 2 = RIGHT; the replay happens after the frame's GPU-sync point (event-query spin in `LtiRenderer_BeginSubmit`) and costs ~3.2 ms.
 
 ## Outputs + capture points
 

@@ -6,18 +6,6 @@
 #error "the game call shim is i386-only (the game is a 32-bit exe)"
 #endif
 
-namespace mc2vr::game {
-
-namespace {
-thread_local CallInterceptor *t_interceptor = nullptr;
-} // namespace
-
-namespace abi {
-int g_interceptors = 0;
-} // namespace abi
-
-} // namespace mc2vr::game
-
 // Loads the registers, pushes the stack arguments, calls, then restores ESP
 // from EBP — so caller-pop and callee-pop (`ret N`) callees both work. EBX,
 // ESI, EDI, EBP are restored for our C++ caller; EAX is the result. The
@@ -60,29 +48,3 @@ _mc2vr_game_call:
     ret
     .att_syntax prefix
 )");
-
-namespace mc2vr::game {
-
-void set_thread_interceptor(CallInterceptor *ic)
-{
-    if (ic != nullptr && t_interceptor == nullptr) {
-        __atomic_add_fetch(&abi::g_interceptors, 1, __ATOMIC_RELAXED);
-    } else if (ic == nullptr && t_interceptor != nullptr) {
-        __atomic_sub_fetch(&abi::g_interceptors, 1, __ATOMIC_RELAXED);
-    }
-    t_interceptor = ic;
-}
-
-CallInterceptor *thread_interceptor() { return t_interceptor; }
-
-namespace abi {
-
-// An interceptor exists on some thread: this thread's, if any, takes the call.
-uint32_t intercepted_call(const FnInfo &fn, const uint32_t *args)
-{
-    return t_interceptor != nullptr ? t_interceptor->on_call(fn, args) : real_call(fn, args);
-}
-
-} // namespace abi
-
-} // namespace mc2vr::game

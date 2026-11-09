@@ -21,8 +21,6 @@ add_library(mc2vr_carrier SHARED
     hooks/render_outputs.cpp
     hooks/render_size.cpp
     hooks/site.cpp
-    hooks/submit_to_gpu.cpp
-    hooks/view_rewrite.cpp
     # reimpl/: reimplemented game systems (docs/reimpl.md).
     reimpl/render/render_cmd.cpp
     reimpl/render/submit_to_gpu.cpp
@@ -48,9 +46,6 @@ add_library(mc2vr_carrier SHARED
     debug/ps_census.cpp
     debug/render_dump.cpp
     debug/rt_probe.cpp
-    debug/shadow/call_trace.cpp
-    debug/shadow/render_cmd.cpp
-    debug/shadow/submit_to_gpu.cpp
     debug/stream_capture.cpp
     debug/stub_trace.cpp
     debug/vm_dump.cpp

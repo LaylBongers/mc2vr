@@ -16,6 +16,8 @@
 // counters cross-thread — plain u64 reads, exact values not required.
 #pragma once
 
+#include <cstdint>
+
 namespace mc2vr::render {
 
 // Best-effort per component: failures are logged and don't stop the rest
@@ -31,5 +33,9 @@ void install_late();
 
 // mc2vr.conf debug_view_dumps=on|off (default off): view-table entry dumps.
 bool set_view_dumps(const char *value);
+
+// Per executed render command (from the RenderCmd_ExecuteStream
+// reimplementation): the opcode histogram and debug_stream_capture's tap.
+void on_render_command(const uint32_t *cmd, const uint32_t *stream, uint32_t arg2, uint32_t arg3);
 
 } // namespace mc2vr::render

@@ -29,13 +29,16 @@ void set_dump_frames(uint32_t n);
 // mc2vr.conf debug_dump_delay=S — shared with the stream dump window.
 void set_dump_delay(float seconds);
 
-// One frame's GPU submission as two passes, LEFT then RIGHT, with the pass
-// state around them (hooks/submit_to_gpu.cpp). Normally both run the same
-// PgPrimitive_SubmitToGPU (ours or the original); debug_reimpl=shadow:PgPrimitive_SubmitToGPU runs
-// the original for pass 1 and ours for pass 2.
-void run_frame(void (*pass1)(), void (*pass2)());
+// The stereo frame, called by the PgPrimitive_SubmitToGPU reimplementation
+// around its two submission passes (LEFT, then RIGHT):
+//   begin_left_pass()   pass 1; its present-prev is skipped (duplicate of pass 2's)
+//   begin_right_pass()  pass 2; starts the replay timer
+//   end_frame()         replay stats; back to "outside a submit"
+void begin_left_pass();
+void begin_right_pass();
+void end_frame();
 
-// Pass tracking — set by run_frame around each pass (0 = not inside a submit). Sets the per-pass eye-sign override
+// Pass tracking — set by the pass boundaries above (0 = not inside a submit). Sets the per-pass eye-sign override
 // (pass 1 = LEFT/-1, pass 2 = RIGHT/+1).
 void set_pass(uint32_t pass);
 // Current pass: 0 = outside a submit, 1/2 while the passes run (render thread).

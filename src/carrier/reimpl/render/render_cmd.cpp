@@ -14,6 +14,7 @@
 #include "game/dx9.hpp"
 #include "game/render_cmd.hpp"
 #include "game/render_shell.hpp"
+#include "debug/render_dump.hpp"
 #include "log.hpp"
 
 namespace mc2vr::reimpl {
@@ -38,6 +39,7 @@ void RenderCmd_ExecuteStream(const uint32_t *stream, void *vs_ctx, void *ps_ctx)
     g_LastExecuteStream::set(stream);
 
     for (const uint32_t *c = stream;; ) {
+        render::on_render_command(c, stream, (uint32_t)(uintptr_t)vs_ctx, (uint32_t)(uintptr_t)ps_ctx);  // debug tap
         if (c[0] >= kRenderCmdOpCount) {
             static int logged = 0;
             if (logged < 8) {

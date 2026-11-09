@@ -9,6 +9,7 @@
 
 #include "log.hpp"
 #include "reimpl/render/render_cmd.hpp"
+#include "reimpl/render/submit_to_gpu.hpp"
 
 namespace mc2vr::hooks {
 
@@ -21,23 +22,18 @@ const std::array kReplacements = {
     // cdecl; the caller (PgPrimitive_SubmitToGPU) relies only on callee-saved registers.
     Replacement{"RenderCmd_ExecuteStream", 0x008569d0u, 0x00856d3fu,
                 reinterpret_cast<void *>(&reimpl::RenderCmd_ExecuteStream)},
-    // Its entry is the stereo replay hook, which runs ours (hooks/submit_to_gpu.cpp).
-    Replacement{"PgPrimitive_SubmitToGPU", 0x00855690u, 0x0085647fu, nullptr},
+    // void(void); the caller (RenderShell_RenderFrameTimed) relies only on
+    // callee-saved registers. Ours renders the stereo frame (both eyes).
+    Replacement{"PgPrimitive_SubmitToGPU", 0x00855690u, 0x0085647fu,
+                reinterpret_cast<void *>(&reimpl::PgPrimitive_SubmitToGPU)},
 };
 
-ReimplMode g_mode = ReimplMode::Replace;
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;
 
 } // namespace
 
-void set_reimpl_mode(ReimplMode mode) { g_mode = mode; }
-ReimplMode reimpl_mode() { return g_mode; }
-
 const Replacement *replaced_at(uintptr_t va)
 {
-    if (g_mode != ReimplMode::Replace) {
-        return nullptr;
-    }
     for (const Replacement &r : kReplacements) {
         if (va >= r.lo && va < r.hi) {
             return &r;
@@ -48,18 +44,8 @@ const Replacement *replaced_at(uintptr_t va)
 
 void install_reimpl()
 {
-    if (g_mode != ReimplMode::Replace) {
-        MC2VR_LOG("reimpl: debug_reimpl=%s — originals kept (%u reimplementations %s)",
-                  g_mode == ReimplMode::Shadow ? "shadow" : "off", (unsigned)kReplacements.size(),
-                  g_mode == ReimplMode::Shadow ? "verified instead" : "unused");
-        return;
-    }
     for (size_t i = 0; i < kReplacements.size(); i++) {
         const Replacement &r = kReplacements[i];
-        if (r.ours == nullptr) {
-            MC2VR_LOG("reimpl: %s @ %08x replaced (by its own hook)", r.name, (unsigned)r.lo);
-            continue;
-        }
         // Created directly: the guard in site.hpp would refuse our own range.
         auto hook = SafetyHookInline::create(reinterpret_cast<uint8_t *>(r.lo), reinterpret_cast<uint8_t *>(r.ours));
         if (hook) {

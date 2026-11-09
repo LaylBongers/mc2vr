@@ -1,12 +1,9 @@
 // Render-command-stream capture + opcode census (docs/stereo.md,
 // docs/stereo.md). Read-only — no behavior change.
 //
-// The opcode MidHook inside RenderCmd_ExecuteStream (0x008569f5, installed
-// once by render_dump.cpp) calls on_opcode() for every command. At that
-// instruction EBP = pointer to the current command dword and [ESP+0x14] = the
-// stream base argument (verified against the 0x008569d0 disassembly: entry
-// pushes ecx/ebp/esi/edi, stream is stack arg 1). When EBP == stream base the
-// whole stream is walked with the RE'd opcode size table and copied into a
+// The RenderCmd_ExecuteStream reimplementation calls on_command() for every
+// executed command (through render_dump's command tap). On a stream's first
+// command the whole stream is walked with the RE'd opcode size table and copied into a
 // per-frame arena; op 0x00 terminates. Aggregates per window, logs a payload
 // census (first samples per opcode, decoded), and can dump whole frames of raw
 // streams to <GAME_DIR>/mc2vr/ for offline analysis (tools/analyze_dumps.py).
@@ -30,9 +27,10 @@ void set_dump_frames(uint32_t n);
 // before the dump window arms (default 15.0 — let the game reach gameplay).
 void set_dump_delay(float seconds);
 
-// Called from render_dump.cpp's RenderCmd_ExecuteStream opcode MidHook (main
-// thread, once per command): esp/ebp/eax are the live register values.
-void on_opcode(uint32_t esp, uint32_t ebp, uint32_t eax);
+// Per executed command, from render_dump's command tap (the
+// RenderCmd_ExecuteStream reimplementation calls it): cmd = the command,
+// stream / arg2 / arg3 = ExecuteStream's arguments.
+void on_command(const uint32_t *cmd, const uint32_t *stream, uint32_t arg2, uint32_t arg3);
 
 // 10s window report (called from render_dump.cpp's poller); resets counters.
 void report_window();

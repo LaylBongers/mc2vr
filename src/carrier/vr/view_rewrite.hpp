@@ -4,8 +4,8 @@
 // SetVertexShaderConstantF uploads of the technique's viewContextData and
 // applies the per-eye complement (hmd_delta; always on) or, with
 // debug_view_identity=on, the decompose/rebuild self-check:
-//   - on_upload_gate(): the upload-gate MidHook (hooks/view_rewrite.cpp)
-//     publishes the current technique's exact viewContextData register map.
+//   - on_upload_gate(): called by the PgPrimitive_SubmitToGPU reimplementation at
+//     each viewContextData upload; publishes the technique's exact register map.
 //   - on_set_vs_constant(): the device VmtHook tap that applies the rewrite.
 //   - on_set_render_target(): pass gate (RT0 size == engine render size) — only the main
 //     scene pass is rewritten (shadow-map/reflection/offscreen passes are not).
@@ -18,8 +18,9 @@
 
 namespace mc2vr::view_rewrite {
 
-// The constant-upload gate (hooks/view_rewrite.cpp), same thread, right
-// before the wrapper -> device call: tech = the CURRENT technique object
+// The constant-upload gate (the PgPrimitive_SubmitToGPU reimplementation, at
+// the original's 0x00855a78), render thread, right before the wrapper ->
+// device call: tech = the CURRENT technique object
 // (0 = none), rec = the pass's viewContext record pointer. Publishes the
 // technique's constant map for on_set_vs_constant.
 void on_upload_gate(uintptr_t tech, uintptr_t rec);

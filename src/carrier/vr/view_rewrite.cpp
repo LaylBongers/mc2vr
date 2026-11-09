@@ -38,7 +38,7 @@ constexpr uint32_t VS_ROWS = 256;  // vs_3_0 float constant registers (plus head
 enum class RewriteMode { HmdDelta, HmdIdentity };
 RewriteMode g_mode = RewriteMode::HmdDelta;
 
-// ---- live technique constant map (published by the upload-gate MidHook) ------
+// ---- live technique constant map (published at the upload gate) ------------
 // Register bases slide per technique and different techniques reuse the same
 // numbers, so the exact (reg, count) pairs come from the engine's own
 // resolver (Technique_ResolveConstantRegisters):

@@ -1,10 +1,11 @@
 // PgPrimitive_SubmitToGPU (0x00855690) — reimplementation.
 //
-// STATUS: live; verified by paired passes (debug_reimpl=shadow:PgPrimitive_SubmitToGPU,
-// debug/shadow/submit_to_gpu.cpp). Ghidra plate: PgPrimitive_SubmitToGPU.
+// STATUS: live; verified against the original (paired passes, docs/reimpl.md).
+// Ghidra plate: PgPrimitive_SubmitToGPU.
 // Note: docs/reverse_engineering/submit_to_gpu.md.
 // Original: void(void), called from RenderShell_RenderFrameTimed (0x0085abd0)
-// — and twice per frame by the stereo replay (hooks/submit_to_gpu.cpp).
+// Ours renders the stereo frame: the original's body runs as two passes,
+// LEFT then RIGHT (vr/eye_replay.hpp marks the boundaries).
 //
 // One frame's GPU submission: BeginSubmit, then the sorted draw-record walk
 // (per record: view type, shader constants, pass pick, RT/stencil state,

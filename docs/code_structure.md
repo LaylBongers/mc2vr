@@ -38,5 +38,5 @@ Check: `grep -rl 'safetyhook\|SafetyHook' src/carrier | grep -v 'hooks/\|debug/'
 ## Adding things
 
 - **A new VR feature on an existing game event:** logic goes in `vr/`, the hook in `hooks/<feature>.cpp`, and one line in `hooks/install.cpp`.
-- **Reimplementing a function:** the code goes in `reimpl/<subsystem>/` and the entry in `hooks/reimpl.cpp`. Any existing hook inside the original's body becomes a direct call from the reimplementation (the guard logs a REFUSED line if one is left). Optionally add a shadow spec in `debug/shadow/`.
+- **Reimplementing a function:** the code goes in `reimpl/<subsystem>/` and the entry in `hooks/reimpl.cpp`. Any existing hook inside the original's body becomes a direct call from the reimplementation (the guard logs a REFUSED line if one is left). Verify the transcription against the original first ([reimpl.md](reimpl.md#verifying-a-new-reimplementation)).
 - **A debugging tool:** everything goes in `debug/<tool>.cpp`, with a `debug_<tool>` conf key in `init.cpp` and its install in the debug section of `init.cpp`.

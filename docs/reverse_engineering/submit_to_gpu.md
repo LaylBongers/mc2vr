@@ -7,17 +7,11 @@
 - **The dirty mask is computed after `RenderShell_SetViewType`,** which can reset the caches it compares against. Pass selection keys off the raw mask (screen | material), not the 0x7f that a technique or pass change forces.
 - **Callee conventions:** most callees take register arguments: EAX/ECX/EDX/EDI/ESI, AL for `RenderShell_PickPass_1_3_7`. They are declared in `src/game/render_shell.hpp` / `dx9.hpp` / `lti.hpp`. A read-before-write scan of each callee found no hidden register inputs.
 - **Float math** is scalar SSE (`mulss`/`addss`). `reimpl/` is compiled with `-mfpmath=sse`, because the i686 default x87 would round `a*b+c` differently.
-- **Hooking inside it:** five call instructions return onto a branch target (`0x855bb7`, `0x855bf6`, `0x855e15`, `0x856302`, `0x85634e`), so a 5-byte patch there corrupts the function. Use an earlier site and decode the registers there (`debug/shadow/submit_to_gpu.cpp`).
+- **Hooking inside it:** five call instructions return onto a branch target (`0x855bb7`, `0x855bf6`, `0x855e15`, `0x856302`, `0x85634e`), so a 5-byte patch there corrupts the function. Use an earlier site and decode the registers there.
 
 ## Verification
 
-Shadow mode can't verify this function with a dry run, because its callees change state it reads straight afterwards. Instead, `debug_reimpl=shadow:PgPrimitive_SubmitToGPU` uses the stereo replay's two passes:
-- **Pass 1** runs the original, and capture hooks record its calls.
-- **Pass 2** runs ours, and a pass-through interceptor records its calls.
-- The two call sequences are compared after pass 2.
-- **Baseline:** until 300 gameplay-sized passes have been compared, pass 2 also runs the original. That checks that two original passes really are identical.
-
-**Verdict:** two original passes are identical in gameplay, and ours matches the original's call sequence in every pass.
+Verified against the original by paired passes ([../reimpl.md](../reimpl.md#verifying-a-new-reimplementation)): two original passes are identical in gameplay, and ours matched the original's call sequence in every pass. A dry run can't check this function, because its callees change state it reads straight afterwards.
 
 ## OPEN
 

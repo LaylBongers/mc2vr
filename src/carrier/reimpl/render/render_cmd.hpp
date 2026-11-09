@@ -8,7 +8,7 @@
 //
 // Replaces the original: hooks/reimpl.cpp. Writes g_LastExecuteStream,
 // g_ClipPlaneEnableMask, g_RenderCmdPassObject, g_HalfResPassAllowed and
-// g_HalfResPassActive (debug/shadow/render_cmd.cpp snapshots exactly these).
+// g_HalfResPassActive.
 #pragma once
 
 #include <cstdint>

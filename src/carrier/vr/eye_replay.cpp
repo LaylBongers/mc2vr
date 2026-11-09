@@ -9,7 +9,6 @@
 
 #include <new>
 
-#include "vr/adaptation.hpp"
 #include "vr/eye_share.hpp"
 #include "hooks/frame_tick.hpp"
 #include "vr/hud_timing.hpp"
@@ -424,26 +423,29 @@ namespace {
 uint64_t g_replays = 0;  // extra passes this window
 double g_replay_ms_sum = 0.0;
 double g_replay_ms_max = 0.0;
+LARGE_INTEGER g_replay_t0 = {};
 } // namespace
 
-void run_frame(void (*pass1)(), void (*pass2)())
+void begin_left_pass()
 {
-    adaptation::on_frame_begin();  // exposure restore after a render-size switch
-    set_pass(1);                   // pass 1 = LEFT eye
+    set_pass(1);  // pass 1 = LEFT eye
     // Two passes -> two present-prevs per frame; skip pass 1's (duplicate).
     render_outputs::begin_present_skip();
-    pass1();
+}
 
-    LARGE_INTEGER freq, t0, t1;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&t0);
-
+void begin_right_pass()
+{
+    QueryPerformanceCounter(&g_replay_t0);
     render_outputs::end_present_skip();
     set_pass(2);  // pass 2 = RIGHT eye
-    pass2();
+}
 
+void end_frame()
+{
+    LARGE_INTEGER freq, t1;
+    QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t1);
-    const double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)freq.QuadPart;
+    const double ms = (double)(t1.QuadPart - g_replay_t0.QuadPart) * 1000.0 / (double)freq.QuadPart;
     g_replays++;
     g_replay_ms_sum += ms;
     if (ms > g_replay_ms_max) {

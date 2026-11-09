@@ -43,7 +43,6 @@ constexpr uint32_t REFRESH_EVERY_WINDOWS = 3;  // re-dump one entry every ~30s
 constexpr uint32_t REFRESH_MAX = 12;            // steady-state re-dumps per run
 
 // Leaked by design (same teardown reasoning as the device hooks).
-SafetyHookMid g_opcode_mid;
 SafetyHookMid g_view_mid;
 SafetyHookMid g_endofframe_mid; // FrameTick slot-4 call site
 HANDLE g_poller_thread = nullptr;
@@ -132,17 +131,6 @@ void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry, bool tra
 
 // RenderCmd_ExecuteStream opcode dispatch: EAX = opcode. Also feeds the
 // Stream tap (stream_capture.cpp): EBP/ESP identify the stream.
-void opcode_midhook(safetyhook::Context &ctx)
-{
-    const uint32_t op = (uint32_t)ctx.eax;
-    if (op < OPCODE_COUNT) {
-        g_cmd_hist[op]++;
-    }
-    g_cmd_total++;
-
-    s2c::on_opcode((uint32_t)ctx.esp, (uint32_t)ctx.ebp, (uint32_t)ctx.eax);
-}
-
 // RenderQueue_SubmitWorldPackets per-view loop head: ESI = view index,
 // ECX = view type (WORD), EAX = byte offset. Entry = table + EAX.
 void view_midhook(safetyhook::Context &ctx)
@@ -385,6 +373,16 @@ bool install_mid(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn
 
 } // namespace
 
+void on_render_command(const uint32_t *cmd, const uint32_t *stream, uint32_t arg2, uint32_t arg3)
+{
+    const uint32_t op = cmd[0];
+    if (op < OPCODE_COUNT) {
+        g_cmd_hist[op]++;
+    }
+    g_cmd_total++;
+    s2c::on_command(cmd, stream, arg2, arg3);
+}
+
 bool set_view_dumps(const char *value)
 {
     if (strcmp(value, "on") == 0) g_view_dumps = true;
@@ -396,9 +394,6 @@ bool set_view_dumps(const char *value)
 
 void install_early()
 {
-    // Command histogram.
-    install_mid(g_opcode_mid, MC2_RENDERCMD_OPCODE_CMP, opcode_midhook, "ExecuteStream opcode");
-
     // View-table dump.
     install_mid(g_view_mid, MC2_SUBMITVIEW_LOOP_LEA, view_midhook, "SubmitWorldPackets view loop");
 

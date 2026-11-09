@@ -12,22 +12,20 @@
 #include "hooks/reimpl.hpp"
 #include "hooks/render_outputs.hpp"
 #include "hooks/render_size.hpp"
-#include "hooks/submit_to_gpu.hpp"
-#include "hooks/view_rewrite.hpp"
 
 namespace mc2vr::hooks {
 
 void install_attach()
 {
-    install_reimpl();         // first: the guard refuses hooks inside replaced originals
+    install_reimpl();         // first: the guard refuses hooks inside replaced originals.
+                              // SubmitToGPU's replacement renders the stereo frame and
+                              // calls view_rewrite's upload gate itself.
     install();                // GameShell_FrameTick: frame counter, timing
     install_post_update();    // FrameTick slot-5 site: host-event drain
     install_pacing();         // replay-pass GPU drain skip (LtiRenderer_BeginSubmit)
-    install_view_rewrite();   // per-eye camera upload gate
     install_camera_table();   // HMD pose injection at g_CameraTable
     install_cull_frustum();   // HMD cull frustum
     install_occluder_boxes(); // occlusion-query boxes off (VR smearing)
-    install_submit_to_gpu();  // two-pass stereo replay
     install_render_outputs(); // carrier-owned outputs: setup wrap + restore
     install_render_size();    // render_size=WxH policy
     install_adaptation();     // exposure continuity across render-size switches

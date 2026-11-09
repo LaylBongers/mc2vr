@@ -33,11 +33,6 @@
 
 // ---- instrument sites (instruction-level, verified by disassembly) ----
 
-// RenderCmd_ExecuteStream opcode dispatch: `cmp eax,0x1a` — 27 opcodes
-// (0x00..0x1a), jump table at 0x856d40. At this instruction EAX = opcode,
-// EBP = current stream pointer. MidHook fires once per command.
-#define MC2_RENDERCMD_OPCODE_CMP ((uintptr_t)0x008569f5u)
-
 // RenderQueue_SubmitWorldPackets per-view loop head: `lea eax,[eax+0x12865e0]`.
 // At this instruction ESI = view index, ECX = view type (WORD, from
 // per-view-object+0x14; types 2 and 4 get processed), EAX = byte offset
@@ -162,34 +157,10 @@
 // vsync-locked Presents per frame cap the game at ~30 Hz).
 #define MC2_D3DCREATE9_THUNK ((uintptr_t)0x00a4e892u)
 
-// PgPrimitive_SubmitToGPU (0x00855690, plate on the function) — per-frame D3D
-// submission: BeginSubmit (Present prev + BeginScene + GPU-sync + RT set +
-// Clear) then the SecuROM-mutated per-record walk (state + ExecuteStream +
-// bind + draw per record) then EndSubmit. void(void), single caller
-// (RenderShell_RenderFrameTimed 0x0085abd0). The second draw pass = call
-// this twice (re-entrant between frames: EndSubmit clears the in-scene flag).
-#define MC2_PGPRIMITIVE_SUBMITTOGPU ((uintptr_t)0x00855690u)
-
-// viewContextData upload gate in PgPrimitive_SubmitToGPU (2026-10-03):
-// 0x00855a78 = `cmp dword ptr [edi+0xd8], 0` immediately before the gated
-// call (JLE skips) — `mov edx,[esp+0x18]; push edx; lea eax,[edi+0xd4]; call
-// Dx9_SetVertexShaderConstantF (0x00749200)` which dispatches to the device
-// VmtHook slot 94 (= view_rewrite::on_set_vs_constant). At this instruction EDI = the
-// CURRENT technique object (g_LastTechnique is stale here — updated only at
-// the end of the record loop). The technique's resolved constant map (plate
-// on Technique_ResolveConstantRegisters 0x0085b260): +0xd4 viewContextData
-// reg, +0xd8 count, +0xdc viewContextData.ViewProj reg, +0xe0 count. The
-// carrier's MidHook here publishes the exact register map so the
-// view rewrite targets registers, not row shapes (shape heuristics conflate
-// techniques that share register numbers).
-//
-// [esp+0x18] AT THE GATE = the viewContext RECORD pointer for the pass being
-// uploaded (the wrapper's data arg: `mov edx,[esp+0x18]; push edx`; the PS
-// upload gate just below re-reads the same slot). The MidHook logs each
-// distinct record VA + computed index so an E1 `debug_watch=addr:` run can
-// target the main pass's record directly (docs/camera.md).
-#define MC2_VCD_UPLOAD_CMP ((uintptr_t)0x00855a78u)
-#define MC2_VCD_GATE_REC_SLOT ((uintptr_t)0x18u)  // [esp+0x18] = record ptr
+// A technique's resolved constant map (plate on
+// Technique_ResolveConstantRegisters 0x0085b260; Technique in
+// game/pg_primitive.hpp): viewContextData register/count and its ViewProj
+// register/count. view_rewrite targets these registers, not row shapes.
 #define MC2_TECH_VCD_REG_OFF ((uintptr_t)0xd4u)
 #define MC2_TECH_VCD_COUNT_OFF ((uintptr_t)0xd8u)
 #define MC2_TECH_VP_REG_OFF ((uintptr_t)0xdcu)

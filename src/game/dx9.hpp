@@ -59,7 +59,7 @@ inline constexpr Function<HRESULT(DWORD count, const D3DRECT *rects, DWORD flags
 
 // Logs a failed HRESULT with its source location; AL = failed.
 inline constexpr Function<bool(HRESULT hr, const char *file, uint32_t line)> Dx9_CheckHResult{
-    "Dx9_CheckHResult", 0x0074d620u, {opaque(ESI), STK, STK}};
+    "Dx9_CheckHResult", 0x0074d620u, {ESI, STK, STK}};
 
 // A shader-constant binding inside a technique/pass object: register range.
 // count == 0 = not used by this shader (every upload is gated on it).

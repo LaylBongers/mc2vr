@@ -124,7 +124,7 @@ inline constexpr Function<void(uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a
 inline constexpr Function<void(uint32_t a1)> RenderCmd_StretchRectFromGlobal{"RenderCmd_StretchRectFromGlobal",
                                                                              0x0074aec0u, {EDX}};
 inline constexpr Function<void(HRESULT hr)> RenderCmd_DumpTargets_Debug{"RenderCmd_DumpTargets_Debug", 0x007533c0u,
-                                                                        {opaque(ESI)}};
+                                                                        {ESI}};
 inline constexpr Function<void(uint32_t a1, uint32_t a2, uint32_t a3)> RenderCmd_BeginSurfacePass{
     "RenderCmd_BeginSurfacePass", 0x00756420u, {STK, STK, EAX}};
 inline constexpr Function<void(uint32_t a1, uint32_t a2, uint32_t a3)> RenderCmd_EndSurfacePass{
