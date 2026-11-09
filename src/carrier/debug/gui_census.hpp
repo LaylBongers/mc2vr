@@ -1,0 +1,41 @@
+// debug_gui_census=on: the draw-time view of the GUI (Scaleform) records, for
+// the HUD fix (docs/hud.md, docs/reverse_engineering/gui_renderer.md). Every
+// 30 s, one pass-1 frame: from 8 records before the first GUI record to the end
+// of the sorted list, per record:
+//   - the record fields (GUI or not, view type, view context, technique,
+//     material, RT write mask, stencil mode);
+//   - the render commands it executes (opcode + first operands);
+//   - its vertex/pixel shader constant uploads (start register, count, first
+//     values);
+//   - its draws: count, render target / depth, depth and blend states.
+// GUI records are marked at build time by debug_build_census's hooks
+// (installed for this even with that census off). The 10 s poller prints the
+// capture. Inert unless enabled.
+#pragma once
+
+#include <windows.h>
+#include <d3d9.h> // types only
+
+#include <cstdint>
+
+#include "game/pg_primitive.hpp"
+
+namespace mc2vr::gui_census {
+
+bool set_enabled(const char *value);
+bool enabled();
+
+// Taps (render thread).
+void on_pass(uint32_t pass);                                  // eye_replay pass boundary
+void on_record(uint16_t index, const game::PgPrimitive *rec);  // SubmitToGPU, before each record
+void on_command(const uint32_t *cmd);                         // ExecuteStream, per command
+void on_set_render_target(DWORD index, IDirect3DSurface9 *surface);
+void on_set_depth(IDirect3DSurface9 *surface);
+void on_shader_constants(bool pixel, UINT start, const float *data, UINT count);
+void on_render_state(D3DRENDERSTATETYPE state, DWORD value);
+void on_draw();
+
+// Prints a finished capture (render_dump.cpp poller).
+void report_window();
+
+} // namespace mc2vr::gui_census

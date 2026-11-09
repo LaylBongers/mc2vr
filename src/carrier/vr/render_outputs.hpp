@@ -33,9 +33,12 @@ void on_device_restored();
 
 // True once the carrier front is installed in the engine's table.
 bool active();
-// The carrier front (capture source; MSAA as the engine requested), or
-// nullptr when not active (boot before setup, mid-Reset).
+// The carrier front (capture source; scene MSAA's sample count), or nullptr
+// when not active (boot before setup, mid-Reset).
 IDirect3DSurface9 *front();
+// The carrier depth (the engine's auto depth and scene-depth alias; same
+// sample count), or nullptr when not active.
+IDirect3DSurface9 *depth();
 // The eye-capture source for this pass boundary: front(), or nullptr during
 // the post-Reset transition frame (its HDR exposure is invalid — white).
 IDirect3DSurface9 *capture_source();
@@ -45,11 +48,6 @@ IDirect3DDevice9 *device();
 IDirect3DSurface9 *mirror();
 // Resolve the front into a non-MSAA scratch RT and return it (dumps), or nullptr.
 IDirect3DSurface9 *resolve_front();
-
-// CreateDevice/Reset parameter policy (device.cpp): the MSAA the engine asked
-// for (applied to the carrier front/depth) — the swapchain itself runs
-// without MSAA.
-void note_requested_msaa(uint32_t type, uint32_t quality);
 
 // device.cpp taps (main thread).
 void on_present(IDirect3DDevice9 *device);

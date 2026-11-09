@@ -15,6 +15,8 @@
 // VR behavior inside it, as direct calls:
 //   - pacing::on_drain_check_busy at the drain check (0x0074ab5f; a MidHook
 //     there while the original ran): the replay pass skips the GPU drain.
+//   - msaa::on_begin_submit before the target binds: multisample
+//     rasterization on (the engine turns it off with its own AA off).
 //
 // Writes directly: g_InD3DScene.
 #pragma once

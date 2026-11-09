@@ -104,6 +104,10 @@ constexpr uintptr_t kRenderShellDevice = 0x2d28;          // IDirect3DDevice9 * 
 constexpr uintptr_t kRenderShellRT0Surface = 0x3e90;      // IDirect3DSurface9 *
 constexpr uintptr_t kRenderShellDepthSurface = 0x3ea0;    // IDirect3DSurface9 *
 constexpr uintptr_t kRenderShellSkipClear = 0x4448;       // u32; nonzero = BeginSubmit does not clear
+// Render-target textures (IDirect3DTexture9 *, from SetupRenderTargets' tail).
+constexpr uintptr_t kRenderShellMainTexture = 0x43f0;        // "ColorBuffer", fp16; level 0 = +0x3e90
+constexpr uintptr_t kRenderShellColorCopyTexture = 0x3fa4;   // "ColorBufferCopy", fp16 (op 12 destination)
+constexpr uintptr_t kRenderShellDepthCopyTexture = 0x3fa8;   // "DepthBufferCopy", G32R32F; level 0 = +0x3e9c
 
 // ---- BeginSubmit -------------------------------------------------------------------
 using g_InD3DScene = Global<uint8_t, 0x0117526cu>;  // set after BeginScene succeeds

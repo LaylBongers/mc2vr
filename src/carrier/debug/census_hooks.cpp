@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include "debug/gpu_census.hpp"
+#include "debug/gui_census.hpp"
 #include "debug/ps_census.hpp"
 #include "hooks/device.hpp"
 #include "log.hpp"
@@ -18,12 +19,14 @@ namespace {
 
 // d3d9.h method order.
 constexpr size_t SLOT_SetPixelShader = 107;
+constexpr size_t SLOT_SetRenderState = 57, SLOT_SetPixelShaderConstantF = 109;
 constexpr size_t SLOT_DrawPrimitive = 81, SLOT_DrawIndexedPrimitive = 82,
                  SLOT_DrawPrimitiveUP = 83, SLOT_DrawIndexedPrimitiveUP = 84;
 
 // Leaked by design (hooks/device.hpp).
 safetyhook::VmHook *g_setps_hook = nullptr;
 safetyhook::VmHook *g_draw_hooks[4] = {};
+safetyhook::VmHook *g_setrs_hook = nullptr, *g_setpsconst_hook = nullptr;
 
 // debug_ps_census: pixel-shader binds.
 HRESULT __stdcall setps_hook(IDirect3DDevice9 *self, IDirect3DPixelShader9 *ps)
@@ -37,18 +40,21 @@ HRESULT __stdcall draw_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, 
 {
     gpu_census::on_draw();
     ps_census::on_draw();
+    gui_census::on_draw();
     return g_draw_hooks[0]->stdcall<HRESULT>(self, a, b, c);
 }
 HRESULT __stdcall drawindexed_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, INT b, UINT c, UINT d, UINT e, UINT f)
 {
     gpu_census::on_draw();
     ps_census::on_draw();
+    gui_census::on_draw();
     return g_draw_hooks[1]->stdcall<HRESULT>(self, a, b, c, d, e, f);
 }
 HRESULT __stdcall drawup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, const void *c, UINT d)
 {
     gpu_census::on_draw();
     ps_census::on_draw();
+    gui_census::on_draw();
     return g_draw_hooks[2]->stdcall<HRESULT>(self, a, b, c, d);
 }
 HRESULT __stdcall drawindexedup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, UINT c, UINT d,
@@ -56,7 +62,22 @@ HRESULT __stdcall drawindexedup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a,
 {
     gpu_census::on_draw();
     ps_census::on_draw();
+    gui_census::on_draw();
     return g_draw_hooks[3]->stdcall<HRESULT>(self, a, b, c, d, e, f, g, h);
+}
+
+// debug_gui_census: depth/blend-state changes (its target taps are in the
+// core hooks, hooks/device.cpp).
+HRESULT __stdcall setrs_hook(IDirect3DDevice9 *self, D3DRENDERSTATETYPE state, DWORD value)
+{
+    gui_census::on_render_state(state, value);
+    return g_setrs_hook->stdcall<HRESULT>(self, state, value);
+}
+// debug_gui_census: pixel-shader constant uploads.
+HRESULT __stdcall setpsconst_hook(IDirect3DDevice9 *self, UINT start, const float *data, UINT count)
+{
+    gui_census::on_shader_constants(true, start, data, count);
+    return g_setpsconst_hook->stdcall<HRESULT>(self, start, data, count);
 }
 
 void on_device(IDirect3DDevice9 * /*device*/)
@@ -70,7 +91,13 @@ void on_device(IDirect3DDevice9 * /*device*/)
             MC2VR_LOG("ps: hook_method(SetPixelShader) failed — no per-shader census");
         }
     }
-    if (gpu_census::enabled() || ps_census::enabled()) {
+    if (gui_census::enabled()) {
+        g_setpsconst_hook = device::hook_method(SLOT_SetPixelShaderConstantF, (void *)&setpsconst_hook);
+        g_setrs_hook = device::hook_method(SLOT_SetRenderState, (void *)&setrs_hook);
+        MC2VR_LOG("gui: SetPixelShaderConstantF %s, SetRenderState %s (debug_gui_census)",
+                  g_setpsconst_hook ? "hooked" : "FAILED", g_setrs_hook ? "hooked" : "FAILED");
+    }
+    if (gpu_census::enabled() || ps_census::enabled() || gui_census::enabled()) {
         struct SlotSpec {
             size_t slot;
             void *destination;
@@ -93,7 +120,7 @@ void on_device(IDirect3DDevice9 * /*device*/)
             }
             *spec.storage = hook;
         }
-        MC2VR_LOG("gpu: draw-call hooks installed (debug_gpu_census / debug_ps_census)");
+        MC2VR_LOG("gpu: draw-call hooks installed (debug_gpu_census / debug_ps_census / debug_gui_census)");
     }
 }
 

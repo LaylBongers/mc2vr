@@ -15,13 +15,22 @@
 // "build:" log lines. Controlled by mc2vr.conf debug_build_census=on|off (default off).
 #pragma once
 
+#include <cstdint>
+
 namespace mc2vr::build_census {
 
 // Parse the conf value; returns false on unrecognized input.
 bool set_enabled(const char *value);
 
-// Install the MidHooks (no-op when disabled).
+// Install the MidHooks (no-op unless enabled or the GUI marks are required).
 void install();
+
+// debug_gui_census: install the hooks for the GUI record marks even with the
+// census itself off (its reports stay off). Before install().
+void require_gui_marks();
+// Whether record `index` of the published list at `base` is a GUI record:
+// 1 / 0, or -1 when unknown (marks not wanted, or a different list).
+int is_gui_record(const void *base, uint32_t index);
 
 // 10 s window report (render_dump.cpp's poller); resets the window counters.
 void report_window();

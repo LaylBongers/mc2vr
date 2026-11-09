@@ -10,13 +10,13 @@
 #include "vr/cull_frustum.hpp"
 #include "game/addresses.h"
 #include "hooks/site.hpp"
+#include "vr/msaa.hpp"
 #include "vr/eye_replay.hpp"
 #include "vr/render_outputs.hpp"
 #include "vr/render_size.hpp"
 #include "hooks/frame_tick.hpp"
 #include "ipc.hpp"
 #include "log.hpp"
-#include "stub_trace.hpp"
 #include "build_census.hpp"
 #include "stream_capture.hpp"
 #include "vr/pacing.hpp"
@@ -25,6 +25,7 @@
 #include "watch.hpp"
 #include "debug/camera_census.hpp"
 #include "debug/gpu_census.hpp"
+#include "debug/gui_census.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
 
@@ -293,9 +294,10 @@ void report_window()
     wait_census::report_window();
     gpu_census::report_window();
     ps_census::report_window();
+    msaa::report_window();
+    gui_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
-    trace::report_window();
     build_census::report_window();
     s2c::report_window();
     eye_replay::report_window();
@@ -377,6 +379,7 @@ bool install_mid(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn
 
 void on_render_command(const uint32_t *cmd, const uint32_t *stream, uint32_t arg2, uint32_t arg3)
 {
+    gui_census::on_command(cmd);
     const uint32_t op = cmd[0];
     if (op < OPCODE_COUNT) {
         g_cmd_hist[op]++;
@@ -404,8 +407,6 @@ void install_early()
     install_mid(g_endofframe_mid, MC2_FRAMETICK_ENDOFFRAME_SITE, endofframe_midhook,
                 "FrameTick EndOfFrameHook call site");
 
-    // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
-    trace::install();
 
     // Optional scene -> draw-record build census (mc2vr.conf debug_build_census=on).
     build_census::install();

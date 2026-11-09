@@ -4,7 +4,6 @@
 #include <cstring>
 
 #include "vr/eye_share.hpp"
-#include "vr/render_outputs.hpp"
 #include "log.hpp"
 
 namespace mc2vr::device_params {
@@ -57,11 +56,10 @@ D3DPRESENT_PARAMETERS apply_param_policy(const D3DPRESENT_PARAMETERS &engine, co
     }
     // The game's AA option only ever multisamples the swapchain, i.e. the final
     // composite + HUD (the 3D scene renders into a non-MSAA texture — a port
-    // bug, docs/msaa.md), and with it on, depth-tested composited icons fail to
-    // draw (also without the mod). So the request is dropped entirely: neither
-    // the swapchain nor the carrier front gets MSAA (~0.5 ms/frame of 8x
-    // composite/resolve bandwidth at HMD size, and the icons render).
-    render_outputs::note_requested_msaa((uint32_t)D3DMULTISAMPLE_NONE, 0);
+    // bug), and with it on, depth-tested composited icons fail to draw (also
+    // without the mod). The request is dropped: the swapchain only carries the
+    // monitor mirror. Scene MSAA is the carrier's own (vr/msaa.hpp,
+    // docs/msaa.md).
     if (p.MultiSampleType != D3DMULTISAMPLE_NONE) {
         MC2VR_LOG("outputs: %s swapchain MSAA %u/%lu requested -> none (ignored: composite/HUD "
                   "only, hides composited icons)",

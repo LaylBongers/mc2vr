@@ -151,6 +151,11 @@ uint32_t g_gui_span_n = 0;
 uint32_t g_gui_first_index_sum = 0;  // record index (write count) at the first BeginDisplay
 uint32_t g_gui_first_index_n = 0;
 uint32_t g_gui_bits[0x2000 / 32];  // GUI record indices of the buffer being built
+// Snapshot at PublishFrame return: the GUI marks of the list about to be drawn
+// (the next build clears g_gui_bits while that list is still drawing).
+bool g_gui_marks_wanted = false;  // debug_gui_census
+uint32_t g_pub_gui_bits[0x2000 / 32];
+const void *volatile g_pub_base = nullptr;
 
 constexpr int BD_SEEN_MAX = 6;  // one-shot BeginDisplay caller log
 uint32_t g_bd_seen[BD_SEEN_MAX];
@@ -242,7 +247,7 @@ void analyse_published_list()
     InterlockedExchange(&g_list_ready, 1);
 }
 
-// Heuristic backtrace (as in stub_trace.cpp): stack dwords in .text preceded by an
+// Heuristic backtrace: stack dwords in .text preceded by an
 // E8 call, outermost last. Stale stack data can produce false links.
 void log_chain(uint32_t ret, uint32_t esp)
 {
@@ -336,6 +341,11 @@ void h_pub_out(safetyhook::Context &)
     }
     if (g_list_request && InterlockedExchange(&g_list_request, 0)) {
         analyse_published_list();
+    }
+    if (g_gui_marks_wanted) {
+        g_pub_base = nullptr;
+        memcpy(g_pub_gui_bits, g_gui_bits, sizeof(g_pub_gui_bits));
+        g_pub_base = game::g_PrimitiveBase::get();
     }
 }
 
@@ -466,9 +476,22 @@ bool set_enabled(const char *value)
     return true;
 }
 
+void require_gui_marks()
+{
+    g_gui_marks_wanted = true;
+}
+
+int is_gui_record(const void *base, uint32_t index)
+{
+    if (!g_gui_marks_wanted || base == nullptr || base != g_pub_base || index >= 0x2000) {
+        return -1;
+    }
+    return (int)((g_pub_gui_bits[index >> 5] >> (index & 31)) & 1u);
+}
+
 void install()
 {
-    if (!g_enabled) {
+    if (!g_enabled && !g_gui_marks_wanted) {
         return;
     }
     LARGE_INTEGER f;

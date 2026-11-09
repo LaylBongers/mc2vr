@@ -40,6 +40,8 @@ The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of
 
 ## OPEN
 
+`debug_gui_census=on` logs the draw-time view of the GUI records for these (`gui:` lines).
+
 - What the 3–6 records that draw after the GUI in gameplay are.
 - The exact RenderCmd op/register that carries the GUI matrix in the command stream.
 - Which render target the GUI draws into, and whether anything (post, AA resolve) runs after it.

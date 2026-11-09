@@ -9,9 +9,9 @@
 #include <cstring>
 
 #include "debug/census_hooks.hpp"
+#include "debug/gui_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/ps_census.hpp"
-#include "debug/rt_probe.hpp"
 #include "game/addresses.h"
 #include "hooks/frame_tick.hpp"
 #include "init.hpp"
@@ -20,6 +20,7 @@
 #include "vr/device_params.hpp"
 #include "vr/eye_replay.hpp"
 #include "vr/hud_timing.hpp"
+#include "vr/msaa.hpp"
 #include "vr/render_outputs.hpp"
 #include "vr/render_size.hpp"
 #include "vr/view_rewrite.hpp"
@@ -52,6 +53,8 @@ constexpr size_t SLOT_SetVertexShaderConstantF = 94;
 // and must not receive the eye shift.
 constexpr size_t SLOT_SetRenderTarget = 37;
 constexpr size_t SLOT_StretchRect = 34;
+constexpr size_t SLOT_SetDepthStencilSurface = 39;
+constexpr size_t SLOT_SetTexture = 65;
 // IDirect3D9::CreateDevice (d3d9.h method order, cross-checked against the
 // game's observed use: RenderSystem_Init reads the adapter count through
 // IDirect3D9 vtable +0x10 = slot 4 GetAdapterCount).
@@ -67,6 +70,8 @@ safetyhook::VmHook *g_tcl_hook = nullptr;
 safetyhook::VmHook *g_setvsconstf_hook = nullptr;
 safetyhook::VmHook *g_setrt_hook = nullptr;
 safetyhook::VmHook *g_stretchrect_hook = nullptr;
+safetyhook::VmHook *g_setds_hook = nullptr;
+safetyhook::VmHook *g_settex_hook = nullptr;
 IDirect3DDevice9 *g_device = nullptr;
 bool g_params_logged = false;
 
@@ -178,7 +183,6 @@ HRESULT __stdcall present_hook(IDirect3DDevice9 *self, const RECT *src, const RE
 {
     g_present.total++;
     g_present.window++;
-    rt_probe::on_present(self);
 
     if (g_present.total <= BURST_LOG_CALLS) {
         char extra[96];
@@ -298,17 +302,16 @@ HRESULT __stdcall reset_hook(IDirect3DDevice9 *self, D3DPRESENT_PARAMETERS *pp)
         used = device_params::apply_param_policy(*pp, "Reset");
     }
 
-    rt_probe::on_reset(true, 0);
     render_outputs::on_reset(true, 0);
     const HRESULT hr = g_reset_hook->stdcall<HRESULT>(self, pp ? &used : nullptr);
     if (pp != nullptr) {
         device_params::copy_back_params(pp, used);
     }
     render_outputs::on_reset(false, (long)hr);
+    msaa::on_reset_done();
     if (SUCCEEDED(hr)) {
         adaptation::on_reset_done();
     }
-    rt_probe::on_reset(false, (long)hr);
     return hr;
 }
 
@@ -318,14 +321,14 @@ uint64_t g_setvsconst_calls = 0;
 
 uint64_t g_stretch_calls = 0;
 
-// StretchRect: observed (rt_probe) and forwarded; the hook also provides the
+// StretchRect: scene MSAA resolves before reads; the hook also provides the
 // original-method trampoline for the carrier's own blits (blit_surfaces).
 HRESULT __stdcall stretchrect_hook(IDirect3DDevice9 *self, IDirect3DSurface9 *src,
                                    const RECT *src_rect, IDirect3DSurface9 *dst,
                                    const RECT *dst_rect, D3DTEXTUREFILTERTYPE filter)
 {
     g_stretch_calls++;
-    rt_probe::on_stretch_rect(src, dst, __builtin_return_address(0));
+    msaa::before_stretch_rect(src, dst);  // resolves an MSAA stand-in read as the source
     return g_stretchrect_hook->stdcall<HRESULT>(self, src, src_rect, dst, dst_rect,
                                                 filter);
 }
@@ -333,9 +336,14 @@ HRESULT __stdcall stretchrect_hook(IDirect3DDevice9 *self, IDirect3DSurface9 *sr
 HRESULT __stdcall setrendertarget_hook(IDirect3DDevice9 *self, DWORD index,
                                        IDirect3DSurface9 *surface)
 {
-    // Observed, never altered: the pass gate for the view rewrite.
-    rt_probe::on_set_render_target(index, surface, __builtin_return_address(0));
-    const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, surface);
+    // The pass gate for the view rewrite; scene MSAA swaps in its stand-ins
+    // (the engine only ever sees its own surfaces).
+    gui_census::on_set_render_target(index, surface);
+    const HRESULT hr = g_setrt_hook->stdcall<HRESULT>(self, index, msaa::map_render_target(index, surface));
+    IDirect3DSurface9 *depth = nullptr;
+    if (index == 0 && msaa::depth_after_rt0(&depth)) {
+        g_setds_hook->stdcall<HRESULT>(self, depth);  // the depth that fits the new RT0
+    }
     if (index == 0) {
         UINT w = 0, h = 0;
         if (surface) {
@@ -352,9 +360,24 @@ HRESULT __stdcall setrendertarget_hook(IDirect3DDevice9 *self, DWORD index,
     return hr;
 }
 
+// SetDepthStencilSurface / SetTexture: scene MSAA's depth mapping and
+// resolve-before-sampling (vr/msaa.hpp).
+HRESULT __stdcall setds_hook(IDirect3DDevice9 *self, IDirect3DSurface9 *surface)
+{
+    gui_census::on_set_depth(surface);
+    return g_setds_hook->stdcall<HRESULT>(self, msaa::map_depth(surface));
+}
+
+HRESULT __stdcall settex_hook(IDirect3DDevice9 *self, DWORD stage, IDirect3DBaseTexture9 *texture)
+{
+    msaa::before_set_texture(stage, texture);
+    return g_settex_hook->stdcall<HRESULT>(self, stage, texture);
+}
+
 HRESULT __stdcall setvsconstf_hook(IDirect3DDevice9 *self, UINT start, const float *data, UINT count)
 {
     g_setvsconst_calls++;
+    gui_census::on_shader_constants(false, start, data, count);
     if (g_setvsconst_calls <= BURST_LOG_CALLS) {
         char caller[96];
         describe_code_address(__builtin_return_address(0), caller, sizeof(caller));
@@ -444,6 +467,8 @@ bool hook_device(IDirect3DDevice9 *device)
          "SetRenderTarget"},
         {SLOT_StretchRect, (void *)&stretchrect_hook, &g_stretchrect_hook,
          "StretchRect"},
+        {SLOT_SetDepthStencilSurface, (void *)&setds_hook, &g_setds_hook, "SetDepthStencilSurface"},
+        {SLOT_SetTexture, (void *)&settex_hook, &g_settex_hook, "SetTexture"},
     };
 
     for (const SlotSpec &spec : slots) {
@@ -458,8 +483,7 @@ bool hook_device(IDirect3DDevice9 *device)
     }
 
     // Debug-only slots (observe + forward; each a no-op unless its tool is on).
-    census_hooks::install(g_device);         // debug_ps_census / debug_gpu_census
-    rt_probe::install_device_hooks(g_device); // debug_rt_probe
+    census_hooks::install(g_device); // debug_ps_census / debug_gpu_census / debug_gui_census
 
     MC2VR_LOG("D3D: VmtHook installed at device creation — Present/BeginScene/EndScene/"
               "Reset pinned + SetVertexShaderConstantF slot %u (the GPU-boundary channel)",
@@ -501,7 +525,7 @@ bool blit_surfaces(IDirect3DSurface9 *src, IDirect3DSurface9 *dst)
     }
     // Full-surface copy, no filtering (both surfaces are the same size).
     // Through the trampoline, NOT the hooked vtable: the carrier's own
-    // blits must not re-enter the device hooks (rt_probe classification).
+    // blits must not re-enter the device hooks (scene MSAA's mapping, the censuses).
     const HRESULT hr = g_stretchrect_hook->stdcall<HRESULT>(
         g_device, src, nullptr, dst, nullptr, D3DTEXF_NONE);
     if (FAILED(hr)) {

@@ -17,6 +17,7 @@
 #include "game/dx9.hpp"
 #include "game/render_shell.hpp"
 #include "log.hpp"
+#include "vr/msaa.hpp"
 #include "vr/pacing.hpp"
 
 namespace mc2vr::reimpl {
@@ -79,6 +80,9 @@ bool LtiRenderer_BeginSubmit(RenderShell *self)
     }
 
     drain_gpu(self);
+
+    // VR: multisample rasterization for scene MSAA (vr/msaa.hpp).
+    msaa::on_begin_submit();
 
     // ---- targets and clear 0x74aba3-0x74ac21 ----
     Dx9_SetRenderTarget(0, shell_field<IDirect3DSurface9 *>(self, kRenderShellRT0Surface));

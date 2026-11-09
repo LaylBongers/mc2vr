@@ -1,6 +1,7 @@
 // Carrier-owned frame outputs. See render_outputs.hpp.
 
 #include "vr/render_outputs.hpp"
+
 #include "debug/gpu_census.hpp"
 
 #include <windows.h>
@@ -13,6 +14,7 @@
 #include "game/addresses.h"
 #include "hooks/frame_tick.hpp"
 #include "log.hpp"
+#include "vr/msaa.hpp"
 #include "vr/render_size.hpp"
 
 namespace mc2vr::render_outputs {
@@ -20,8 +22,8 @@ namespace mc2vr::render_outputs {
 namespace {
 
 // Carrier surfaces (one ref each held by us; engine slots hold their own).
-IDirect3DSurface9 *g_front = nullptr;  // RT, engine front desc (+ requested MSAA)
-IDirect3DSurface9 *g_depth = nullptr;  // DS, engine auto-depth desc (+ requested MSAA)
+IDirect3DSurface9 *g_front = nullptr;  // RT, engine front desc (+ scene MSAA)
+IDirect3DSurface9 *g_depth = nullptr;  // DS, engine auto-depth desc (+ scene MSAA)
 IDirect3DSurface9 *g_mirror = nullptr; // non-MSAA RT, front size: the LEFT monitor image
 IDirect3DSurface9 *g_scratch = nullptr; // non-MSAA RT, front size: on-demand front resolve (dumps)
 // Pointers we released at Reset; engine slots still holding them must be
@@ -30,9 +32,10 @@ IDirect3DSurface9 *g_retired_front = nullptr;
 IDirect3DSurface9 *g_retired_depth = nullptr;
 
 IDirect3DSurface9 *g_real_bb = nullptr; // swapchain backbuffer (identity only, no ref held)
-bool g_have_msaa = false;
+// The front/depth sample count: scene MSAA (vr/msaa.hpp), decided at the
+// first takeover.
 D3DMULTISAMPLE_TYPE g_msaa = D3DMULTISAMPLE_NONE;
-DWORD g_msaa_q = 0;
+bool g_msaa_decided = false;
 
 uint64_t g_mirror_frame = 0; // frame of the last 1->2 mirror refresh
 bool g_mirror_valid = false;
@@ -117,8 +120,8 @@ bool create_surface(IDirect3DDevice9 *device, bool depth, D3DSURFACE_DESC d, IDi
         d.Width = rw; // the swapchain's desc supplies format; size = render size
         d.Height = rh;
     }
-    const D3DMULTISAMPLE_TYPE ms = g_have_msaa ? g_msaa : d.MultiSampleType;
-    const DWORD msq = g_have_msaa ? g_msaa_q : d.MultiSampleQuality;
+    const D3DMULTISAMPLE_TYPE ms = g_msaa;
+    const DWORD msq = 0;
     IDirect3DSurface9 *s = nullptr;
     const HRESULT hr =
         depth ? device->CreateDepthStencilSurface(d.Width, d.Height, d.Format, ms, msq, FALSE,
@@ -167,21 +170,23 @@ void take_over(const char *reason)
     IDirect3DSurface9 *old_front = *front_slot;
     IDirect3DSurface9 *old_auto = *auto_slot;
 
-    // Our surfaces copy the engine's own descs (behavior-neutral: same size,
-    // format; MSAA = what the engine requested for its swapchain).
-    if (!g_front && old_front != g_retired_front) {
-        D3DSURFACE_DESC d = {};
-        if (!get_desc(old_front, &d) ||
-            !create_surface(device, false, d, &g_front, "front")) {
-            return;
-        }
+    // Our surfaces copy the engine's own descs (same format, render size);
+    // the sample count is scene MSAA's (vr/msaa.hpp).
+    D3DSURFACE_DESC front_desc = {}, depth_desc = {};
+    const bool need_front = !g_front && old_front != g_retired_front;
+    const bool need_depth = !g_depth && old_auto != g_retired_depth;
+    if ((need_front && !get_desc(old_front, &front_desc)) || (need_depth && !get_desc(old_auto, &depth_desc))) {
+        return;
     }
-    if (!g_depth && old_auto != g_retired_depth) {
-        D3DSURFACE_DESC d = {};
-        if (!get_desc(old_auto, &d) ||
-            !create_surface(device, true, d, &g_depth, "depth")) {
-            return;
-        }
+    if (!g_msaa_decided && need_front && need_depth) {
+        g_msaa = msaa::outputs_type(device, front_desc.Format, depth_desc.Format);
+        g_msaa_decided = true;
+    }
+    if (need_front && !create_surface(device, false, front_desc, &g_front, "front")) {
+        return;
+    }
+    if (need_depth && !create_surface(device, true, depth_desc, &g_depth, "depth")) {
+        return;
     }
     if (!g_front || !g_depth) {
         return;
@@ -288,11 +293,13 @@ void on_setup_done()
 {
     render_size::after_setup(); // the mutated stretch re-snapped aspect
     take_over("SetupRenderTargets");
+    msaa::ensure(engine_device());
 }
 
 void on_device_restored()
 {
     take_over("device restore");
+    msaa::ensure(engine_device());
 }
 
 bool active()
@@ -329,16 +336,15 @@ IDirect3DSurface9 *resolve_front()
     return device::blit_surfaces(g_front, g_scratch) ? g_scratch : nullptr;
 }
 
-void note_requested_msaa(uint32_t type, uint32_t quality)
+IDirect3DSurface9 *depth()
 {
-    g_have_msaa = true;
-    g_msaa = (D3DMULTISAMPLE_TYPE)type;
-    g_msaa_q = quality;
+    return active() ? g_depth : nullptr;
 }
 
 void on_present(IDirect3DDevice9 *device)
 {
     take_over("present");
+    msaa::ensure(device);
     if (!active()) {
         return;
     }
@@ -415,6 +421,7 @@ void on_pass_boundary(uint32_t next_pass)
 void on_reset(bool before, long hr)
 {
     if (before) {
+        msaa::on_reset_before();
         // Engine slots were released by the engine's pre-Reset path
         // (FUN_0074d1b0 -> LtiRenderer_ReleaseRenderTargets); drop ours so no
         // D3DPOOL_DEFAULT surface survives into Reset.

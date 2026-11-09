@@ -7,7 +7,6 @@
 
 #include <cstdint>
 
-#include "debug/rt_probe.hpp"
 #include "game/addresses.h"
 #include "hooks/site.hpp"
 #include "log.hpp"
@@ -24,7 +23,6 @@ SafetyHookMid g_osr_entry, g_osr_exit, g_setup_store, g_chain_desc;
 void osr_entry_midhook(safetyhook::Context &ctx)
 {
     uint32_t *w = (uint32_t *)(ctx.esp + 4);
-    rt_probe::on_osr_enter(*w, (uint32_t)ctx.eax, ctx.esi, ctx.esp);
     if (auto s = render_size::on_osr_enter({*w, (uint32_t)ctx.eax}, ctx.esi)) {
         *w = s->w;
         ctx.eax = s->h;
@@ -81,7 +79,7 @@ void install_one(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn
 void install_render_size()
 {
     const bool configured = render_size::configured();
-    if (!configured && !rt_probe::enabled()) {
+    if (!configured) {
         return;
     }
     install_one(g_osr_entry, MC2_ONSCREENRESIZE, osr_entry_midhook, "OnScreenResize entry");

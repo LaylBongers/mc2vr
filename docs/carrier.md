@@ -6,9 +6,9 @@
 
 `DllMain` only spawns the init thread (loader lock). There is no polling phase: everything installs at attach, and hooks on objects that don't exist yet are chained off engine events, on the main thread.
 
-- **Attach** (game suspended; `init.cpp` `init`): conf, base/build-lock gate, IPC connect, FrameTick hook, the VR hooks (`hooks::install_attach`: the reimplementations, camera/culling, outputs, sizing), the debug installs (`render::install_early`, `rt_probe::install_early`), and the `Direct3DCreate9` thunk hook (always installed). Logs `early init done` — the launcher's resume signal. The init thread then exits.
+- **Attach** (game suspended; `init.cpp` `init`): conf, base/build-lock gate, IPC connect, FrameTick hook, the VR hooks (`hooks::install_attach`: the reimplementations, camera/culling, outputs, sizing), the debug installs (`render::install_early`), and the `Direct3DCreate9` thunk hook (always installed). Logs `early init done` — the launcher's resume signal. The init thread then exits.
 - **Device creation** (`hooks/device.cpp` `createdevice_hook`): `Direct3DCreate9` → IDirect3D9 VmtHook → `CreateDevice` → the device VmtHook is installed before the engine receives the pointer. Device creation happens inside the first `SetupRenderTargets` ([reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md)), so this is the only race-free point. A re-created device is re-hooked.
-- **First Present** (`init.cpp` `on_engine_running`): SecuROM pre-probes (one CALLS the `GetD3DDevice` VM-slot thunk — safe only after the loader patched it), `render::install_late` (queue poller thread), vmdump. (The g_RenderShell slot 4/5 hooks used to be a vtable claim here; they are now attach-time MidHooks at the FrameTick call sites — [hooks.md](hooks.md).) Logs `init complete`.
+- **First Present** (`init.cpp` `on_engine_running`): `render::install_late` (queue poller thread), vmdump. (The g_RenderShell slot 4/5 hooks used to be a vtable claim here; they are now attach-time MidHooks at the FrameTick call sites — [hooks.md](hooks.md).) Logs `init complete`.
 
 Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races the main thread's setup-tail device calls. The frame counter `0x011755bc` is not a device-ready signal (it spins ~1400 Hz pre-D3D).
 
@@ -21,4 +21,4 @@ Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races
 
 ## Debug modules
 
-`src/carrier/debug/`, all conf keys prefixed `debug_`, default off (see `conf/mc2vr.conf`): `debug_stub_trace` (VM stub callback tracer), `debug_vm_dump` (live thunk slot census → `vm_thunks.csv`), `debug_watch` (hardware watchpoints), `debug_camtable_probe` (camera transfer-function probe, [camera.md](camera.md)), `debug_eye_dump_frames` (per-eye BMPs). Full list + usage: [debugging.md](debugging.md). The deployed conf is never overwritten by `launch.sh` — add keys to the deployed copy.
+`src/carrier/debug/`, all conf keys prefixed `debug_`, default off (see `conf/mc2vr.conf`): `debug_vm_dump` (live thunk slot census → `vm_thunks.csv`), `debug_watch` (hardware watchpoints), `debug_camtable_probe` (camera transfer-function probe, [camera.md](camera.md)), `debug_eye_dump_frames` (per-eye BMPs). Full list + usage: [debugging.md](debugging.md). The deployed conf is never overwritten by `launch.sh` — add keys to the deployed copy.

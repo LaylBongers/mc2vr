@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "build_lock.h"
+#include "vr/msaa.hpp"
 #include "vr/cull_frustum.hpp"
 #include "hooks/frame_tick.hpp"
 #include "hooks/install.hpp"
@@ -16,11 +17,8 @@
 #include "ipc.hpp"
 #include "log.hpp"
 
-#include "debug/probes.hpp"
 #include "debug/render_dump.hpp"
-#include "debug/rt_probe.hpp"
 #include "debug/stream_capture.hpp"
-#include "debug/stub_trace.hpp"
 #include "debug/build_census.hpp"
 #include "debug/camera_census.hpp"
 #include "debug/watch.hpp"
@@ -29,6 +27,7 @@
 #include "debug/vm_dump.hpp"
 #include "sha256.h"
 #include "debug/gpu_census.hpp"
+#include "debug/gui_census.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
 #include "vr/pacing.hpp"
@@ -163,6 +162,18 @@ static void load_conf()
             if (!ps_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_ps_census=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "msaa") == 0) {
+            // Scene MSAA sample count (vr/msaa.hpp, docs/msaa.md). Must
+            // precede the first render-target setup.
+            if (!msaa::set_samples(value)) {
+                MC2VR_LOG("conf: msaa=%s not recognized (use off|2|4|8)", value);
+            }
+        } else if (strcmp(key, "debug_gui_census") == 0) {
+            // Draw-time view of the GUI records every 30 s (log-only;
+            // debug/gui_census.hpp). Must precede the hook installs.
+            if (!gui_census::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_gui_census=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "debug_gpu_census") == 0) {
             // Per-pass / per-render-target GPU + CPU + draw-call census
             // (log-only; debug/gpu_census.hpp). Must precede CreateDevice.
@@ -174,10 +185,6 @@ static void load_conf()
             // debug/wait_census.hpp).
             if (!wait_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_wait_census=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "debug_stub_trace") == 0) {
-            if (!trace::set_enabled(value)) {
-                MC2VR_LOG("conf: debug_stub_trace=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_camera_census") == 0) {
             // Which shaders take the camera from outside viewContextData (debug/camera_census.hpp).
@@ -200,14 +207,6 @@ static void load_conf()
             // docs/stereo.md). Requires the opcode MidHook (render_dump.cpp).
             if (!s2c::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_stream_capture=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "debug_rt_probe") == 0) {
-            // Render-target / render-size probe (log-only;
-            // docs/reverse_engineering/render_target_table.md): table snapshots,
-            // backbuffer-bind signatures, creation + getter census,
-            // OnScreenResize/Setup order.
-            if (!rt_probe::set_enabled(value)) {
-                MC2VR_LOG("conf: debug_rt_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "render_size") == 0) {
             // Render size W×H (docs/render_resolution.md): the engine's
@@ -397,7 +396,6 @@ void init()
     hooks::install_attach();    // the VR implementation's hooks (hooks/install.cpp)
     // Debug tools (each a no-op unless enabled in the conf).
     render::install_early();
-    rt_probe::install_early();
     MC2VR_LOG("early init done"); // launcher's resume marker (src/launcher/main.c)
 }
 
@@ -405,13 +403,6 @@ void on_engine_running()
 {
     MC2VR_LOG("engine running (first Present, frame %llu) — post-boot installs",
               (unsigned long long)hooks::frame_count());
-
-    // SecuROM pre-probes: each step logs, so a crash is attributable to
-    // exactly one action. call_vm_thunk CALLS the GetD3DDevice VM-slot thunk —
-    // safe only once the loader has patched it; the first Present is well
-    // past that point (same condition the old device wait guaranteed).
-    probes::data_write_restore();
-    probes::call_vm_thunk();
 
     // Queue poller (reads g_RenderQueue fields set up during boot).
     render::install_late();

@@ -33,6 +33,7 @@ add_library(mc2vr_carrier SHARED
     vr/eye_replay.cpp
     vr/eye_share.cpp
     vr/hud_timing.cpp
+    vr/msaa.cpp
     vr/pacing.cpp
     vr/render_outputs.cpp
     vr/render_size.cpp
@@ -44,12 +45,10 @@ add_library(mc2vr_carrier SHARED
     debug/camera_census.cpp
     debug/census_hooks.cpp
     debug/gpu_census.cpp
-    debug/probes.cpp
+    debug/gui_census.cpp
     debug/ps_census.cpp
     debug/render_dump.cpp
-    debug/rt_probe.cpp
     debug/stream_capture.cpp
-    debug/stub_trace.cpp
     debug/vm_dump.cpp
     debug/wait_census.cpp
     debug/watch.cpp

@@ -4,6 +4,7 @@
 __pycache__
 
 # Agent local configurations
+AGENTS.local.md
 opencode.json
 /.zed
 

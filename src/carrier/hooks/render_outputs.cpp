@@ -4,7 +4,6 @@
 
 #include <cstdint>
 
-#include "debug/rt_probe.hpp"
 #include "game/addresses.h"
 #include "hooks/site.hpp"
 #include "log.hpp"
@@ -23,7 +22,6 @@ SafetyHookMid g_restore_mid;
 
 void __fastcall setup_hook(void *self, void *edx, uint32_t flag)
 {
-    rt_probe::on_setup_enter(self);
     g_setup_hook.fastcall<void>(self, edx, flag);
     render_outputs::on_setup_done();
 }

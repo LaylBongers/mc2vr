@@ -52,7 +52,7 @@ bool stretch_surfaces(IDirect3DSurface9 *src, const RECT *src_rect, IDirect3DSur
 
 // ---- Debug-only slot hooks ---------------------------------------------------
 // Hooks device vtable `slot` on the current device's cloned vtable. For debug
-// tools' own census slots (rt_probe, census_hooks), called from hook_device;
+// tools' own census slots (census_hooks), called from hook_device;
 // never for a slot the core already hooks. Returns the leaked VmHook (call the original through it),
 // or nullptr with `*error` = the SafetyHook error type.
 safetyhook::VmHook *hook_method(size_t slot, void *destination, unsigned *error = nullptr);

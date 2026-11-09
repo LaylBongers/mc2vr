@@ -49,7 +49,7 @@ bool set_follow_hmd(const char *value);
 bool consume_forced_reset(void *ret);
 
 // render_size is configured (WxH or hmd): hooks/render_size.cpp installs the
-// rewrite hooks only then (the OnScreenResize entry also for debug_rt_probe).
+// rewrite hooks only then.
 bool configured();
 
 // Hook events (hooks/render_size.cpp, main thread). A returned size is

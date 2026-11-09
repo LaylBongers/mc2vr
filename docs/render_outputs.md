@@ -4,7 +4,7 @@
 
 ## Takeover
 
-- **Surfaces:** a front (render target, swapchain format, no MSAA) and a depth surface at the engine's render size ([render_resolution.md](render_resolution.md)), plus a non-MSAA mirror and a resolve scratch surface.
+- **Surfaces:** a front (render target, swapchain format) and a depth surface at the engine's render size ([render_resolution.md](render_resolution.md)), both with scene MSAA's sample count ([msaa.md](msaa.md)), plus a non-MSAA mirror and a resolve scratch surface.
 - **Holders replaced:** table `+0x3ea4` / `+0x3e98` (front), `+0x3e94` (auto depth, plus `+0x3ea0` when it is the alias), and `g_Dx9AutoDepthRef`.
   - Each owning holder is transferred: Release the displaced surface and AddRef ours, mirroring the engine's own release accounting.
   - The Dx9 bind caches are left alone. They mirror device state, so our surfaces just miss once.
@@ -20,7 +20,7 @@
 
 Device policy is applied to a COPY of the engine's `D3DPRESENT_PARAMETERS` at CreateDevice and Reset (`vr/device_params.cpp`, called from `hooks/device.cpp`). The engine's stored copy stays as it asked, which keeps `RenderSystem_ApplySettings` consistent. The policy:
 - vsync off → `D3DPRESENT_INTERVAL_IMMEDIATE`;
-- the swapchain runs without MSAA (it only carries the mirror). The game's AA request is ignored for the front too: it only ever covered the composite + HUD, and with it on the depth-tested composited icons fail to draw (a game bug, also without the mod) — [msaa.md](msaa.md).
+- the swapchain runs without MSAA (it only carries the mirror). The game's AA request is ignored: it only ever covered the composite + HUD, and with it on the depth-tested composited icons fail to draw (a game bug, also without the mod). The front's sample count is scene MSAA's — [msaa.md](msaa.md).
 
 ## Per-pass flow
 

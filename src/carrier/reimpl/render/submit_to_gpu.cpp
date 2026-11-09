@@ -17,6 +17,7 @@
 #include <cstring>
 
 #include "debug/camera_census.hpp"
+#include "debug/gui_census.hpp"
 #include "game/dx9.hpp"
 #include "game/lti.hpp"
 #include "game/pg_primitive.hpp"
@@ -401,6 +402,7 @@ void submit_pass()
 
     // ---- the sorted record list 0x855874-0x8563af ----
     while (idx != kPrimListEnd) {
+        gui_census::on_record(idx, g_PrimitiveBase::get() + idx);  // debug tap
         submit_record(g_PrimitiveBase::get() + idx);
         idx = g_PrimitiveSortKeys::at(idx).next;
     }
