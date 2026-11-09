@@ -1,5 +1,5 @@
 // Host log: mc2vr_host.log beside the exe (stdout is mirrored so the
-// launcher/selftest can wait for the "ready" line).
+// launcher can wait for the "ready" line).
 #pragma once
 
 namespace hostlog {

@@ -1,8 +1,8 @@
 // Host side of the shared-handle image path (docs/shared_textures.md). The carrier blits the per-eye LDR finals into
 // D3D9 shared-handle textures at the pass boundaries and publishes
 // FRAME_READY; this module opens them with ID3D11Device::OpenSharedResource
-// (the mechanism PROVEN cross-process by tools/probe/run_shared_handle.sh,
-// 2026-10-04) and mirrors the newest pair to a desktop window — the
+// (the mechanism PROVEN cross-process by a probe on 2026-10-04, removed
+// since; see git b6a05a1) and mirrors the newest pair to a desktop window — the
 // verification step BEFORE any OpenXR submission.
 //
 // The mirror is GDI-side (StretchDIBits from a staging read): no shaders, no

@@ -12,8 +12,10 @@
 #include <cstring>
 #include <utility>
 
-#include "game_addresses.h"
-#include "hooks.hpp"
+#include "game/addresses.h"
+#include "game/pg_primitive.hpp"
+#include "hooks/site.hpp"
+#include "hooks/frame_tick.hpp"
 #include "log.hpp"
 
 namespace mc2vr::build_census {
@@ -192,16 +194,17 @@ void analyse_published_list()
     ListStats st = {};
     st.first_rank = UINT32_MAX;
     st.gui_key_min = st.scene_key_min = UINT64_MAX;
-    const uint8_t *base = *(uint8_t *const volatile *)MC2_G_PRIMITIVE_BASE;
-    uint32_t idx = *(volatile const uint16_t *)MC2_G_PRIMITIVE_HEAD;
-    for (uint32_t rank = 0; idx != 0xffff && idx < 0x2000 && rank < 0x2000; rank++) {
-        const uint8_t *rec = base + idx * 0x58;
-        const uint64_t sort_key =
-            *(volatile const uint64_t *)(MC2_G_PRIMITIVE_SORTKEYS + idx * 8) & 0xffffffffffffull;
-        const uint64_t combo = (uint64_t)rec[0x44] | ((uint64_t)rec[0x49] << 8) |
-                               ((uint64_t)*(const uint16_t *)(rec + 0x4a) << 16) |
-                               ((uint64_t)rec[0x48] << 32) | ((uint64_t)rec[0x30] << 40) |
-                               ((uint64_t)*(const uint16_t *)(rec + 0x3a) << 48);
+    using namespace game;
+    const PgPrimitive *base = g_PrimitiveBase::get();
+    uint32_t idx = g_PrimitiveHead::get();
+    for (uint32_t rank = 0; idx != kPrimListEnd && idx < kPrimitivesPerBuffer && rank < kPrimitivesPerBuffer;
+         rank++) {
+        const PgPrimitive &rec = base[idx];
+        const PrimSortEntry &se = g_PrimitiveSortKeys::at(idx);
+        const uint64_t sort_key = (uint64_t)se.key[0] | ((uint64_t)se.key[1] << 16) | ((uint64_t)se.key[2] << 32);
+        const uint64_t combo = (uint64_t)rec.viewType | ((uint64_t)rec.viewContextIdx << 8) |
+                               ((uint64_t)rec.screenIdx << 16) | ((uint64_t)rec.rtWriteMask << 32) |
+                               ((uint64_t)rec.stencilMode << 40) | ((uint64_t)rec.viewIdx << 48);
         const bool gui = (g_gui_bits[idx >> 5] >> (idx & 31)) & 1u;
         if (gui) {
             st.gui++;
@@ -211,9 +214,9 @@ void analyse_published_list()
             st.gui_key_min = std::min(st.gui_key_min, sort_key);
             st.gui_key_max = std::max(st.gui_key_max, sort_key);
             combo_add(st.gui_combo, &st.gui_combo_n, combo);
-            const uint32_t vcount = *(const uint32_t *)(rec + 0x54);
-            const float *vdata = *(float *const *)(rec + 0x50);
-            if (*(void *const *)(rec + 0x2c) != nullptr) {
+            const uint32_t vcount = rec.vsConstCount;
+            const float *vdata = rec.vsConstData;
+            if (rec.cmdStream != nullptr) {
                 st.gui_with_cmd++;
             }
             if (vcount != 0 && vdata != nullptr) {
@@ -230,7 +233,7 @@ void analyse_published_list()
             combo_add(st.scene_combo, &st.scene_combo_n, combo);
         }
         st.walked++;
-        idx = *(volatile const uint16_t *)(MC2_G_PRIMITIVE_SORTKEYS + idx * 8 + 6);
+        idx = se.next;
     }
     if (st.gui == 0) {
         st.scene_after_last_gui = 0;
@@ -314,7 +317,7 @@ void h_pub_in(safetyhook::Context &)
 {
     const int64_t now = qpc_now();
     event(EV_PUB_IN, now);
-    const uint32_t records = *(volatile const uint32_t *)MC2_G_PRIM_WRITE_COUNT;
+    const uint32_t records = game::g_PrimWriteCount::get();
     g_pub_records_sum += records;
     g_pub_records_max = std::max(g_pub_records_max, records);
     g_pub_t0 = now;
@@ -348,7 +351,7 @@ void h_submit(safetyhook::Context &ctx)
     InterlockedIncrement(&g_submit_n);
     if (is_gui_ret(ret)) {
         InterlockedIncrement(&g_gui_records);
-        const uint32_t index = *(volatile const uint32_t *)MC2_G_PRIM_WRITE_COUNT;  // this record's slot
+        const uint32_t index = game::g_PrimWriteCount::get();  // this record's slot
         if (index < 0x2000) {
             g_gui_bits[index >> 5] |= 1u << (index & 31);
         }
@@ -365,7 +368,7 @@ void h_gui_begin_display(safetyhook::Context &ctx)
     InterlockedIncrement(&g_gui_displays);
     if (g_build_active && g_gui_t_first == 0) {
         g_gui_t_first = now;
-        g_gui_first_index_sum += *(volatile const uint32_t *)MC2_G_PRIM_WRITE_COUNT;
+        g_gui_first_index_sum += game::g_PrimWriteCount::get();
         g_gui_first_index_n++;
     }
     // thiscall: ECX = renderer; [esp] ret, +4 GColor bg, +8 GViewport*, +0xc..+0x18 x0 x1 y0 y1.
@@ -473,13 +476,10 @@ void install()
     g_qpc_to_ms = 1000.0 / (double)f.QuadPart;
     unsigned ok = 0;
     for (size_t i = 0; i < SITE_COUNT; i++) {
-        auto mid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(SITES[i].addr), SITES[i].fn);
-        if (!mid) {
-            MC2VR_LOG("build: hook %s @ %p failed (error %u) — skipped", SITES[i].name,
-                      (void *)SITES[i].addr, (unsigned)mid.error().type);
+        if (!hooks::create_mid(g_mid[i], SITES[i].addr, SITES[i].fn, SITES[i].name)) {
+            MC2VR_LOG("build: hook %s skipped", SITES[i].name);
             continue;
         }
-        g_mid[i] = std::move(*mid);
         ok++;
     }
     g_window_frame0 = hooks::frame_count();

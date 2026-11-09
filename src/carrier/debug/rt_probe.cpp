@@ -11,7 +11,7 @@
 // Every line is prefixed "rtprobe:". Game code addresses print as raw VAs
 // (paste straight into Ghidra); stacks are heuristic return-address scans.
 
-#include "rt_probe.hpp"
+#include "debug/rt_probe.hpp"
 
 #include <safetyhook.hpp>
 
@@ -22,16 +22,23 @@
 #include <cstdio>
 #include <cstring>
 
-#include "../eye_replay.hpp"
-#include "../hooks.hpp"
-#include "../log.hpp"
-#include "game_addresses.h"
+#include "vr/eye_replay.hpp"
+#include "hooks/device.hpp"
+#include "hooks/frame_tick.hpp"
+#include "log.hpp"
+#include "game/addresses.h"
 
 namespace mc2vr::rt_probe {
 
 namespace {
 
 bool g_enabled = false;
+
+// Census kinds (device creation / getter VmtHook slots, installed at device
+// creation — see install_device_hooks).
+enum class Create : uint8_t { Texture, RenderTarget, DepthStencil, OffscreenPlain };
+enum class Getter : uint8_t { BackBuffer, RenderTarget, DepthStencil, SwapChain };
+
 
 constexpr double REPORT_INTERVAL_SEC = 10.0;
 constexpr int SIG_DEPTH = 6;      // return addresses kept per signature
@@ -651,6 +658,8 @@ void on_reset(bool before, long hr)
     }
 }
 
+namespace {
+
 void on_create(Create kind, uint32_t w, uint32_t h, uint32_t fmt, uint32_t usage, uint32_t pool,
                long hr, void *object, void *ret)
 {
@@ -698,6 +707,150 @@ void on_getter(Getter kind, uint32_t index, void *result, void *ret)
     extra[sizeof(extra) - 1] = '\0';
     note_sig(getter_name(kind), (uint8_t)pass_idx(),
              kind == Getter::SwapChain ? (uint8_t)C_OTHER : classify(result), sig, extra);
+}
+
+// ---- Census VmtHook slots (observe + forward only) ---------------------------
+// Installed on the carrier's device VmtHook from hook_device (rt_probe::install_device_hooks) (d3d9.h
+// method order).
+constexpr size_t SLOT_GetSwapChain = 14;
+constexpr size_t SLOT_GetBackBuffer = 18;
+constexpr size_t SLOT_CreateTexture = 23;
+constexpr size_t SLOT_CreateRenderTarget = 28;
+constexpr size_t SLOT_CreateDepthStencilSurface = 29;
+constexpr size_t SLOT_CreateOffscreenPlainSurface = 36;
+constexpr size_t SLOT_GetRenderTarget = 38;
+constexpr size_t SLOT_GetDepthStencilSurface = 40;
+
+// Leaked by design (hooks/device.hpp).
+safetyhook::VmHook *g_getswapchain_hook = nullptr;
+safetyhook::VmHook *g_getbackbuffer_hook = nullptr;
+safetyhook::VmHook *g_createtexture_hook = nullptr;
+safetyhook::VmHook *g_creatert_hook = nullptr;
+safetyhook::VmHook *g_createds_hook = nullptr;
+safetyhook::VmHook *g_createplain_hook = nullptr;
+safetyhook::VmHook *g_getrt_hook = nullptr;
+safetyhook::VmHook *g_getds_hook = nullptr;
+
+HRESULT __stdcall createtexture_hook(void *self, UINT w, UINT h, UINT levels, DWORD usage,
+                                     D3DFORMAT fmt, D3DPOOL pool, void **out, HANDLE *shared)
+{
+    const HRESULT hr = g_createtexture_hook->stdcall<HRESULT>(self, w, h, levels, usage, fmt,
+                                                              pool, out, shared);
+    on_create(Create::Texture, w, h, (uint32_t)fmt, usage, (uint32_t)pool, (long)hr,
+              out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall creatert_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
+                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL lockable, void **out,
+                                HANDLE *shared)
+{
+    const HRESULT hr = g_creatert_hook->stdcall<HRESULT>(self, w, h, fmt, ms, msq, lockable, out,
+                                                         shared);
+    on_create(Create::RenderTarget, w, h, (uint32_t)fmt, D3DUSAGE_RENDERTARGET, D3DPOOL_DEFAULT,
+              (long)hr, out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall createds_hook(void *self, UINT w, UINT h, D3DFORMAT fmt,
+                                D3DMULTISAMPLE_TYPE ms, DWORD msq, BOOL discard, void **out,
+                                HANDLE *shared)
+{
+    const HRESULT hr = g_createds_hook->stdcall<HRESULT>(self, w, h, fmt, ms, msq, discard, out,
+                                                         shared);
+    on_create(Create::DepthStencil, w, h, (uint32_t)fmt, D3DUSAGE_DEPTHSTENCIL, D3DPOOL_DEFAULT,
+              (long)hr, out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall createplain_hook(void *self, UINT w, UINT h, D3DFORMAT fmt, D3DPOOL pool,
+                                   void **out, HANDLE *shared)
+{
+    const HRESULT hr = g_createplain_hook->stdcall<HRESULT>(self, w, h, fmt, pool, out, shared);
+    on_create(Create::OffscreenPlain, w, h, (uint32_t)fmt, 0, (uint32_t)pool, (long)hr,
+              out ? *out : nullptr, __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getswapchain_hook(void *self, UINT index, void **out)
+{
+    const HRESULT hr = g_getswapchain_hook->stdcall<HRESULT>(self, index, out);
+    on_getter(Getter::SwapChain, index, SUCCEEDED(hr) && out ? *out : nullptr,
+              __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getbackbuffer_hook(void *self, UINT swapchain, UINT index,
+                                     D3DBACKBUFFER_TYPE type, void **out)
+{
+    const HRESULT hr = g_getbackbuffer_hook->stdcall<HRESULT>(self, swapchain, index, type, out);
+    on_getter(Getter::BackBuffer, index, SUCCEEDED(hr) && out ? *out : nullptr,
+              __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getrt_hook(void *self, DWORD index, void **out)
+{
+    const HRESULT hr = g_getrt_hook->stdcall<HRESULT>(self, index, out);
+    on_getter(Getter::RenderTarget, index, SUCCEEDED(hr) && out ? *out : nullptr,
+              __builtin_return_address(0));
+    return hr;
+}
+
+HRESULT __stdcall getds_hook(void *self, void **out)
+{
+    const HRESULT hr = g_getds_hook->stdcall<HRESULT>(self, out);
+    on_getter(Getter::DepthStencil, 0, SUCCEEDED(hr) && out ? *out : nullptr,
+              __builtin_return_address(0));
+    return hr;
+}
+
+void on_device(void * /*device*/)
+{
+    if (!g_enabled) {
+        return;
+    }
+    struct SlotSpec {
+        size_t slot;
+        void *destination;
+        safetyhook::VmHook **storage;
+        const char *name;
+    };
+    const SlotSpec probe_slots[] = {
+        {SLOT_GetSwapChain, (void *)&getswapchain_hook, &g_getswapchain_hook, "GetSwapChain"},
+        {SLOT_GetBackBuffer, (void *)&getbackbuffer_hook, &g_getbackbuffer_hook,
+         "GetBackBuffer"},
+        {SLOT_CreateTexture, (void *)&createtexture_hook, &g_createtexture_hook,
+         "CreateTexture"},
+        {SLOT_CreateRenderTarget, (void *)&creatert_hook, &g_creatert_hook,
+         "CreateRenderTarget"},
+        {SLOT_CreateDepthStencilSurface, (void *)&createds_hook, &g_createds_hook,
+         "CreateDepthStencilSurface"},
+        {SLOT_CreateOffscreenPlainSurface, (void *)&createplain_hook, &g_createplain_hook,
+         "CreateOffscreenPlainSurface"},
+        {SLOT_GetRenderTarget, (void *)&getrt_hook, &g_getrt_hook, "GetRenderTarget"},
+        {SLOT_GetDepthStencilSurface, (void *)&getds_hook, &g_getds_hook,
+         "GetDepthStencilSurface"},
+    };
+    for (const SlotSpec &spec : probe_slots) {
+        unsigned error = 0;
+        safetyhook::VmHook *hook = device::hook_method(spec.slot, spec.destination, &error);
+        if (hook == nullptr) {
+            // Non-fatal: the probe only loses this tap.
+            MC2VR_LOG("rtprobe: hook_method(%s, slot %u) failed (error %u)", spec.name,
+                      (unsigned)spec.slot, error);
+            continue;
+        }
+        *spec.storage = hook;
+        MC2VR_LOG("rtprobe: hooked %s (slot %u)", spec.name, (unsigned)spec.slot);
+    }
+}
+
+} // namespace
+
+void install_device_hooks(void *device)
+{
+    on_device(device);
 }
 
 } // namespace mc2vr::rt_probe

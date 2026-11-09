@@ -3,7 +3,7 @@
 Goal: the engine's culling (and the LOD/shadow work tied to it) covers what the HMD sees instead of the game's 16:9 frustum — no pop-in when turning or looking up/down. Both halves live-verified (2026-10-07/08); the third-person camera behaves as stock.
 
 - **Rotation**: union HMD pose written into `g_CameraTable` ([camera.md](camera.md)) — culling follows the head.
-- **FOV** (always on, `src/carrier/cull_frustum.cpp`): HMD frustum extents written at the view-context builder.
+- **FOV** (always on, `src/carrier/vr/cull_frustum.cpp`): HMD frustum extents written at the view-context builder.
 
 ## The builder mechanism
 

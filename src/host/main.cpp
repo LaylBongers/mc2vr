@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     hostlog::write("mc2vr_host starting (%s, ipc '%s')", isMock ? "mock" : "openxr",
                    ipcName);
 
-    // IPC first: the carrier (or selftest probe) may connect as soon as we
+    // IPC first: the carrier may connect as soon as we
     // are ready. Failure is non-fatal for --frames-limited mock runs but the
     // carrier path depends on it, so log loudly.
     if (!ipc::server_init(ipcName)) {

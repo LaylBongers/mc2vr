@@ -6,7 +6,7 @@ Runs in the same Proton prefix with DXVK D3D11 (`proton run`; plain `wine` only 
 
 ## Source map (`src/host/`)
 
-`main.cpp` (args `--mock --frames N --xr-debug`), `xr_session.cpp` (instance/session/swapchains/event pump/frame loop, pose history, Wine registry fixups), `mock.cpp` (no runtime: synthetic pose + blit smoke test), `d3d.cpp` (D3D11 device on the runtime LUID), `eyes.cpp` (test pattern fallback), `shared_eyes.cpp` (handle open cache, mirror window, `latest()` seam), `submit.cpp` (swapchain blit), `ipc.cpp`, `log.cpp`, `pose.hpp`. Carrier counterparts: `src/carrier/eye_share.cpp` (capture ring), `src/carrier/ipc.cpp`.
+`main.cpp` (args `--mock --frames N --xr-debug`), `xr_session.cpp` (instance/session/swapchains/event pump/frame loop, pose history, Wine registry fixups), `mock.cpp` (no runtime: synthetic pose + blit smoke test), `d3d.cpp` (D3D11 device on the runtime LUID), `eyes.cpp` (test pattern fallback), `shared_eyes.cpp` (handle open cache, mirror window, `latest()` seam), `submit.cpp` (swapchain blit), `ipc.cpp`, `log.cpp`, `pose.hpp`. Carrier counterparts: `src/carrier/vr/eye_share.cpp` (capture ring), `src/carrier/ipc.cpp`.
 
 ## Frame loop
 

@@ -1,5 +1,5 @@
 // --mock: no OpenXR runtime. Synthetic pose + test-pattern eye textures so
-// IPC and the selftest work without an HMD.
+// IPC and the game run without an HMD.
 #pragma once
 
 namespace mock {

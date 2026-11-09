@@ -47,8 +47,7 @@ bool stop_requested() {
             hostlog::write("mock: ring config %ux%u fmt %u noted (no mirror in "
                            "mock)", m.a, m.b, m.c);
         } else if (m.type == MC2VR_CMD_FRAME_READY) {
-            // Mock has no D3D11 mirror; log the first one only (the selftest
-            // probe sends handle 0 as a shape check).
+            // Mock has no D3D11 mirror; log the first one only.
             static uint64_t seen = 0;
             if (seen++ < 3)
                 hostlog::write("mock: FRAME_READY frame=%llu handle=0x%llx eye=%u "
@@ -99,7 +98,7 @@ int run(int frames) {
         hostlog::write("mock: submit blit shaders ready (draw smoke ok)");
     }
 
-    // Canonical ready marker (launcher/selftest wait for this line) + a
+    // Canonical ready marker (the launcher waits for this line) + a
     // synthetic session ramp so the event ring has realistic content.
     hostlog::write("mc2vr_host: ready (mock mode; no OpenXR runtime — synthetic "
                    "pose, %ux%u eye textures)", kW, kH);

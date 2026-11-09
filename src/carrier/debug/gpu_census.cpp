@@ -7,8 +7,8 @@
 #include <cstring>
 
 #include "log.hpp"
-#include "render_outputs.hpp"
-#include "view_rewrite.hpp"
+#include "vr/render_outputs.hpp"
+#include "vr/view_rewrite.hpp"
 
 namespace mc2vr::gpu_census {
 

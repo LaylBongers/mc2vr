@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-#include "game_addresses.h"
+#include "game/addresses.h"
 #include "log.hpp"
 
 namespace mc2vr::probes {

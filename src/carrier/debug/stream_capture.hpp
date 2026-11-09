@@ -30,10 +30,6 @@ void set_dump_frames(uint32_t n);
 // before the dump window arms (default 15.0 — let the game reach gameplay).
 void set_dump_delay(float seconds);
 
-// Install the two-pass stereo replay InlineHook on PgPrimitive_SubmitToGPU
-// (always on — pass 1 = LEFT, pass 2 = RIGHT). Call after conf load.
-void install();
-
 // Called from render_dump.cpp's RenderCmd_ExecuteStream opcode MidHook (main
 // thread, once per command): esp/ebp/eax are the live register values.
 void on_opcode(uint32_t esp, uint32_t ebp, uint32_t eax);

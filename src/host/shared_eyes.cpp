@@ -175,7 +175,7 @@ void on_frame_ready(uint64_t frameId, uint64_t handle, uint32_t slot,
     }
     if (eye > 1) return;
     g_received[eye]++;
-    if (!g_inited) return;  // e.g. --mock selftest traffic; nothing to show
+    if (!g_inited) return;  // e.g. --mock: nothing to show
 
     // Find or open the shared texture (handles are stable per ring; the
     // carrier's Reset drops a ring and mints new handles — old entries simply

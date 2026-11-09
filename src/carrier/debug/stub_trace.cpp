@@ -1,6 +1,6 @@
 // SecuROM-stub callback tracer — see stub_trace.hpp.
 
-#include "stub_trace.hpp"
+#include "debug/stub_trace.hpp"
 
 #include <safetyhook.hpp>
 
@@ -9,10 +9,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+
+#include "hooks/site.hpp"
 #include <utility>
 
-#include "game_addresses.h"
-#include "hooks.hpp"
+#include "game/addresses.h"
+#include "hooks/frame_tick.hpp"
 #include "log.hpp"
 
 namespace mc2vr::trace {
@@ -193,13 +195,10 @@ void install_entries(std::index_sequence<Is...>)
     using Fn = void (*)(safetyhook::Context &);
     const Fn handlers[] = {entry_handler<Is>...};
     for (size_t i = 0; i < TARGET_COUNT; i++) {
-        auto mid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(TARGETS[i].addr), handlers[i]);
-        if (!mid) {
-            MC2VR_LOG("trace: entry hook %s @ %p failed (error %u) — skipped", TARGETS[i].name,
-                      (void *)TARGETS[i].addr, (unsigned)mid.error().type);
+        if (!hooks::create_mid(g_entry_mid[i], TARGETS[i].addr, handlers[i], TARGETS[i].name)) {
+            MC2VR_LOG("trace: entry hook %s skipped", TARGETS[i].name);
             continue;
         }
-        g_entry_mid[i] = std::move(*mid);
     }
 }
 
@@ -223,15 +222,15 @@ void install()
     if (!g_enabled) {
         return;
     }
-    auto pre = SafetyHookMid::create(reinterpret_cast<uint8_t *>(STUB_CALL_SITE), stub_pre);
-    auto post = SafetyHookMid::create(reinterpret_cast<uint8_t *>(STUB_RETURN_SITE), stub_post);
+    const bool pre = hooks::create_mid(g_stub_pre, STUB_CALL_SITE, stub_pre, "trace: stub call site");
+    const bool post = hooks::create_mid(g_stub_post, STUB_RETURN_SITE, stub_post, "trace: stub return site");
     if (!pre || !post) {
-        MC2VR_LOG("trace: stub bracket install failed (pre ok=%d post ok=%d) — tracer disabled",
-                  pre ? 1 : 0, post ? 1 : 0);
+        MC2VR_LOG("trace: stub bracket install failed (pre ok=%d post ok=%d) — tracer disabled", pre ? 1 : 0,
+                  post ? 1 : 0);
+        g_stub_pre = {};
+        g_stub_post = {};
         return;
     }
-    g_stub_pre = std::move(*pre);
-    g_stub_post = std::move(*post);
     install_entries(std::make_index_sequence<TARGET_COUNT>{});
     MC2VR_LOG("trace: stub brackets @ %p/%p + %u entry hooks installed",
               (void *)STUB_CALL_SITE, (void *)STUB_RETURN_SITE, (unsigned)TARGET_COUNT);

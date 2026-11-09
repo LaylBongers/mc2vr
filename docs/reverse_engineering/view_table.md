@@ -25,7 +25,7 @@ Load-time entries are template/zero. Camera data: three `ViewMatrixSlot`s (strid
 
 ## Command streams
 
-Histogram: gameplay ~21 opcodes (menu 9), 1.5k–3.4k cmds/frame; bins 00/01/02/03 dominate; 27 opcodes defined. Streams carry no draws (op 0x0f = Clear). Full opcode table and interpreter facts on the `RenderCmd_ExecuteStream` plate (dedupe global `0x011697b8`; op 0x13 is a 2-dword no-op; op 0x02/0x03 constant uploads carry count in EDX; op 0x08 screen-constant refresh is viewport/view-dependent).
+Histogram: gameplay ~21 opcodes (menu 9), 1.5k–3.4k cmds/frame; bins 00/01/02/03 dominate; 27 opcodes defined. Streams carry no draws (op 0x0f = Clear). Full opcode table and interpreter facts on the `RenderCmd_ExecuteStream` plate and in [render_cmd.md](render_cmd.md) (dedupe global `0x011697b8`; op 0x13 is a 2-dword no-op; op 0x02/0x03 constant uploads carry count in EDX; op 0x08 screen-constant refresh is viewport/view-dependent).
 
 - Gameplay's final composite is a single DRAW into RT0=backbuffer (UpdateSurface/UpdateTexture never fire); menus/loading use a mainRT→backbuffer StretchRect. The tonemapped LDR finals are on the backbuffer at the end of each pass.
 

@@ -7,7 +7,7 @@
 `DllMain` only spawns the init thread (loader lock). There is no polling phase: everything installs at attach, and hooks on objects that don't exist yet are chained off engine events, on the main thread.
 
 - **Attach** (game suspended; `init.cpp` `init`): conf, base/build-lock gate, IPC connect, FrameTick + BeginSubmit hooks, `render::install_early` (opcode/view/upload-gate MidHooks, stub tracer, SubmitToGPU, camera/culling), `rt_probe::install_early`, and the `Direct3DCreate9` thunk hook (always installed). Logs `early init done` — the launcher's resume signal. The init thread then exits.
-- **Device creation** (`device.cpp` `createdevice_hook`): `Direct3DCreate9` → IDirect3D9 VmtHook → `CreateDevice` → the device VmtHook is installed before the engine receives the pointer. Device creation happens inside the first `SetupRenderTargets` ([reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md)), so this is the only race-free point. A re-created device is re-hooked.
+- **Device creation** (`hooks/device.cpp` `createdevice_hook`): `Direct3DCreate9` → IDirect3D9 VmtHook → `CreateDevice` → the device VmtHook is installed before the engine receives the pointer. Device creation happens inside the first `SetupRenderTargets` ([reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md)), so this is the only race-free point. A re-created device is re-hooked.
 - **First Present** (`init.cpp` `on_engine_running`): SecuROM pre-probes (one CALLS the `GetD3DDevice` VM-slot thunk — safe only after the loader patched it), `render::install_late` (queue poller thread), vmdump. (The g_RenderShell slot 4/5 hooks used to be a vtable claim here; they are now attach-time MidHooks at the FrameTick call sites — [hooks.md](hooks.md).) Logs `init complete`.
 
 Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races the main thread's setup-tail device calls. The frame counter `0x011755bc` is not a device-ready signal (it spins ~1400 Hz pre-D3D).
@@ -17,6 +17,7 @@ Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races
 - The carrier stays thin (inject + install + mod host); gameplay mod logic would go in a separate hot-swappable module the carrier hosts.
 - Install everything at attach; hooks on objects that don't exist yet chain off the object's creation (or the first Present), on the engine's own thread — never poll from a side thread.
 - The carrier never blocks on the [host](host.md); no host ⇒ the game runs as before, logged once.
+- Reimplemented game functions live in the separate `mc2vr_reimpl` library ([reimpl.md](reimpl.md)), as faithful engine code with extension points. The carrier links it, installs it at early init (`debug_reimpl_shadow=on` verifies instead of replacing), and plugs VR behavior into those points.
 
 ## Debug modules
 

@@ -5,9 +5,9 @@
 #include <cstdio>
 #include <cstring>
 
-#include "game_addresses.h"
+#include "game/addresses.h"
 #include "log.hpp"
-#include "render_size.hpp"
+#include "vr/render_size.hpp"
 
 namespace mc2vr {
 namespace ipc {

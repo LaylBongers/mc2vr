@@ -29,8 +29,8 @@
 #define MC2VR_IPC_MAGIC   0x4d325652u  // "M2VR"
 #define MC2VR_IPC_VERSION 1u
 
-// Carrier may override the section name via env MC2VR_IPC_NAME (selftest uses
-// per-run names so a live session is never disturbed); default matches the
+// Carrier may override the section name via env MC2VR_IPC_NAME (per-run
+// names keep a test run from disturbing a live session); default matches the
 // host's. Names are passed to Create/OpenFileMappingA with the "Local\\"
 // prefix applied by the callers.
 #define MC2VR_IPC_DEFAULT_NAME "mc2vr_ipc_v1"

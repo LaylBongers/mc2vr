@@ -1,4 +1,4 @@
-#include "render_dump.hpp"
+#include "debug/render_dump.hpp"
 
 #include <safetyhook.hpp>
 
@@ -7,21 +7,21 @@
 #include <cstdint>
 #include <cstring>
 
-#include "cull_frustum.hpp"
-#include "occluder_boxes.hpp"
-#include "game_addresses.h"
-#include "eye_replay.hpp"
-#include "render_outputs.hpp"
-#include "render_size.hpp"
-#include "hooks.hpp"
+#include "vr/cull_frustum.hpp"
+#include "game/addresses.h"
+#include "hooks/site.hpp"
+#include "vr/eye_replay.hpp"
+#include "vr/render_outputs.hpp"
+#include "vr/render_size.hpp"
+#include "hooks/frame_tick.hpp"
 #include "ipc.hpp"
 #include "log.hpp"
 #include "stub_trace.hpp"
 #include "build_census.hpp"
 #include "stream_capture.hpp"
-#include "pacing.hpp"
-#include "view_rewrite.hpp"
-#include "camera_table.hpp"
+#include "vr/pacing.hpp"
+#include "vr/view_rewrite.hpp"
+#include "vr/camera_table.hpp"
 #include "watch.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/ps_census.hpp"
@@ -45,7 +45,6 @@ constexpr uint32_t REFRESH_MAX = 12;            // steady-state re-dumps per run
 // Leaked by design (same teardown reasoning as the device hooks).
 SafetyHookMid g_opcode_mid;
 SafetyHookMid g_view_mid;
-SafetyHookMid g_postupdate_mid; // FrameTick slot-5 call site
 SafetyHookMid g_endofframe_mid; // FrameTick slot-4 call site
 HANDLE g_poller_thread = nullptr;
 volatile LONG g_poller_run = 0;
@@ -82,9 +81,7 @@ uint32_t g_refresh_done = 0;
 
 // g_RenderShell slot 4/5 claim test.
 uint64_t g_slot4_calls = 0;
-uint64_t g_slot5_calls = 0;
 bool g_slot4_logged = false;
-bool g_slot5_logged = false;
 
 // Queue counters (poller). prodA (base+0x10) is a RING POSITION, not a
 // cumulative counter: observed values wrap inside 0..capacity-1 — track
@@ -235,20 +232,6 @@ void endofframe_midhook(safetyhook::Context &)
     }
 }
 
-void postupdate_midhook(safetyhook::Context &)
-{
-    g_slot5_calls++;
-    if (!g_slot5_logged) {
-        g_slot5_logged = true;
-        MC2VR_LOG("PostUpdateHook call site (g_RenderShell slot 5) hit, frame=%llu",
-                  (unsigned long long)hooks::frame_count());
-    }
-    // The host-event drain point (main thread, once per frame — before
-    // the next pass-1 pose sample so events apply to THIS frame's camera).
-    // No-op when disconnected. Pose sampling itself happens at pass-1 start.
-    ipc::drain_events();
-}
-
 // ---- poller thread ------------------------------------------------------------
 
 void report_window()
@@ -295,7 +278,7 @@ void report_window()
     // Slots + queue line. prodA is a ring position: raw window stats only.
     MC2VR_LOG("slots: endOfFrame=%llu postUpdate=%llu | queue: elem=%u cap=%u "
               "prodA last=%u min=%u max=%u prodB=%u changedPolls=%llu",
-              (unsigned long long)g_slot4_calls, (unsigned long long)g_slot5_calls,
+              (unsigned long long)g_slot4_calls, (unsigned long long)hooks::post_update_calls(),
               g_queue_elem, g_queue_cap, g_prod_a_last, g_prod_a_min, g_prod_a_max,
               g_prod_b_last, (unsigned long long)g_queue_changed_polls);
 
@@ -393,13 +376,9 @@ DWORD WINAPI poller_thread(LPVOID)
 bool install_mid(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn fn,
                  const char *name)
 {
-    auto mid = SafetyHookMid::create(reinterpret_cast<uint8_t *>(target), fn);
-    if (!mid) {
-        MC2VR_LOG("FATAL — %s MidHook install failed @ %p (error %u)", name,
-                  (void *)target, (unsigned)mid.error().type);
+    if (!hooks::create_mid(storage, target, fn, name)) {
         return false;
     }
-    storage = std::move(*mid);
     MC2VR_LOG("installed %s MidHook @ %p", name, (void *)target);
     return true;
 }
@@ -423,34 +402,16 @@ void install_early()
     // View-table dump.
     install_mid(g_view_mid, MC2_SUBMITVIEW_LOOP_LEA, view_midhook, "SubmitWorldPackets view loop");
 
-    // Per-frame orchestration points (IPC event drain): the FrameTick call
-    // sites of g_RenderShell slots 5/4.
-    install_mid(g_postupdate_mid, MC2_FRAMETICK_POSTUPDATE_SITE, postupdate_midhook,
-                "FrameTick PostUpdateHook call site");
+    // FrameTick's g_RenderShell slot-4 call site: hit counter (the slot-5
+    // site is the IPC event drain, hooks/frame_tick.cpp).
     install_mid(g_endofframe_mid, MC2_FRAMETICK_ENDOFFRAME_SITE, endofframe_midhook,
                 "FrameTick EndOfFrameHook call site");
-
-    // View rewrite: upload-gate MidHook (the device-level tap is installed
-    // with the device VmtHook, device.cpp).
-    view_rewrite::install();
-
-    // Union HMD injection at g_CameraTable (always on;
-    // handler no-ops unless armed).
-    camera_table::install();
-
-    // HMD cull frustum in the view-context builder (mc2vr.conf
-    // always on; inert without a tracked HMD).
-    cull_frustum::install();
-    occluder_boxes::install();
 
     // Optional SecuROM-stub callback tracer (mc2vr.conf debug_stub_trace=on).
     trace::install();
 
     // Optional scene -> draw-record build census (mc2vr.conf debug_build_census=on).
     build_census::install();
-
-    // SubmitToGPU two-pass stereo replay InlineHook (always on).
-    s2c::install();
 }
 
 void install_late()

@@ -31,10 +31,6 @@ cmake --build build/win32
 and runs them under Proton. Logs land next to the deployed binaries
 (`mc2vr_launcher.log`, `mc2vr_carrier.log`).
 
-A self-test of the whole launcher → carrier chain (without the game, under plain
-Wine) can be run with `tools/selftest/run.sh` — it uses a stand-in exe and also
-verifies that the carrier's build lock refuses to hook a mismatched binary.
-
 The carrier refuses to patch anything unless the game exe matches the hash in
 `src/carrier/build_lock.h`. After re-RE'ing a different game build,
 regenerate it with:

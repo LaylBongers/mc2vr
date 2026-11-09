@@ -31,7 +31,7 @@
 <text x="372" y="300" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">E' = S·L⁻¹·S·E   (L = HMD local rotation; left multiply; S = measured row signs diag(−1,1,1))</text>
 <text x="372" y="316" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">position Δ = (−px·r0 + py·r1 − pz·r2) · view_world_scale   (r_j = entry rows)</text>
 <text x="372" y="332" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">mid-point of the two eyes, sampled once per game frame · measured, not guessed</text>
-<text x="372" y="348" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">always on · src/carrier/camera_table.cpp</text>
+<text x="372" y="348" text-anchor="start" font-size="11" font-weight="normal" fill="#1c2433">always on · src/carrier/vr/camera_table.cpp</text>
 <rect x="875.8" y="247" width="146.2" height="20" rx="10" fill="#d6336c"/>
 <text x="948.9" y="261" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">MidHook 0x0070aef8</text>
 <polyline points="690.0,358 690.0,378" fill="none" stroke="#d6336c" stroke-width="2" marker-end="url(#r)"/>

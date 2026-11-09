@@ -19,6 +19,8 @@ Mod-side hooking rules + inventory. SecuROM background: [securom_vm.md](reverse_
 
 ## Inventory
 
+Code: one file per group in `src/carrier/hooks/`, installed in the order of `hooks/install.cpp`. Debug-only sites live in their tool under `src/carrier/debug/`. Every hook is created through `hooks/site.hpp`, which refuses sites inside an original replaced by a reimplementation (`hooks/reimpl.cpp`, [reimpl.md](reimpl.md)). Layout rules: [code_structure.md](code_structure.md).
+
 | Site | VA | Type | Purpose |
 |---|---|---|---|
 | `GameShell_FrameTick` | `0x00630e10` | InlineHook | frame counter, 10 s timing reports, `hooks::frame_count()`; lockstep gate + display-delta `g_FrameDeltaSec` overwrite before the original runs (`pacing.cpp`, [pacing.md](pacing.md)) |
@@ -26,7 +28,9 @@ Mod-side hooking rules + inventory. SecuROM background: [securom_vm.md](reverse_
 | device vtable | runtime | VmtHook | Present 17 / BeginScene 41 / EndScene 42 / Reset 16; TestCooperativeLevel 3 (forwarded; answers `RenderSystem_CheckDevice`'s call once with DEVICENOTRESET to drive a render-size switch, [render_resolution.md](render_resolution.md)); SetVertexShaderConstantF 94 = the camera channel ([view_rewrite.md](view_rewrite.md)); SetRenderTarget 37 = pass gate; StretchRect 34 = observed + the original-method trampoline for carrier blits; SetRenderState@57 was the slot-pinning anchor |
 | `Direct3DCreate9` IAT thunk + `IDirect3D9` vtable | thunk `0x00a4e892` (jmp `[0x00b05620]`); CreateDevice slot 16 | InlineHook (attach, always) + VmtHook | device VmtHook installed inside CreateDevice ([carrier.md](carrier.md)); [pacing.md](pacing.md) vsync unlock; the engine's own CreateDevice call site is VM-gated (`FUN_0074c9b0` → ptr `0x024cd09c`, never hooked) |
 | `LtiRenderer_BeginSubmit` entry | `0x0074aaa0` | MidHook | one-shot driver probe; dormant |
-| `RenderCmd_ExecuteStream` | `0x008569d0`, MidHook at opcode cmp `0x008569f5` (EAX=opcode, 27 ops) | MidHook | opcode histogram + [stereo.md](stereo.md) stream tap |
+| `RenderCmd_ExecuteStream` | `0x008569d0` | InlineHook (replacement) | replaced by the reimplementation ([reimpl.md](reimpl.md)); with `debug_reimpl_shadow=on` it is kept, and shadow MidHooks sit at its callees and three call sites inside it |
+| `RenderCmd_ExecuteStream` opcode cmp (debug) | `0x008569f5` (EAX=opcode, 27 ops) | MidHook | opcode histogram + [stereo.md](stereo.md) stream tap; refused while the function is replaced |
+| `PgPrimitive_SubmitToGPU` | `0x00855690` | InlineHook | two-pass stereo replay: the original runs twice, LEFT then RIGHT ([stereo.md](stereo.md)) |
 | `RenderQueue_SubmitWorldPackets` view loop | `0x0048e620`, MidHook at `0x0048e9ea` (ESI=idx, ECX=type; entry+0x7e4 per-view object, 3rd table `0x014095e0` stride 0x20) | MidHook | view aggregation telemetry |
 | `g_RenderShell` slots 4/5 call sites in `GameShell_FrameTick` | `0x00630ee7` (slot 5 PostUpdateHook) / `0x00630f99` (slot 4 EndOfFrameHook) — the `mov ecx,[0x00dfb2f8]` starting each virtual call; both slots are the shared no-op `VirtHook_NoOp` `0x006b9360` | MidHook ×2 (attach) | [ipc.md](ipc.md) event drain (slot 5); proven 1:1 with frames. Hooking the call sites rather than the vtable avoids depending on the vptr, which `0x00a7d950` re-installs on reinit |
 | `g_RenderQueue` counters | `0x00ff3618` | poller thread (250 ms), 10 s reports | producer rhythm telemetry |
@@ -34,7 +38,7 @@ Mod-side hooking rules + inventory. SecuROM background: [securom_vm.md](reverse_
 | `PgLtiRendererPc_SetupRenderTargets` wrap | `0x007494e0` (thiscall, 1 stack arg, callee-cleaned; wrapped as fastcall so EDX passes through) | InlineHook (attach) | [render_outputs](render_outputs.md) takeover at setup exit; render_size aspect re-apply; rt_probe setup log |
 | `RenderSystem_CheckDevice` restore tail | `0x0074d087` (`mov edx,[0x01175288]` after `RenderSystem_RestoreDeviceResources` / `FUN_00753050`) | MidHook (attach) | render_outputs retake after Reset (setup is not re-run on Reset) |
 | render_size (`render_size=WxH`; the entry also with `debug_rt_probe`) | `0x007492f0` OnScreenResize entry (W `[esp+4]`, H EAX), `0x007494d5` its epilogue, `0x00749500` SetupRenderTargets cfg → fields store (ECX/EAX) | MidHook ×3 (attach) | render size policy: inputs rewritten, aspect/mouse post-fixed ([render_resolution.md](render_resolution.md) §1) |
-| bloom adaptive-surface slots (adaptation.cpp) | `0x0074e83d` (ESI = &_AdaptiveLuminanceSurface) / `0x0074e9c3` (EDI = &_pPrevAdaptiveLuminanceSurface), 5-byte log pushes in `PgLtiBloom_CreateSurfaces` | MidHook ×2 (attach) | record where the auto-exposure state lives; saved before / restored after a render-size switch |
+| bloom adaptive-surface slots (`hooks/adaptation.cpp`) | `0x0074e83d` (ESI = &_AdaptiveLuminanceSurface) / `0x0074e9c3` (EDI = &_pPrevAdaptiveLuminanceSurface), 5-byte log pushes in `PgLtiBloom_CreateSurfaces` | MidHook ×2 (attach) | record where the auto-exposure state lives; saved before / restored after a render-size switch |
 | rt_probe (`debug_rt_probe=on` only) | MidHook `0x0075078d` FUN_0074fae0 front-ref read (+ callbacks from the render_outputs setup wrap and the render_size OnScreenResize entry); device slots 14/18/23/28/29/36/38/40 | MidHook + VmtHook | log-only render-target/size census for [render_resolution.md](render_resolution.md) |
 | camera-table fill | `0x0070AEF8` | MidHook | union HMD-pose injection ([camera.md](camera.md)) |
 | view-context builder tan site + camera clearance | `0x0085943B` / `0x007107F9` | MidHook ×2 | culling alignment ([culling.md](culling.md)) |

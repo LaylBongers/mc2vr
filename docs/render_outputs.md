@@ -1,6 +1,6 @@
 # Carrier-owned render outputs
 
-`src/carrier/render_outputs.cpp`, always on. The engine's final frame of each pass lands in a **carrier-created front surface**, not the swapchain backbuffer. The swapchain becomes the carrier's monitor mirror. RE basis: [reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md).
+`src/carrier/vr/render_outputs.cpp`, always on. The engine's final frame of each pass lands in a **carrier-created front surface**, not the swapchain backbuffer. The swapchain becomes the carrier's monitor mirror. RE basis: [reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md).
 
 ## Takeover
 
@@ -18,7 +18,7 @@
 
 ## Present params
 
-Device policy is applied to a COPY of the engine's `D3DPRESENT_PARAMETERS` at CreateDevice and Reset (`device.cpp`). The engine's stored copy stays as it asked, which keeps `RenderSystem_ApplySettings` consistent. The policy:
+Device policy is applied to a COPY of the engine's `D3DPRESENT_PARAMETERS` at CreateDevice and Reset (`vr/device_params.cpp`, called from `hooks/device.cpp`). The engine's stored copy stays as it asked, which keeps `RenderSystem_ApplySettings` consistent. The policy:
 - vsync off → `D3DPRESENT_INTERVAL_IMMEDIATE`;
 - the swapchain runs without MSAA (it only carries the mirror). The game's AA request is ignored for the front too: it only ever covered the composite + HUD, and with it on the depth-tested composited icons fail to draw (a game bug, also without the mod) — [msaa.md](msaa.md).
 

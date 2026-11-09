@@ -1,10 +1,10 @@
-// Native unit test for src/carrier/vp_camera.cpp (pure math, no game deps).
+// Native unit test for src/carrier/vr/vp_camera.cpp (pure math, no game deps).
 // Build + run (one line):
-//   g++ -std=c++17 -I src/common -I src/carrier tools/test/test_vp_camera.cpp src/carrier/vp_camera.cpp -o /tmp/test_vp_camera && /tmp/test_vp_camera
+//   g++ -std=c++17 -I src/common -I src/carrier tools/test/test_vp_camera.cpp src/carrier/vr/vp_camera.cpp -o /tmp/test_vp_camera && /tmp/test_vp_camera
 #include <cmath>
 #include <cstdio>
 
-#include "vp_camera.hpp"
+#include "vr/vp_camera.hpp"
 
 using namespace mc2vr::math;
 using namespace mc2vr::vp_camera;

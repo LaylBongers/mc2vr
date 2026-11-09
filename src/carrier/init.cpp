@@ -3,16 +3,16 @@
 #include <windows.h>
 
 #include "build_lock.h"
-#include "cull_frustum.hpp"
-#include "occluder_boxes.hpp"
-#include "device.hpp"
-#include "eye_replay.hpp"
-#include "eye_share.hpp"
-#include "render_outputs.hpp"
-#include "render_size.hpp"
-#include "adaptation.hpp"
-#include "game_addresses.h"
-#include "hooks.hpp"
+#include "vr/cull_frustum.hpp"
+#include "hooks/frame_tick.hpp"
+#include "hooks/install.hpp"
+#include "vr/device_params.hpp"
+#include "vr/eye_replay.hpp"
+#include "vr/eye_share.hpp"
+#include "vr/render_outputs.hpp"
+#include "vr/render_size.hpp"
+#include "vr/adaptation.hpp"
+#include "game/addresses.h"
 #include "ipc.hpp"
 #include "log.hpp"
 
@@ -23,14 +23,16 @@
 #include "debug/stub_trace.hpp"
 #include "debug/build_census.hpp"
 #include "debug/watch.hpp"
-#include "view_rewrite.hpp"
-#include "camera_table.hpp"
+#include "vr/view_rewrite.hpp"
+#include "vr/camera_table.hpp"
 #include "debug/vm_dump.hpp"
 #include "sha256.h"
 #include "debug/gpu_census.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
-#include "pacing.hpp"
+#include "vr/pacing.hpp"
+#include "debug/shadow/shadow.hpp"
+#include "hooks/reimpl.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -40,6 +42,9 @@ namespace mc2vr {
 
 // Numeric conf values: true and *out set only on a clean, fully-consumed
 // parse; otherwise logs and leaves the setting alone.
+// debug_reimpl_shadow: verify reimplemented functions instead of replacing.
+static bool g_reimpl_shadow = false;
+
 static bool parse_double(const char *key, const char *value, double *out)
 {
     char *end = nullptr;
@@ -178,6 +183,14 @@ static void load_conf()
             if (!trace::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_stub_trace=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "debug_reimpl_shadow") == 0) {
+            // Verify the reimplemented functions instead of replacing (docs/reimpl.md).
+            if (strcmp(value, "on") == 0 || strcmp(value, "off") == 0) {
+                g_reimpl_shadow = strcmp(value, "on") == 0;
+                hooks::set_reimpl_shadow(g_reimpl_shadow);
+            } else {
+                MC2VR_LOG("conf: debug_reimpl_shadow=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "debug_build_census") == 0) {
             // Scene -> draw-record build census (log-only; debug/build_census.hpp).
             if (!build_census::set_enabled(value)) {
@@ -221,7 +234,7 @@ static void load_conf()
             // Vsync pacing: off = force D3DPRESENT_INTERVAL_IMMEDIATE at
             // CreateDevice/Reset (the frame's two Presents are vsync-locked
             // and cap the game at ~30 Hz).
-            if (!device::set_vsync(value)) {
+            if (!device_params::set_vsync(value)) {
                 MC2VR_LOG("conf: vsync=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_eye_dump_frames") == 0) {
@@ -385,17 +398,14 @@ void init()
     // lock-passing carrier registers — an idle one stays fully idle.
     ipc::connect();
 
-    hooks::install();
-    pacing::install();  // replay-pass GPU drain skip (plaintext BeginSubmit)
+    adaptation::init();         // VR state that needs no hook (before the hooks fire)
+    hooks::install_attach();    // the VR implementation's hooks (hooks/install.cpp)
+    if (g_reimpl_shadow) {
+        shadow::install();      // verify reimplementations instead (docs/reimpl.md)
+    }
+    // Debug tools (each a no-op unless enabled in the conf).
     render::install_early();
-    rt_probe::install_early(); // no-op unless debug_rt_probe=on
-    render_outputs::install();  // carrier-owned outputs: setup wrap + restore MidHook
-    render_size::install();     // render_size=WxH: OnScreenResize / setup-store policy
-    adaptation::install();      // exposure continuity across render-size switches
-    // Device-hook chain root (vsync patch + device VmtHook at creation):
-    // RenderSystem_Init calls Direct3DCreate9 during boot, so this must be in
-    // place before the game resumes.
-    device::install_d3d9_gate();
+    rt_probe::install_early();
     MC2VR_LOG("early init done"); // launcher's resume marker (src/launcher/main.c)
 }
 

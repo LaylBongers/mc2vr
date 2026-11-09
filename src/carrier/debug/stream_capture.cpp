@@ -1,13 +1,10 @@
-#include "stream_capture.hpp"
+#include "debug/stream_capture.hpp"
 
 #include <safetyhook.hpp>
 #include <windows.h>
 
-#include "game_addresses.h"
-#include "eye_replay.hpp"
-#include "render_outputs.hpp"
-#include "adaptation.hpp"
-#include "hooks.hpp"
+#include "game/addresses.h"
+#include "hooks/frame_tick.hpp"
 #include "log.hpp"
 
 #include <cstdio>
@@ -41,41 +38,6 @@ bool g_enabled = false;
 uint32_t g_dump_frames = 0;
 float g_dump_delay_s = 15.0f;
 
-// ---- frame replay ----------------------------------------------------
-
-SafetyHookInline g_submit_hook;   // InlineHook on PgPrimitive_SubmitToGPU
-uint64_t g_replays = 0;          // extra passes this window
-double g_replay_ms_sum = 0.0;
-double g_replay_ms_max = 0.0;
-
-// PgPrimitive_SubmitToGPU is void(void) — cdecl/stdcall identical for ().
-// Original first, side effects after (same discipline as FrameTick).
-void submit_togpu_hook()
-{
-    adaptation::on_frame_begin(); // exposure restore after a render-size switch
-    eye_replay::set_pass(1); // pass 1 = LEFT eye
-    // Two passes -> two present-prevs per frame; skip pass 1's (duplicate).
-    render_outputs::begin_present_skip();
-    g_submit_hook.call<void>();
-
-    LARGE_INTEGER freq, t0, t1;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&t0);
-
-    render_outputs::end_present_skip();
-    eye_replay::set_pass(2); // pass 2 = RIGHT eye
-    g_submit_hook.call<void>();
-
-    QueryPerformanceCounter(&t1);
-    const double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 /
-                     (double)freq.QuadPart;
-    g_replays++;
-    g_replay_ms_sum += ms;
-    if (ms > g_replay_ms_max) {
-        g_replay_ms_max = ms;
-    }
-    eye_replay::set_pass(0); // back to "outside a submit"
-}
 
 // ---- per-frame state (main thread only) -------------------------------------
 
@@ -138,7 +100,7 @@ const char *const OP_NAME[OP_COUNT] = {
     "NO-OP (advance-only)",
     "BindViewTextureFamily",
     "FUN_0074af30 (clear/RT pass)",
-    "DeviceSetStreamSource(p1,p2)",
+    "Device::StretchRect(src,dst)",
     "thunk_FUN_0256af90(p2)",
     "SetTexture0+RS0x9a(flags)",
     "HalfResPassBegin",
@@ -399,16 +361,6 @@ void on_opcode(uint32_t esp, uint32_t ebp, uint32_t eax)
 
 void report_window()
 {
-    // Replay stats report even without stream_capture (independent feature).
-    if (g_replays > 0) {
-        MC2VR_LOG("stream replay: extraPasses=%llu avgMs=%.2f maxMs=%.2f",
-                  (unsigned long long)g_replays,
-                  g_replays ? g_replay_ms_sum / (double)g_replays : 0.0,
-                  g_replay_ms_max);
-    }
-    g_replays = 0;
-    g_replay_ms_sum = 0.0;
-    g_replay_ms_max = 0.0;
 
     if (!g_enabled) {
         return;
@@ -474,27 +426,6 @@ void set_dump_delay(float seconds)
 {
     g_dump_delay_s = seconds;
     MC2VR_LOG("stream: debug_dump_delay=%.1fs", (double)seconds);
-}
-
-void install()
-{
-    if (g_submit_hook) {
-        return; // already installed
-    }
-
-    auto result = SafetyHookInline::create(
-        reinterpret_cast<uint8_t *>(MC2_PGPRIMITIVE_SUBMITTOGPU),
-        reinterpret_cast<uint8_t *>(&submit_togpu_hook));
-    if (!result) {
-        MC2VR_LOG("stream: warning — SubmitToGPU InlineHook failed @ %p (error %u) "
-                  "— NO second (RIGHT eye) pass this run",
-                  (void *)MC2_PGPRIMITIVE_SUBMITTOGPU,
-                  (unsigned)result.error().type);
-        return;
-    }
-    g_submit_hook = std::move(*result);
-    MC2VR_LOG("stream: installed SubmitToGPU InlineHook @ %p (two-pass stereo replay)",
-              (void *)MC2_PGPRIMITIVE_SUBMITTOGPU);
 }
 
 } // namespace mc2vr::s2c

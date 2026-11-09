@@ -1,6 +1,6 @@
 # Render resolution (HMD-native per-eye rendering)
 
-While the HMD is in use, the engine renders at the runtime's recommended per-eye size (2016×2240 on the current HMD). The window, present params and swapchain keep the game's own resolution. With the HMD on standby, or no host, the game renders exactly as unmodded. Code: `src/carrier/render_size.cpp`, `src/carrier/adaptation.cpp`; outputs in [render_outputs.md](render_outputs.md). RE basis: [reverse_engineering/rt_dims_source.md](reverse_engineering/rt_dims_source.md).
+While the HMD is in use, the engine renders at the runtime's recommended per-eye size (2016×2240 on the current HMD). The window, present params and swapchain keep the game's own resolution. With the HMD on standby, or no host, the game renders exactly as unmodded. Code: `src/carrier/vr/render_size.cpp`, `src/carrier/vr/adaptation.cpp`; outputs in [render_outputs.md](render_outputs.md). RE basis: [reverse_engineering/rt_dims_source.md](reverse_engineering/rt_dims_source.md).
 
 ## Mechanism
 
