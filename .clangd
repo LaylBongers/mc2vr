@@ -1,0 +1,12 @@
+# clangd (editors): the builds' compilation databases. The game side
+# (carrier, launcher, game library, tests) is the i686 build; the OpenXR host
+# is the x86_64 one. Both are exported by CMake (CMAKE_EXPORT_COMPILE_COMMANDS).
+# Optional: clangd --query-driver=/usr/bin/*-w64-mingw32-* (editor setting)
+# takes the system headers from the MinGW compilers themselves.
+CompileFlags:
+  CompilationDatabase: build/win32
+---
+If:
+  PathMatch: src/host/.*
+CompileFlags:
+  CompilationDatabase: build/win64

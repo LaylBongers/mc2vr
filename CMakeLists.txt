@@ -6,6 +6,12 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+# compile_commands.json for clangd (.clangd points it at build/win32), with
+# include paths inline rather than in the MinGW toolchain's response files.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_C_USE_RESPONSE_FILE_FOR_INCLUDES OFF)
+set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_INCLUDES OFF)
+
 # Single output dir: launch.sh deploys from build/win32/bin/.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 

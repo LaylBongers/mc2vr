@@ -18,6 +18,13 @@ cmake --build build/win64
 
 → `build/win64/bin/mc2vr_host.exe` ([host.md](host.md)). A 64-bit configure builds ONLY the host.
 
+## Editor / clangd
+
+- Both builds export `compile_commands.json`, with include paths inline instead of in the MinGW toolchain's response files.
+- `.clangd` uses `build/win32` for everything except `src/host/`, which uses `build/win64`. Configure both builds once.
+- clangd takes the cross target from the compiler name. `--query-driver=/usr/bin/*-w64-mingw32-*` in the editor's clangd arguments is optional.
+- `clangd --check=<file>` reports `tweak: … FAIL` lines from its own refactoring self-tests. Those aren't diagnostics; real ones show as `[code] Line N:`.
+
 ## Build lock
 
 The carrier refuses to hook unless the game exe size + SHA-256 on disk match `src/carrier/build_lock.h`. Regenerate after re-RE'ing a different game build: `tools/gen-build-lock.sh <exe>`.

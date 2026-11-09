@@ -7,4 +7,4 @@ add_library(mc2vr_game STATIC
 
 # Include root is src/: `#include "game/pg_primitive.hpp"`.
 target_include_directories(mc2vr_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_compile_features(mc2vr_game PUBLIC cxx_std_20)
+target_compile_features(mc2vr_game PUBLIC cxx_std_23)  # = the carrier; also makes CMake pass -std (clangd)
