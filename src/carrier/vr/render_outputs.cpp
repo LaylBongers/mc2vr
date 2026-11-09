@@ -3,7 +3,6 @@
 #include "vr/render_outputs.hpp"
 
 #include "debug/gpu_census.hpp"
-#include "debug/gui_census.hpp"
 
 #include <windows.h>
 #include <d3d9.h>
@@ -418,7 +417,6 @@ void on_pass_boundary(uint32_t next_pass)
         g_mirror_updates++;
         g_mirror_frame = hooks::frame_count();
         g_mirror_valid = true;
-        gui_census::on_mirror_refreshed(device, g_mirror);  // debug tap (phase squares)
     } else {
         g_failures++;
     }

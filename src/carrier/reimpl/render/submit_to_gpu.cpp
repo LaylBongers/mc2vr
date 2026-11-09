@@ -423,7 +423,7 @@ void submit_pass(uint32_t pass)
         gui_census::on_record(idx, rec);  // debug tap
         if (hud_layer && hud::is_hud_record(idx)) {
             if (pass == 1 && hud_records < kMaxHudRecords) g_hud_records[hud_records++] = idx;
-        } else if (!gui_census::skip_record(idx, rec)) {  // debug_gui_skip
+        } else {
             submit_record(rec);
         }
         idx = g_PrimitiveSortKeys::at(idx).next;

@@ -185,12 +185,6 @@ static void load_conf()
             if (!msaa::set_samples(value)) {
                 MC2VR_LOG("conf: msaa=%s not recognized (use off|2|4|8)", value);
             }
-        } else if (strcmp(key, "debug_gui_skip") == 0) {
-            // HUD record classes skipped in turn (changes rendering;
-            // debug/gui_census.hpp).
-            if (!gui_census::set_skip(value)) {
-                MC2VR_LOG("conf: debug_gui_skip=%s not recognized (use cycle|each|markers|callers|off)", value);
-            }
         } else if (strcmp(key, "debug_gui_census") == 0) {
             // Draw-time view of the GUI records every 30 s (log-only;
             // debug/gui_census.hpp). Must precede the hook installs.

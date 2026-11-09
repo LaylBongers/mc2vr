@@ -38,13 +38,13 @@ The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of
 - **Scaleform is only part of the HUD.** In gameplay the ~44 GUI records were almost all the minimap:
   - setup: op 8 (SetScreenConstants) with the minimap rect (1369, 1568, 466, 466) at 2016×2240, then render-state ops and a stencil Clear (op 15) for a stencil mask;
   - draws: technique 127, ~40 records sharing one rotated 2D matrix.
-- **The GUI transform:** each GUI draw uploads a 2×4 affine matrix to VS c0–c1 through op 2 (SetVSConstants) and a color to PS c0 through op 3 (SetPSConstants). Its translation (~16–18) is not in clip units, so the GUI shader probably applies a further screen mapping; not checked.
+- **The GUI transform:** each GUI draw uploads a 2×4 affine matrix to VS c0–c1 through op 2 (SetVSConstants) and a color to PS c0 through op 3 (SetPSConstants). The result is in pixels: the GUI shader then applies the shared pixel-to-clip VS c2 (skipping the records that upload c2 broke the minimap's scaling).
 - **The engine's own 2D path:** the rest of the HUD (by elimination) draws as technique-73 records with no command stream, right before and right after the GUI block. They upload VS c2 = (2/W, −2/H, −1, 1), a pixel-to-clip mapping. Some depth-test against the scene depth with blending (world markers, presumably); some write depth.
 - **Where:** everything draws into the front (`+0x3e98`) with the scene depth bound, in the final composite segment after the post chain. The records after the GUI are more technique-73 2D draws (view contexts 12/13), not a fade.
 - **Frame end, in order:** the post chain; one draw back into main; the eye-adaptation luminance chain (64×64 → 1×1); the composite into the front (technique 78, whose stream binds the front and scene depth, then technique 79); the engine-2D HUD; the Scaleform block; a few more engine-2D draws.
 - **Emitters** (build-time `Submit` return addresses, per-address facts on the Ghidra plates): most engine-2D records come from the renderer's vtable slot 11 (`0x00853390`). The technique-75 records come from slot 10 (`0x00853650`), which takes one depth value per batch. Some come from slot 17 of the vtable at `0x00bacde4` (`0x004ad0a0`). All are reached through vtables only, so the game code above them is what tells HUD from world marker.
 - **Who draws what** (`FUN_0062ee20`'s order is on its Ghidra plate): after the post chain and composite, `Hud_DrawWorldMarkers` (`0x0060f610`) draws most world icons (vehicle entry, pickups, objectives; hiding its records removes them and nothing else). These are the depth-tested icons the in-game AA option breaks. The rest of the HUD follows in steps 3–6: `FUN_0061f430` draws the HUD icons and text, `FUN_00625620`'s records upload the shared pixel-to-clip `c2` that the Scaleform minimap also relies on, and the Scaleform block is the minimap content. Destroyable-crate and helicopter-pickup icons come from neither `Hud_DrawWorldMarkers` nor these; not mapped.
-- **Identified by skipping records** (`debug_gui_skip`): the Scaleform block is the minimap content; the engine-2D view-type-8 records include the crosshair, the ammo indicator and the minimap outline. All engine-2D records share the same render states (depth test on, `LESSEQUAL`, blended), so render states can't separate HUD from world markers.
+- **Identified by skipping records** (a one-off `debug_gui_skip` switch, since removed; in git history): the Scaleform block is the minimap content; the engine-2D view-type-8 records include the crosshair, the ammo indicator and the minimap outline. All engine-2D records share the same render states (depth test on, `LESSEQUAL`, blended), so render states can't separate HUD from world markers.
 
 ## Consequences for changing HUD rendering
 
@@ -53,8 +53,6 @@ The stack chain is heuristic, but it agrees with the earlier `rt_probe` stack of
 
 ## OPEN
 
-`debug_gui_census=on` logs the draw-time view of the GUI records for these (`gui:` lines).
+`debug_gui_census=on` logs the draw-time view of the HUD segment for these (`gui:` lines): record fields, build-time emitters, render commands, shader-constant uploads, draws.
 
-- The full HUD segment before the GUI block (the first census logged only 8 records of it), and where the 2D path's VS c2 is first set.
-- Whether the GUI shader (technique 127) also goes through c2.
-- Where the destroyable-crate and helicopter-pickup icons are drawn, and which of steps 3–6 draws which HUD element.
+- Where the destroyable-crate and helicopter-pickup icons are drawn (they land in the HUD layer, so in steps 3–6), and which step draws which HUD element.
