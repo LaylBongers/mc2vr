@@ -23,7 +23,9 @@ Lesson that still applies: never suppress backbuffer writes under SwapEffect=DIS
 
 ## Known gaps (open, low priority)
 
-- Shaders without `viewContextData` are not rewritten and lag the per-eye camera: explicit `g_ViewProjMtx` (same per-row `w` shift); `LocalToProj` (view folded in per object — needs the view-space eye offset, `clip.x -= P00*e.x`, P00 derivable from cached VP rows); `Mvp`/`TexGen`; rain. Check billboards/rain/particles/quads before implementing (not yet visibly wrong). Shader addresses: [shader_ctab_map.md](reverse_engineering/shader_ctab_map.md).
+- **Explicit camera matrices.** Shaders without `viewContextData` get the camera as matrices the game computes from the mono view-projection, uploaded by the record's command stream (op 2). `view_rewrite` corrects `LocalToProj` and `g_ViewProjMtx` with the pass's `D = VP_eye · VP_mono⁻¹` (`on_record_shader`, registers from the shader's CTAB, `vr/shader_constants`). In gameplay these are a projected ground-shade effect under vehicles (`LocalToProj` + `LocalToView` + `InvScrSize`, about 4 draws per frame) and one quad effect (`g_ViewProjMtx`). Uncorrected, the shades sat at the mono position, offset in one or both eyes. Corrected, they sit under the vehicles in both eyes. Not corrected:
+  - `LocalToView`: needs the game's view-space axis convention.
+  - `Mvp`/`TexGen` (2-row, screen-space): the Scaleform HUD, a separate track ([hud.md](hud.md)).
+  - Rain/particles/billboards are unchecked. `debug_camera_census=on` lists every main-pass shader with camera constants outside `viewContextData` and who fills them. `debug_camera_census_skip=<name>` hides such draws, to identify an artifact.
 - PS-side camera data (`cameraPos` c92, texgen matrices) is mono — hook `SetPixelShaderConstantF` (slot 109) if reflections/shadows skew at IPD scale.
 - Scene MSAA: [msaa.md](msaa.md).
-- OPEN: some vehicles show a phantom shadow in the RIGHT eye only. It doesn't depend on the `SubmitToGPU` reimplementation. Unexplained; candidates are state that differs between the passes: occlusion queries (view type 4 issues them in both passes, results are read back later), or shadow or PS-side data that only one pass sees correctly (see the PS camera item above).

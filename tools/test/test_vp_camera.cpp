@@ -112,6 +112,39 @@ int main()
     const Vec3 r = rotate({0, s45, 0, s45}, {1, 0, 0});
     CHECK(distance(r, {0, 0, -1}) < 1e-5f, "rotate: %g %g %g", r.x, r.y, r.z);
 
+    // 7. Per-eye correction of explicit camera matrices (view_rewrite): with
+    //    D = VP_eye * VP_mono^-1, the corrected LocalToProj = D * (VP_mono * W)
+    //    must project a local point exactly where VP_eye projects W * q.
+    {
+        float vp_mono[16], vp_eye[16], l2p[16], fixed[16];
+        double inv[16], delta[16];
+        rebuild(game, vp_mono);
+        rebuild(apply_eye(game, shift, 1.0f), vp_eye);
+        CHECK(invert4(vp_mono, inv), "VP not invertible");
+        mul4(vp_eye, inv, delta);
+        const float W[16] = {0.8f, -0.6f, 0, 3, 0.6f, 0.8f, 0, 1, 0, 0, 1, -2, 0, 0, 0, 1};  // rotate + translate
+        mul4(vp_mono, W, l2p);
+        mul4(delta, l2p, fixed);
+        const float q[4] = {0.5f, -1.0f, 2.0f, 1.0f};
+        float wq[4], a[4], b[4];
+        for (int r = 0; r < 4; r++) {
+            wq[r] = W[r * 4] * q[0] + W[r * 4 + 1] * q[1] + W[r * 4 + 2] * q[2] + W[r * 4 + 3] * q[3];
+        }
+        float worst = 0;
+        for (int r = 0; r < 4; r++) {
+            a[r] = fixed[r * 4] * q[0] + fixed[r * 4 + 1] * q[1] + fixed[r * 4 + 2] * q[2] + fixed[r * 4 + 3] * q[3];
+            b[r] = vp_eye[r * 4] * wq[0] + vp_eye[r * 4 + 1] * wq[1] + vp_eye[r * 4 + 2] * wq[2] +
+                   vp_eye[r * 4 + 3] * wq[3];
+            worst = std::fmax(worst, std::fabs(a[r] - b[r]));
+        }
+        CHECK(worst < 1e-3f, "corrected LocalToProj off by %g (clip magnitudes ~200)", worst);
+        // An eye at the game camera gives D = identity (mono frames unchanged).
+        mul4(vp_mono, inv, delta);
+        float off = 0;
+        for (int i = 0; i < 16; i++) off = std::fmax(off, std::fabs(delta[i] - (i % 5 == 0 ? 1.0f : 0.0f)));
+        CHECK(off < 1e-4f, "VP * VP^-1 differs from identity by %g", off);
+    }
+
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL PASS\n", g_fail);
     return g_fail ? 1 : 0;
 }

@@ -23,6 +23,7 @@
 #include "vr/view_rewrite.hpp"
 #include "vr/camera_table.hpp"
 #include "watch.hpp"
+#include "debug/camera_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
@@ -301,6 +302,7 @@ void report_window()
     render_outputs::report_window();
     render_size::report_window();
     watch::report_window();
+    camera_census::report_window();
 }
 
 

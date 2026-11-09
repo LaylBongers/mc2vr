@@ -35,11 +35,13 @@ add_library(mc2vr_carrier SHARED
     vr/pacing.cpp
     vr/render_outputs.cpp
     vr/render_size.cpp
+    vr/shader_constants.cpp
     vr/view_rewrite.cpp
     vr/vp_camera.cpp
     # debug/: debugging tools, self-contained (conf-gated, default off).
     debug/beginsubmit_probe.cpp
     debug/build_census.cpp
+    debug/camera_census.cpp
     debug/census_hooks.cpp
     debug/gpu_census.cpp
     debug/probes.cpp

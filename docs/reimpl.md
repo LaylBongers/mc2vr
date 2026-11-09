@@ -1,6 +1,6 @@
 # Incremental reimplementation (`src/carrier/reimpl/`)
 
-Parts of the engine are rewritten as our own C++ and replace the originals, so we can change them. We never decompile everything: we reimplement what we need to change, or where a hook around it has become fragile, and that can be a single function or a whole subsystem. The decompilation is LLM-assisted, from Ghidra output plus disassembly. Mechanism rules: [hooks.md](hooks.md).
+Parts of the engine are rewritten as our own C++ and replace the originals, so they can be changed directly. The engine isn't decompiled wholesale. What gets reimplemented is what needs changing, or what a hook has become fragile around: a single function or a whole subsystem. The decompilation is LLM-assisted, from Ghidra output plus disassembly. Mechanism rules: [hooks.md](hooks.md).
 
 ## Where the pieces live
 
@@ -20,11 +20,11 @@ Inside reimplemented code, calls to other reimplemented functions are plain C++ 
 
 ## Verifying a new reimplementation
 
-Check the transcription against the original before folding in any VR behavior. Two methods have worked; the harness for both is in git history (`src/carrier/debug/shadow/`):
+Both current reimplementations were compared against their originals before any VR behavior went into them; that's the stage where a comparison is still meaningful. Two methods were used; the harness for both is in git history (`src/carrier/debug/shadow/`). Other checks may suit other functions better:
 - **Dry run:** for a function whose callees don't feed back into its own logic (`ExecuteStream`). At each original call, run ours with its `game::` calls recorded instead of executed, then compare with the original's callee calls (captured by MidHooks) and the globals both write.
-- **Paired passes:** for a function whose callees change state it reads (`SubmitToGPU`). The stereo replay's two identical passes run the original and ours for real, and their call sequences are compared. First compare original against original, to show the comparison is sound.
+- **Paired passes:** for a function whose callees change state it reads (`SubmitToGPU`). The stereo replay's two identical passes run the original and ours for real, and their call sequences are compared. Comparing original against original first showed the comparison was sound.
 
-Pitfalls they turned up:
+Things that produced false differences:
 - Arguments that live only in part of a register (AL).
 - Pointers to each side's own stack temporaries.
 - Globals that callees also write.
@@ -35,7 +35,9 @@ Pitfalls they turned up:
 - `RenderCmd_ExecuteStream`: replaces the original. Verified against it (dry run: identical call sequences in gameplay), no frame cost ([reverse_engineering/render_cmd.md](reverse_engineering/render_cmd.md)).
 - `PgPrimitive_SubmitToGPU`: replaces the original and renders the stereo frame, a LEFT and a RIGHT pass ([stereo.md](stereo.md)). The `view_rewrite` upload gate is a direct call in it. Verified against the original (paired passes: identical call sequences in gameplay) ([reverse_engineering/submit_to_gpu.md](reverse_engineering/submit_to_gpu.md)).
 - **Call-path cost:** a `game::Function` call costs about 5 ns under Wine, against 1 ns for a direct call. Frame-building is inlined per declaration; the rest is the generic asm shim. Native calls (`__cdecl`/`__stdcall`/`__fastcall`/`__thiscall`) where the convention fits would get closer to 1 ns, but each declaration would then need the callee's pop count.
-- Next: fold the stereo replay, the per-eye camera upload gate and the replay drain skip into explicit code in `SubmitToGPU`, and make a HUD render-target split possible ([reverse_engineering/gui_renderer.md](reverse_engineering/gui_renderer.md)).
+- OPEN, candidates for the next reimplementations:
+  - `LtiRenderer_BeginSubmit` (`0x0074aaa0`): Present prev, BeginScene, GPU sync, clear. That would turn the right-eye drain skip, now a MidHook at `0x0074ab5f` ([pacing.md](pacing.md)), into a plain condition.
+  - The HUD: the Scaleform records (2-row `Mvp`/`TexGen` shaders, about 130 draws per frame) pass through our `SubmitToGPU`, which is where a HUD render-target split could go ([hud.md](hud.md), [reverse_engineering/gui_renderer.md](reverse_engineering/gui_renderer.md)).
 
 ## Tests
 

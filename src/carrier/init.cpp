@@ -22,6 +22,7 @@
 #include "debug/stream_capture.hpp"
 #include "debug/stub_trace.hpp"
 #include "debug/build_census.hpp"
+#include "debug/camera_census.hpp"
 #include "debug/watch.hpp"
 #include "vr/view_rewrite.hpp"
 #include "vr/camera_table.hpp"
@@ -178,6 +179,13 @@ static void load_conf()
             if (!trace::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_stub_trace=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "debug_camera_census") == 0) {
+            // Which shaders take the camera from outside viewContextData (debug/camera_census.hpp).
+            if (!camera_census::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_camera_census=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_camera_census_skip") == 0) {
+            camera_census::set_skip(value);
         } else if (strcmp(key, "debug_build_census") == 0) {
             // Scene -> draw-record build census (log-only; debug/build_census.hpp).
             if (!build_census::set_enabled(value)) {

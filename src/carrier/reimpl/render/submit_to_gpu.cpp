@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "debug/camera_census.hpp"
 #include "game/dx9.hpp"
 #include "game/lti.hpp"
 #include "game/pg_primitive.hpp"
@@ -169,6 +170,9 @@ void submit_record(PgPrimitive *rec)
     PgMaterial *const mat = g_MaterialTable::get()[rec->materialIdx];
     EffectPass *pass = g_EffectPassTable::data()[(int16_t)(uint16_t)(mat->effectPass + (uint16_t)screen_fx)];
     Technique *const tech = rec->techniqueIdx < 0x100 ? g_TechniqueTable::data()[rec->techniqueIdx] : nullptr;
+    // VR: this record's shader, so its explicit camera matrices get the
+    // per-eye correction wherever in the record they are uploaded.
+    view_rewrite::on_record_shader(tech != nullptr ? rec->vertexShader : nullptr);
 
     // ---- view change 0x855931-0x855977 ----
     if (g_LastViewId::get() != rec->viewId) {
@@ -332,7 +336,7 @@ void submit_record(PgPrimitive *rec)
 
     // ---- command stream + draw 0x8562b4-0x856354 ----
     reimpl::RenderCmd_ExecuteStream(rec->cmdStream, tech, pass);
-    if (tech != nullptr) {
+    if (tech != nullptr && camera_census::on_draw(rec, tech)) {  // debug tap (true unless a debug skip)
         RenderShell_BindRecordStreams(rec);
         if (g_LastGeometry::get() != rec->geometryObj) {
             if (rec->geometryObj != nullptr) {
@@ -399,6 +403,7 @@ void submit_pass()
         submit_record(g_PrimitiveBase::get() + idx);
         idx = g_PrimitiveSortKeys::at(idx).next;
     }
+    view_rewrite::on_record_shader(nullptr);  // no record after the walk
 
     LtiRenderer_EndSubmit(render_shell());
     end_view_type();

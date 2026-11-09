@@ -2,6 +2,8 @@
 
 #include "vr/view_rewrite.hpp"
 
+#include "vr/shader_constants.hpp"
+
 #include <windows.h>
 
 #include <cmath>
@@ -83,6 +85,17 @@ uint32_t g_rt_seen_n = 0;
 
 // ---- per-pass eye state ----------------------------------------------------------
 int g_pass_eye = 0;  // Per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 none
+
+// ---- mono camera matrices outside viewContextData ----------------------------
+// Shaders without viewContextData get the camera as explicit matrices the game
+// computes from the mono view-projection: LocalToProj = VP * World,
+// g_ViewProjMtx = VP (docs/stereo.md). The pass's viewContextData rewrite
+// gives D = VP_eye * VP_mono^-1; D * VP_mono * World = VP_eye * World.
+uint32_t g_l2p_reg = REG_INVALID;  // the current record's shader (on_record_shader)
+uint32_t g_vpm_reg = REG_INVALID;
+double g_delta[16];  // double: see math::invert4
+bool g_delta_valid = false;  // for this pass
+uint64_t g_mtx_rows = 0, g_mtx_no_delta = 0, g_mtx_split = 0;
 
 uint32_t render_w()
 {
@@ -353,6 +366,11 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         return data;  // unreachable: Off/On/Pulse/Stereo never reach hmd_rewrite
     }
     vp_camera::rebuild(cam, scratch + (base - start_register) * 4);
+    double mono_inv[16];
+    if (math::invert4(raw, mono_inv)) {
+        math::mul4(scratch + (base - start_register) * 4, mono_inv, g_delta);
+        g_delta_valid = true;
+    }
     if (camrow) {
         math::store3(camrow, cam.C);
     }
@@ -380,6 +398,11 @@ bool set_identity_oracle(const char *value)
                   ? "rebuild with the game's own camera — output must equal input"
                   : "per-eye HMD rewrite");
     return true;
+}
+
+bool main_pass_active()
+{
+    return pass_is_main();
 }
 
 bool is_main_size(uint32_t w, uint32_t h)
@@ -424,6 +447,59 @@ void on_set_render_target(uint32_t w, uint32_t h)
 // projection is folded into the VP rows, so an asymmetric per-eye projection
 // is an edit to the same rows: the NDC centre shift e_k lands in row_k.w as
 // |row_k.xyz| * e_k (row_k.xyz = P_kk * basis_k).
+namespace {
+
+// The current record's explicit camera matrices, corrected by this pass's D.
+const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t vec4_count)
+{
+    if ((g_l2p_reg == REG_INVALID && g_vpm_reg == REG_INVALID) || vec4_count > VS_ROWS) {
+        return data;
+    }
+    static float scratch[VS_ROWS * 4];
+    bool copied = false;
+    const uint32_t end = start_register + vec4_count;
+    for (const uint32_t reg : {g_l2p_reg, g_vpm_reg}) {
+        if (reg == REG_INVALID || !(start_register < reg + 4 && end > reg)) {
+            continue;  // not this upload
+        }
+        if (start_register > reg || end < reg + 4) {
+            g_mtx_split++;  // the matrix split across uploads: passed through
+            continue;
+        }
+        if (!g_delta_valid) {
+            g_mtx_no_delta++;  // no viewContextData rewrite in this pass yet
+            continue;
+        }
+        if (!copied) {
+            memcpy(scratch, data, vec4_count * 16);
+            copied = true;
+        }
+        float *m = scratch + (reg - start_register) * 4;
+        float out[16];
+        math::mul4(g_delta, m, out);
+        memcpy(m, out, sizeof(out));
+        g_mtx_rows += 4;
+    }
+    return copied ? scratch : data;
+}
+
+} // namespace
+
+void on_record_shader(IDirect3DVertexShader9 *vs)
+{
+    g_l2p_reg = g_vpm_reg = REG_INVALID;
+    const shader_constants::Table *t = shader_constants::of(vs);
+    if (t == nullptr) {
+        return;
+    }
+    if (const shader_constants::Named *c = t->find("LocalToProj"); c != nullptr && c->count >= 4) {
+        g_l2p_reg = c->reg;
+    }
+    if (const shader_constants::Named *c = t->find("g_ViewProjMtx"); c != nullptr && c->count >= 4) {
+        g_vpm_reg = c->reg;
+    }
+}
+
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
                                 uint32_t vec4_count)
 {
@@ -432,8 +508,11 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
         return data;
     }
     g_vs_vec4s += vec4_count;
-
-    return pass_is_main() ? hmd_rewrite(start_register, data, vec4_count) : data;
+    if (!pass_is_main()) {
+        return data;
+    }
+    const float *out = hmd_rewrite(start_register, data, vec4_count);
+    return out != data ? out : matrix_rewrite(start_register, data, vec4_count);
 }
 
 uint64_t rewrite_count()
@@ -468,6 +547,10 @@ void report_window()
                   (unsigned long long)g_hmd_blocks, (unsigned long long)g_hmd_cam_only,
                   (unsigned long long)g_hmd_split, (unsigned long long)g_hmd_decomp_fail,
                   (double)g_hmd_resid_max, g_hmd.id, (int)g_hmd.valid);
+        MC2VR_LOG("view/hmd: camera matrices (LocalToProj, g_ViewProjMtx) rewritten rows=%llu split=%llu "
+                  "noDelta=%llu", (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_split,
+                  (unsigned long long)g_mtx_no_delta);
+        g_mtx_rows = g_mtx_split = g_mtx_no_delta = 0;
         g_hmd_blocks = g_hmd_cam_only = g_hmd_split = g_hmd_decomp_fail = 0;
         g_hmd_resid_max = 0.0f;
     }
@@ -542,7 +625,8 @@ void set_pass_eye(int sign)
         }
     }
     if (sign != g_pass_eye) {
-        g_pw_valid = false;  // per-pass camPos cache
+        g_pw_valid = false;     // per-pass camPos cache
+        g_delta_valid = false;  // per-pass camera delta
     }
     g_pass_eye = sign;
 }

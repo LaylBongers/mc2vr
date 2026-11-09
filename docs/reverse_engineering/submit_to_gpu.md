@@ -7,7 +7,7 @@
 - **The dirty mask is computed after `RenderShell_SetViewType`,** which can reset the caches it compares against. Pass selection keys off the raw mask (screen | material), not the 0x7f that a technique or pass change forces.
 - **Callee conventions:** most callees take register arguments: EAX/ECX/EDX/EDI/ESI, AL for `RenderShell_PickPass_1_3_7`. They are declared in `src/game/render_shell.hpp` / `dx9.hpp` / `lti.hpp`. A read-before-write scan of each callee found no hidden register inputs.
 - **Float math** is scalar SSE (`mulss`/`addss`). `reimpl/` is compiled with `-mfpmath=sse`, because the i686 default x87 would round `a*b+c` differently.
-- **Hooking inside it:** five call instructions return onto a branch target (`0x855bb7`, `0x855bf6`, `0x855e15`, `0x856302`, `0x85634e`), so a 5-byte patch there corrupts the function. Use an earlier site and decode the registers there.
+- **Hooking inside it:** five call instructions return onto a branch target (`0x855bb7`, `0x855bf6`, `0x855e15`, `0x856302`, `0x85634e`), so a 5-byte patch there corrupts the function. An earlier instruction with the arguments still in registers works instead.
 
 ## Verification
 

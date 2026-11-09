@@ -12,6 +12,9 @@
 //   - set_identity_oracle()/set_view_world_scale(): mc2vr.conf controls.
 #pragma once
 
+#include <windows.h>
+#include <d3d9.h>
+
 #include <cstdint>
 
 #include "vr/vp_camera.hpp"
@@ -39,6 +42,15 @@ void on_set_render_target(uint32_t w, uint32_t h);
 // True when a render target of w x h is the engine's live render size (the
 // main scene / per-eye chain size).
 bool is_main_size(uint32_t w, uint32_t h);
+
+// True while RT0 has the main scene size: the passes the rewrite applies to.
+bool main_pass_active();
+
+// The vertex shader the next record draws with (the PgPrimitive_SubmitToGPU
+// reimplementation, before the record's command stream runs): its explicit
+// camera matrices (LocalToProj, g_ViewProjMtx), if any, get this pass's
+// per-eye correction when uploaded.
+void on_record_shader(IDirect3DVertexShader9 *vs);
 
 // The rewrite is always hmd_delta: per-eye projection from the OpenXR FOV +
 // per-eye position delta, the pose already in the records from the camera
