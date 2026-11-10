@@ -20,8 +20,6 @@ How functions/systems in this binary were found and named. Identification oracle
 
 `__builtin_return_address(0)` + module lookup in hook bursts, or a MidHook at entry reading `ECX`/`[ESP]` for thiscall/virtual sites.
 
-**Diagram:** [../render_diagram.svg](../render_diagram.svg) — frame flow, the opaque VM stub, and the mod's hook points.
-
 ## When static search fails
 
 - Code Ghidra shows as undefined or caller-less may just be missing from the listing: a direct `E8 rel32` call to it in the raw bytes says so ([ghidra-reva.md](ghidra-reva.md)).

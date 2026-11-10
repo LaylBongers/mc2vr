@@ -37,3 +37,4 @@ The carrier refuses to hook unless the game exe size + SHA-256 on disk match `sr
 - `tools/test/test_vp_camera.cpp` — native g++ unit test for the camera math ([camera.md](camera.md)); build line in its header.
 - `tools/test/test_call_shim.cpp` — the game call shim under Wine ([reimpl.md](reimpl.md#tests)).
 - `tools/test/test_game_entry.cpp` — the entry for replacements under Wine ([reimpl.md](reimpl.md#tests)).
+- `tools/diagrams/render_pipeline.py` → `docs/render_pipeline.svg`: one frame end to end, for people (publishing), not for agents. It's ~70 KB of layout; the facts it shows are in the notes. Re-run it after notes change what it shows.
