@@ -8,6 +8,6 @@ Eye images cross carrier→host as shared-handle textures (proven by a probe on 
 - Raw-vtable slots that bit us: texture GetSurfaceLevel=18, query Issue=6 / GetData=7, device CreateTexture=23.
 - The host mirror must `CopyResource` into staging before `Map`; the handle cache is reserved (64) so `Entry*` stay stable.
 
-Portability: legacy `pSharedHandle` textures on a plain (non-Ex) D3D9 device are DXVK behavior — native Windows only shares resources from a D3D9Ex device, so a native port would have to promote the game's device (`Direct3DCreate9Ex`/`CreateDeviceEx` in the existing creation hooks). The rest of the hand-off (event-query fence + `D3DGETDATA_FLUSH`, `D3DCREATE_MULTITHREADED` polling) is standard D3D9.
+Portability ([platforms.md](platforms.md): the supported Windows setup is Windows + DXVK): legacy `pSharedHandle` textures on a plain (non-Ex) D3D9 device are DXVK behavior — native Windows only shares resources from a D3D9Ex device, so a native port would have to promote the game's device (`Direct3DCreate9Ex`/`CreateDeviceEx` in the existing creation hooks). The rest of the hand-off (event-query fence + `D3DGETDATA_FLUSH`, `D3DCREATE_MULTITHREADED` polling) is standard D3D9.
 
 Capture points and the eye pass structure: [stereo.md](stereo.md).

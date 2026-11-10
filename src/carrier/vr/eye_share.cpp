@@ -126,8 +126,12 @@ bool ensure_resources(IDirect3DDevice9 *device, IDirect3DSurface9 *bb)
             HRESULT hr = device->CreateTexture(g_w, g_h, 1, D3DUSAGE_RENDERTARGET, desc.Format,
                                                D3DPOOL_DEFAULT, &slot.tex, &h);
             if (FAILED(hr) || slot.tex == nullptr || h == nullptr) {
+                // Stock Windows D3D9 refuses shared handles on the game's
+                // plain (non-Ex) device; DXVK allows them. The supported
+                // Windows setup ships DXVK's d3d9.dll (docs/platforms.md).
                 MC2VR_LOG("share: CreateTexture(shared RT) FAILED hr=%08lx "
-                          "h=%p — shared eyes inactive this run",
+                          "h=%p — shared eyes inactive this run. mc2vr needs DXVK's "
+                          "d3d9.dll (on Windows: next to Mercenaries2.exe, docs/platforms.md)",
                           (unsigned long)hr, (void *)h);
                 g_broken = true;
                 return false;
