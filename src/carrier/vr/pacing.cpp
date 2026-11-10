@@ -9,7 +9,6 @@
 
 #include "vr/eye_replay.hpp"
 #include "game/addresses.h"
-#include "ipc.hpp"
 #include "log.hpp"
 
 namespace mc2vr::pacing {
@@ -28,7 +27,7 @@ bool g_keep_replay_drain = false;
 uint64_t g_drains_skipped = 0, g_drains_kept = 0;
 
 // ---- render-thread side (pose sample) --------------------------------------
-uint32_t g_last_id = 0;  // hostFrame+1 of the last pass-1 sample
+uint32_t g_last_id = 0;  // pose id of the last pass-1 sample
 // Display time of the last rendered pose and the display-period estimate,
 // written by the render thread, read by the update thread.
 std::atomic<int64_t> g_render_t{0};
@@ -60,12 +59,6 @@ double qpc_ms()
     return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
 }
 
-bool lockstep_state(uint32_t session_state)
-{
-    return session_state == MC2VR_XR_SESSION_VISIBLE ||
-           session_state == MC2VR_XR_SESSION_FOCUSED;
-}
-
 uint32_t governor_mode()
 {
     return *(const volatile uint8_t *)MC2_FRAMERATE_MODE_SEL
@@ -73,38 +66,17 @@ uint32_t governor_mode()
                : *(const volatile uint32_t *)MC2_FRAMERATE_MODE_B;
 }
 
-uint64_t g_read_retries = 0, g_read_fails = 0;
-
-// Seqlock read that rides out the host's write window (a single read gives up
-// after a few spins while the host is mid-publish, which is routine at the
-// gate's polling rate). False only when not connected or the host is stuck.
-bool read_state_retry(Mc2IpcState *st)
+void note_rendered(const xr_session::ViewState &st)
 {
-    if (!ipc::connected()) {
-        return false;
-    }
-    for (int i = 0; i < 256; i++) {
-        if (ipc::read_state(st)) {
-            return true;
-        }
-        g_read_retries++;
-        Sleep(0);
-    }
-    g_read_fails++;
-    return false;
-}
-
-void note_rendered(const Mc2IpcState &st)
-{
-    const int64_t t = st.displayTime;
+    const int64_t t = st.display_time;
     const int64_t prev = g_render_t.load(std::memory_order_relaxed);
     const int64_t d = t - prev;
-    if (st.displayPeriod > 0 && st.displayPeriod <= (int64_t)(kMaxDeltaSec * 1e9)) {
+    if (st.display_period > 0 && st.display_period <= (int64_t)(kMaxDeltaSec * 1e9)) {
         // The runtime's own period for this frame (exact across rate changes,
         // e.g. SteamVR dropping to half rate).
-        g_period_ns.store(st.displayPeriod, std::memory_order_relaxed);
+        g_period_ns.store(st.display_period, std::memory_order_relaxed);
     } else if (prev != 0 && d > 0 && d <= (int64_t)(kMaxDeltaSec * 1e9)) {
-        // Fallback (host without a period): shortest recent display delta.
+        // Fallback (no period reported): shortest recent display delta.
         g_deltas[g_delta_next] = d;
         g_delta_next = (g_delta_next + 1) % kPeriodWindow;
         int64_t p = 0;
@@ -118,42 +90,25 @@ void note_rendered(const Mc2IpcState &st)
 
 } // namespace
 
-bool render_gate(Mc2IpcState *st)
+bool render_gate(xr_session::ViewState *st)
 {
-    if (!read_state_retry(st)) {
+    const double t0 = qpc_ms();
+    bool timed_out = false;
+    if (!xr_session::wait_views(g_last_id, (uint32_t)kGateTimeoutMs, st, &timed_out)) {
         return false;
     }
-    if (!lockstep_state(st->sessionState)) {
+    if (!xr_session::lockstep(st->session_state)) {
         g_open++;
         g_render_t.store(0, std::memory_order_relaxed);  // re-seed on the next session
         return true;
     }
-    if (st->hostFrame + 1 == g_last_id) {
-        const double t0 = qpc_ms();
-        for (;;) {
-            Sleep(0);
-            Mc2IpcState n;
-            if (!read_state_retry(&n)) {
-                break;
-            }
-            *st = n;
-            if (!lockstep_state(st->sessionState) || st->hostFrame + 1 != g_last_id) {
-                break;
-            }
-            if (qpc_ms() - t0 > kGateTimeoutMs) {
-                g_timeouts++;
-                break;
-            }
-        }
-        const double w = qpc_ms() - t0;
-        g_waits++;
-        g_wait_sum_ms += w;
-        g_wait_max_ms = std::fmax(g_wait_max_ms, w);
-    }
-    g_last_id = st->hostFrame + 1;
-    if (lockstep_state(st->sessionState)) {
-        note_rendered(*st);
-    }
+    const double w = qpc_ms() - t0;
+    g_waits++;
+    g_timeouts += timed_out ? 1 : 0;
+    g_wait_sum_ms += w;
+    g_wait_max_ms = std::fmax(g_wait_max_ms, w);
+    g_last_id = st->pose_id;
+    note_rendered(*st);
     return true;
 }
 
@@ -236,12 +191,10 @@ bool set_keep_replay_drain(const char *value)
 void report_window()
 {
     MC2VR_LOG("pace: render gate waits=%llu avg=%.2fms max=%.2fms timeouts=%llu open=%llu | "
-              "state read retries=%llu fails=%llu | period est %.2fms",
+              "period est %.2fms",
               (unsigned long long)g_waits, g_waits ? g_wait_sum_ms / (double)g_waits : 0.0,
               g_wait_max_ms, (unsigned long long)g_timeouts, (unsigned long long)g_open,
-              (unsigned long long)g_read_retries, (unsigned long long)g_read_fails,
               (double)g_period_ns.load() / 1e6);
-    g_read_retries = g_read_fails = 0;
     MC2VR_LOG("pace: sim dt fed=%llu skipped=%llu floored=%llu step avg=%.2fms min=%.2fms "
               "max=%.2fms (replaced game body time avg=%.2fms) -> g_Dt min=%.2fms max=%.2fms "
               "| governor mode=%u rate=%.1f",

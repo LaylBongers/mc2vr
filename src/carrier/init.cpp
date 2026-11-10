@@ -11,19 +11,16 @@
 #include "hooks/install.hpp"
 #include "vr/device_params.hpp"
 #include "vr/eye_replay.hpp"
-#include "vr/eye_share.hpp"
 #include "vr/render_outputs.hpp"
 #include "vr/render_size.hpp"
 #include "vr/adaptation.hpp"
 #include "game/addresses.h"
-#include "ipc.hpp"
 #include "log.hpp"
 
 #include "debug/render_dump.hpp"
 #include "debug/stream_capture.hpp"
 #include "debug/build_census.hpp"
 #include "debug/occlusion_off.hpp"
-#include "debug/xr_probe.hpp"
 #include "debug/camera_census.hpp"
 #include "debug/watch.hpp"
 #include "vr/view_rewrite.hpp"
@@ -35,6 +32,7 @@
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
 #include "vr/pacing.hpp"
+#include "vr/xr_session.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -137,12 +135,6 @@ static void load_conf()
             if (!camera_table::set_probe_enabled(value)) {
                 MC2VR_LOG("conf: debug_camtable_probe=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "debug_sync_frame_ready") == 0) {
-            // A/B: synchronous end-of-frame GPU wait instead of the completion
-            // thread (also keeps the device non-multithreaded).
-            if (!eye_share::set_sync_frame_ready(value)) {
-                MC2VR_LOG("conf: debug_sync_frame_ready=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "debug_keep_replay_drain") == 0) {
             // A/B: keep LtiRenderer_BeginSubmit's GPU drain in the replay pass.
             if (!pacing::set_keep_replay_drain(value)) {
@@ -203,11 +195,6 @@ static void load_conf()
             // Which shaders take the camera from outside viewContextData (debug/camera_census.hpp).
             if (!camera_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_camera_census=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "debug_xr_probe") == 0) {
-            // In-process OpenXR probe on DXVK's device (debug/xr_probe.hpp).
-            if (!xr_probe::set_enabled(value)) {
-                MC2VR_LOG("conf: debug_xr_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_occlusion_off") == 0) {
             // Occlusion culling off, for A/B (debug/occlusion_off.hpp).
@@ -409,14 +396,6 @@ void init()
     // their creation (Direct3DCreate9 -> CreateDevice -> device VmtHook,
     // device.cpp) or the first Present (on_engine_running below).
 
-    // Attach to the OpenXR host's shared section, if one exists (the
-    // launcher spawns the host before the game). Non-fatal: no host means
-    // the game runs the monitor-stereo path exactly as today. Only a
-    // lock-passing carrier registers — an idle one stays fully idle.
-    ipc::connect();
-    // debug_xr_probe: its fault log, from attach on.
-    xr_probe::install_early();
-
     adaptation::init();         // VR state that needs no hook (before the hooks fire)
     hooks::install_attach();    // the VR implementation's hooks (hooks/install.cpp)
     // Debug tools (each a no-op unless enabled in the conf).
@@ -438,8 +417,9 @@ void on_engine_running()
     // debug_wait_census: game IAT wrappers (the loader has filled the IAT).
     wait_census::install();
 
-    // debug_xr_probe: the in-process OpenXR probe, on its own thread.
-    xr_probe::start();
+    // The OpenXR session on the game's (DXVK) device, on its own thread
+    // (vr/xr_session.hpp). No runtime = camera pass-through, logged once.
+    xr_session::start(render_outputs::device());
 
     MC2VR_LOG("init complete"); // launcher waits for this before dumping the log
 }

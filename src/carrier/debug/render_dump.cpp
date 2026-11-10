@@ -17,7 +17,6 @@
 #include "vr/render_outputs.hpp"
 #include "vr/render_size.hpp"
 #include "hooks/frame_tick.hpp"
-#include "ipc.hpp"
 #include "log.hpp"
 #include "build_census.hpp"
 #include "stream_capture.hpp"

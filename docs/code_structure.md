@@ -4,9 +4,8 @@ How the source is organized, and the reasoning behind the split. It describes th
 
 ## Top level
 
-- **`src/launcher/`**: starts the game suspended, injects the carrier, spawns the host ([launcher.md](launcher.md)).
-- **`src/host/`**: the 64-bit OpenXR host, in its own process ([host.md](host.md)).
-- **`src/common/`**: the shared-memory contract between carrier and host (`mc2vr_ipc.h`) and small shared math.
+- **`src/launcher/`**: prepares the VR environment, starts the game suspended, injects the carrier ([launcher.md](launcher.md)).
+- **`src/common/`**: small shared math (`vec_math.hpp`).
 - **`src/game/`** (`mc2vr_game` library): facts about `Mercenaries2.exe`, without mod behavior, mirroring the Ghidra project and keyed to the exe hash.
   - Typed data: structs with offset `static_assert`s, and `Global<T, VA>` globals under their Ghidra names.
   - Original functions as typed callables (`function.hpp`): parameter locations and callee pops. The call shim that makes them callable lives here too.
@@ -16,14 +15,14 @@ How the source is organized, and the reasoning behind the split. It describes th
 
 ## `src/carrier/`
 
-- **(root):** infrastructure: `dllmain`, `init` (conf parsing, install order), `log`, `ipc` (host connection), `build_lock`.
+- **(root):** infrastructure: `dllmain`, `init` (conf parsing, install order), `log`, `build_lock`.
 - **`hooks/`:** the attachments to game code: hook objects, the callbacks that decode registers and stack, code patches, and the D3D9 vtable hooks.
   - `install.cpp` lists them in install order.
   - `site.hpp` creates hooks and refuses sites inside replaced originals, where a hook would silently never fire.
   - `reimpl.cpp` lists the reimplementations that replace originals; `entry.hpp` generates the entry each one is reached through from the original's `game/` declaration.
   - Keeping this in one place makes the full set of patches to the game visible, and keeps VR code free of register-level detail.
 - **`reimpl/`:** reimplemented game systems ([reimpl.md](reimpl.md)), written to read like the original through `game::` types and functions. They call `vr/` directly where they implement VR behavior, which is the reason for reimplementing something at all.
-- **`vr/`:** the VR implementation as plain C++: camera, view rewrite, eye images, render outputs and sizing, pacing, device parameters, shader constant tables.
+- **`vr/`:** the VR implementation as plain C++: the OpenXR session and its presentation ([xr_session.md](xr_session.md)), camera, view rewrite, eye images, render outputs and sizing, pacing, device parameters, shader constant tables.
   - Entry points are named for the game event they handle (`on_<event>`).
   - It uses a few services the hooks provide (`hooks::frame_count()`, `device::blit_surfaces`).
 - **`debug/`:** debugging tools, each behind a `debug_*` conf key (off by default): censuses, dumps, probes, tracers. They install their own hooks, and the 10 s report poller lives here.

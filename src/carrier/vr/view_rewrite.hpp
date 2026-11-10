@@ -70,9 +70,9 @@ void set_view_world_scale(float units_per_metre);
 // The world scale the camtable union injection composes with (shared conf key).
 float world_scale();
 
-// Pose id (host hostFrame+1) the CURRENT frame renders with, 0 when the frame
+// Pose id (xr_session ViewState::pose_id) the CURRENT frame renders with, 0 when the frame
 // is not rendered from an HMD pose. Constant across both passes of a frame;
-// eye_share forwards it in FRAME_READY.
+// eye_share tags the eye pair with it.
 uint32_t current_pose_id();
 
 // The two eye poses (LEFT, RIGHT) the current frame renders with, sampled at

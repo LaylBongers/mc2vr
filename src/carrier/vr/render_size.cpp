@@ -12,11 +12,10 @@
 
 #include "game/addresses.h"
 #include "hooks/frame_tick.hpp"
-#include "ipc.hpp"
 #include "log.hpp"
-#include "mc2vr_ipc.h"
 #include "vr/render_outputs.hpp"
 #include "vr/adaptation.hpp"
+#include "vr/xr_session.hpp"
 
 namespace mc2vr::render_size {
 
@@ -28,7 +27,7 @@ namespace {
 // size only while the HMD is in use, else stock — so with the HMD on standby
 // the game renders exactly as unmodded (mouse mapping included).
 uint32_t g_cfg_w = 0, g_cfg_h = 0;
-bool g_cfg_hmd = false; // render_size=hmd: g_cfg_* come from the host (VIEW_SIZE)
+bool g_cfg_hmd = false; // render_size=hmd: g_cfg_* come from the OpenXR session
 uint32_t g_w = 0, g_h = 0;
 bool g_true_aspect = true;
 bool g_follow_hmd = true;
@@ -98,7 +97,7 @@ bool set_size(const char *value)
         return true;
     }
     if (strcmp(value, "hmd") == 0) {
-        // Size arrives from the host (MC2VR_MSG_VIEW_SIZE). Implies follow:
+        // Size arrives from the runtime (xr_session::on_update_tick). Implies follow:
         // without an HMD size there is nothing else to render at.
         g_cfg_hmd = true;
         g_cfg_w = g_cfg_h = g_w = g_h = 0;
@@ -254,19 +253,15 @@ void after_setup()
     apply_aspect("SetupRenderTargets");
 }
 
-// HMD in use = host connected and the session VISIBLE/FOCUSED — the OpenXR
+// HMD in use = the session VISIBLE/FOCUSED — the OpenXR
 // lifecycle signal (the runtime already debounces it: proximity sensor /
 // standby). Deliberately NOT the per-frame tracked flag: a brief tracking
 // loss must not trigger a device reset (the camera falls back to
 // pass-through meanwhile).
 bool hmd_in_use()
 {
-    Mc2IpcState st;
-    if (!ipc::connected() || !ipc::read_state(&st)) {
-        return false;
-    }
-    return st.sessionState == MC2VR_XR_SESSION_VISIBLE ||
-           st.sessionState == MC2VR_XR_SESSION_FOCUSED;
+    xr_session::ViewState st;
+    return xr_session::read_state(&st) && xr_session::lockstep(st.session_state);
 }
 
 namespace {

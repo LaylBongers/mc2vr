@@ -1,27 +1,29 @@
-// Shared-handle image path — carrier side (docs/stereo.md).
+// Eye images: the hand-off from the render thread to the OpenXR session
+// thread (docs/eye_images.md).
 //
 // At the pass boundaries the carrier-owned front (render_outputs.cpp) holds
-// the per-eye tonemapped LDR finals (1->2 = pass-1 LEFT, 2->0 = pass-2
-// RIGHT). This module blits them into a ring
-// of DEFAULT-pool textures created with legacy pSharedHandle — the mechanism
-// PROVEN cross-process by a probe (2026-10-04, removed since; see git b6a05a1: DXVK
-// D3D9 -> DXVK D3D11 OpenSharedResource works for both A8R8G8B8 and
-// X8R8G8B8, 9Ex and plain devices) — and publishes FRAME_READY to the host
-// once the pair is GPU-complete (event query).
+// the per-eye tonemapped LDR finals (1->2 = pass-1 LEFT, 2->0 = pass-2 RIGHT).
+// They are blitted into a small ring of D3D9 textures; after the RIGHT blit
+// the pair is fenced with an event query and flushed to the GPU, and the
+// session thread takes it once the query signals, then copies it into the
+// swapchains on DXVK's queue through the VkImages behind the textures
+// (xr_present.hpp). The render thread never waits for the GPU.
 //
-// Captures run on the render thread (set_pass call sites); FRAME_READY goes
-// out once the pair's event query signals (see async_completion below).
-// Never blocks on the host. DXVK requires one GetData(D3DGETDATA_FLUSH) or the
-// command buffer is never submitted (probe-proven).
+// The ring textures are created with a legacy pSharedHandle although nothing
+// opens the handle: DXVK never relocates a shared image, so the VkImage
+// behind each texture stays the same for its lifetime.
 //
-// Always on. Everything degrades silently: no host -> no capture (the ring
-// is never allocated), creation failure -> module off for the run.
+// Captures run only while the session shows frames (xr_session::presenting()).
+// Everything degrades silently: creation failure -> module off until the next
+// Reset.
 #pragma once
 
 #include <cstdint>
 
 #include <windows.h>
 #include <d3d9.h> // types only
+
+#include "vr/xr_present.hpp"
 
 namespace mc2vr::eye_share {
 
@@ -32,19 +34,38 @@ namespace mc2vr::eye_share {
 void on_pass_boundary(uint32_t next_pass, IDirect3DDevice9 *device,
                       IDirect3DSurface9 *source);
 
-// Called from eye_replay::on_reset — all surfaces are gone (the device will
-// be recreated; the ring re-creates lazily on the next boundary).
+// Called from eye_replay::on_reset — waits until the session thread no longer
+// uses the ring (CPU and GPU), then drops it (re-created lazily).
 void on_reset();
 
 // 10s window report (called from eye_replay::report_window); resets counters.
 void report_window();
 
-// Frame completion: by default each pair's FRAME_READY is sent by a carrier
-// thread polling the pair's event query (the device is created with
-// D3DCREATE_MULTITHREADED for that), so the render thread never waits for the
-// GPU. debug_sync_frame_ready=on restores the synchronous end-of-frame wait
-// (and the non-multithreaded device). Must be decided before CreateDevice.
-bool set_sync_frame_ready(const char *value);
-bool async_completion();
+// ---- session thread ---------------------------------------------------------
+
+// A complete pair, GPU-done, owned by the session thread until release_pair().
+struct Pair {
+    uint32_t slot = 0;
+    uint64_t frame_id = 0;
+    uint32_t pose_id = 0;   // xr_session pose id both eyes rendered with (0 = none)
+    uint32_t w = 0, h = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    IDirect3DDevice9 *device = nullptr;  // the device the images belong to
+    xr_present::CopyImage eye[2] = {};
+};
+
+enum class Take {
+    None,   // no new pair in time
+    Fresh,  // the pair rendered from `want_pose` (or a later one)
+    Late,   // the wait ran out: the newest pair, rendered from an older pose
+};
+
+// Waits at most timeout_ms for a pair newer than `after_frame` rendered from
+// pose `want_pose` or later (pose-less pairs count as ready), then for its
+// GPU work. Older unclaimed pairs are dropped.
+Take take_pair(uint64_t after_frame, uint32_t want_pose, uint32_t timeout_ms, Pair *out);
+
+// The copy of `p` was submitted: its slot may be rewritten.
+void release_pair(const Pair &p);
 
 } // namespace mc2vr::eye_share

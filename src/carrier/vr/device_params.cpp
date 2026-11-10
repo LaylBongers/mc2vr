@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstring>
 
-#include "vr/eye_share.hpp"
 #include "log.hpp"
 
 namespace mc2vr::device_params {
@@ -88,10 +87,11 @@ DWORD apply_behavior_policy(DWORD behavior_flags)
     MC2VR_LOG("D3D: CreateDevice behavior flags 0x%08lx (MULTITHREADED %s by the game)",
               (unsigned long)behavior_flags,
               (behavior_flags & D3DCREATE_MULTITHREADED) ? "already set" : "not set");
-    if (eye_share::async_completion() && !(behavior_flags & D3DCREATE_MULTITHREADED)) {
-        // The pair-completion thread polls event queries (eye_share.cpp).
+    if (!(behavior_flags & D3DCREATE_MULTITHREADED)) {
+        // The OpenXR session thread polls the eye pairs' event queries
+        // (eye_share.cpp).
         behavior_flags |= D3DCREATE_MULTITHREADED;
-        MC2VR_LOG("D3D: CreateDevice + D3DCREATE_MULTITHREADED (async frame completion)");
+        MC2VR_LOG("D3D: CreateDevice + D3DCREATE_MULTITHREADED (the session thread polls eye-pair fences)");
     }
     return behavior_flags;
 }

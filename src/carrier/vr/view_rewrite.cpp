@@ -12,12 +12,12 @@
 #include <cstring>
 
 #include "game/addresses.h"
-#include "ipc.hpp"
 #include "vr/pacing.hpp"
 #include "log.hpp"
 #include "vec_math.hpp"
 #include "vr/camera_table.hpp"
 #include "vr/vp_camera.hpp"
+#include "vr/xr_session.hpp"
 
 namespace mc2vr::view_rewrite {
 
@@ -215,7 +215,7 @@ namespace {
 // soft-particle behaviour is unchanged.
 struct HmdSnapshot {
     bool valid = false;
-    uint32_t id = 0;  // pose id (hostFrame+1) the carrier tags frames with
+    uint32_t id = 0;  // xr_session pose id the frame renders with
     vp_camera::EyePose eye[2];
 };
 HmdSnapshot g_hmd;
@@ -239,8 +239,8 @@ uint32_t g_hmd_split_logged = 0, g_hmd_fail_logged = 0;
 uint64_t g_delta_no_union = 0;  // hmd_delta uploads skipped: no table union this frame
 uint32_t g_delta_warn_logged = 0;
 
-// Host-published eye (IPC layout) -> pure-math eye.
-vp_camera::EyePose to_eye_pose(const Mc2IpcEyePose &e)
+// Published eye (OpenXR view) -> pure-math eye.
+vp_camera::EyePose to_eye_pose(const xr_session::EyePose &e)
 {
     return {{e.pos.x, e.pos.y, e.pos.z},
             {e.rot.x, e.rot.y, e.rot.z, e.rot.w},
@@ -248,7 +248,7 @@ vp_camera::EyePose to_eye_pose(const Mc2IpcEyePose &e)
 }
 
 // A published eye is usable if its quaternion is unit and its FOV non-degenerate.
-bool eye_is_sane(const Mc2IpcEyePose &e)
+bool eye_is_sane(const xr_session::EyePose &e)
 {
     const float n = math::norm_sq({e.rot.x, e.rot.y, e.rot.z, e.rot.w});
     return n >= 0.98f && n <= 1.02f && e.fov.right > e.fov.left && e.fov.up > e.fov.down;
@@ -328,7 +328,7 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         // the per-eye complement — projection from this eye's OpenXR FOV,
         // position/rotation delta relative to the union pose THIS VP carries
         // (matched by its basis, so the rendered eye equals the pass-1 sample
-        // whose id travels in FRAME_READY even if the VP came from an older
+        // whose id travels with the eye pair even if the VP came from an older
         // table fill), else the same-frame union.
         math::Quat u_rot;
         math::Vec3 u_pos;
@@ -628,12 +628,13 @@ bool frame_eyes(vp_camera::EyePose out[2])
 void set_pass_eye(int sign)
 {
     // Pass 1 start (-1 = LEFT): sample the HMD pose ONCE for the whole frame —
-    // both eyes render with it and the id travels in FRAME_READY. In lockstep
-    // the sample first waits for the host's next publish (pacing::render_gate).
+    // both eyes render with it and the id travels with the eye pair. In
+    // lockstep the sample first waits for the session thread's next views
+    // (pacing::render_gate).
     if (sign < 0 && g_mode == RewriteMode::HmdDelta) {
-        Mc2IpcState st;
-        const bool have = pacing::render_gate(&st);  // lockstep: waits for the host's next pose
-        const bool sane = have && (st.flags & MC2VR_IPC_STF_TRACKED) &&
+        xr_session::ViewState st;
+        const bool have = pacing::render_gate(&st);  // lockstep: waits for this frame's views
+        const bool sane = have && st.tracked &&
                           eye_is_sane(st.eye[0]) && eye_is_sane(st.eye[1]);
         // On a miss keep the previous snapshot for a short window (same hold as
         // camtable's sample_pose) so the frame still renders with a head pose.
@@ -641,7 +642,7 @@ void set_pass_eye(int sign)
         g_hmd.valid = sane || (g_hmd.valid && now - g_hmd_ms < 250);
         if (sane) {
             g_hmd_ms = now;
-            g_hmd.id = st.hostFrame + 1;
+            g_hmd.id = st.pose_id;
             g_hmd.eye[0] = to_eye_pose(st.eye[0]);
             g_hmd.eye[1] = to_eye_pose(st.eye[1]);
         }

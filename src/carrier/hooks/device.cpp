@@ -291,7 +291,7 @@ HRESULT __stdcall reset_hook(IDirect3DDevice9 *self, D3DPRESENT_PARAMETERS *pp)
                   (unsigned long long)g_reset.total, (unsigned long long)hooks::frame_count());
     }
 
-    eye_replay::on_reset(); // the shared eye ring is dropped (re-created lazily)
+    eye_replay::on_reset(); // the eye ring is dropped (re-created lazily)
     gpu_census::on_reset();
     ps_census::on_reset();
 

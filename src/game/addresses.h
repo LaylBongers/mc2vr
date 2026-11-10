@@ -126,8 +126,8 @@
 #define MC2_LTIRENDERER_DX9STATE_OFF ((uintptr_t)0x5bcu)
 
 // RenderSystem's HWND (stored by RenderSystem_Init 0x0074c7a0: DAT_01175274 =
-// the window it was given; GetWindowThreadProcessId'd right after). Read at
-// MC2VR_MSG_EXIT time to post WM_CLOSE to the game's root window — the message
+// the window it was given; GetWindowThreadProcessId'd right after). Read when
+// the OpenXR runtime ends the session, to post WM_CLOSE to the game's root window — the message
 // pump/WndProc quit path is VM-protected (PostQuitMessage/GetMessageA are only
 // referenced from the SecuROM region), so WM_CLOSE is the standard, engine-
 // expected clean-quit signal.

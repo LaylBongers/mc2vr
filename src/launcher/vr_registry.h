@@ -1,5 +1,5 @@
 // The Wine VR registry (docs/openxr_proton.md item 2), owned by the launcher
-// because it runs before both the host and the game.
+// because it runs before the game.
 //
 // wineopenxr negotiation needs HKCU\Software\Wine\VR with DWORD state=1, and
 // DXVK (in any process) reads the OpenXR runtime's Vulkan requirements from
@@ -11,7 +11,7 @@
 // wineopenxr_init_registry creates an OpenXR instance in the calling process,
 // so the launcher (32-bit) needs SteamVR's 32-bit runtime registered
 // (xr_runtime.h, the README setup step). It doesn't touch the process
-// environment, so the host and the game inherit nothing from it.
+// environment, so the game inherits nothing from it.
 //
 // wineopenxr_init_registry returns TRUE even when it publishes nothing, and
 // Wine skips writing a value whose data is unchanged without touching the key,

@@ -1,9 +1,10 @@
-// Lockstep frame pacing with the host (docs/pacing.md).
-//   - render_gate(): render thread, at the pass-1 pose sample. While the host
-//     session is VISIBLE/FOCUSED, waits (bounded 50 ms) until the host has
-//     published a pose newer than the one the last frame rendered with, and
-//     returns that state. The update thread is never held, so the next
-//     frame's update and render prep overlap the host's wait.
+// Lockstep frame pacing with the OpenXR frame loop (docs/pacing.md).
+//   - render_gate(): render thread, at the pass-1 pose sample. While the
+//     session is VISIBLE/FOCUSED, waits (bounded 50 ms) until the session
+//     thread has published views newer than the ones the last frame rendered
+//     with, and returns them. The update thread is never held, so the next
+//     frame's update and render prep overlap the session thread's
+//     xrEndFrame / xrWaitFrame.
 //   - frame_start(): update thread, GameShell_FrameTick entry, before the
 //     game's QPC sample: feeds the dt governor the display-time step (last
 //     rendered display time + one display period, minus the previous target).
@@ -11,12 +12,13 @@
 
 #include <cstdint>
 
-#include "mc2vr_ipc.h"
+#include "vr/xr_session.hpp"
 
 namespace mc2vr::pacing {
 
 void frame_start();
-bool render_gate(Mc2IpcState *st);
+// False when VR is off for the run.
+bool render_gate(xr_session::ViewState *st);
 
 // The replay pass (pass 2) skips LtiRenderer_BeginSubmit's GPU drain, so the
 // CPU queues the right eye while the GPU still draws the left (DXVK tracks

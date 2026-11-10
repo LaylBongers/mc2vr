@@ -13,9 +13,9 @@
 
 #include "game/addresses.h"
 #include "hooks/frame_tick.hpp"
-#include "ipc.hpp"
 #include "log.hpp"
 #include "vec_math.hpp"
+#include "vr/xr_session.hpp"
 #include "vr/view_rewrite.hpp"
 #include "vr/vp_camera.hpp"
 
@@ -107,15 +107,14 @@ uint32_t g_entries_n = 0;
 
 // Sanity mirrors of view_rewrite.cpp's file-local eye_is_sane: the published
 // eye must be a unit quaternion with a non-degenerate FOV.
-bool eye_is_sane(const Mc2IpcEyePose &e)
+bool eye_is_sane(const xr_session::EyePose &e)
 {
     const float n = math::norm_sq(Quat{e.rot.x, e.rot.y, e.rot.z, e.rot.w});
     return n >= 0.98f && n <= 1.02f && e.fov.right > e.fov.left && e.fov.up > e.fov.down;
 }
 
-// Read the host pose and cache the UNION (mid-eye) pose for this frame. Same
-// lock-free seqlock read the pass-1 sample in view_rewrite.cpp uses; the
-// fill loop runs on the main thread, same as every other IPC consumer.
+// Read the published views and cache the UNION (mid-eye) pose for this frame
+// (the fill loop runs on the main thread; the read never waits).
 void sample_pose()
 {
     const uint64_t frame = hooks::frame_count();
@@ -125,12 +124,12 @@ void sample_pose()
     g_pose_frame = frame;
     g_pose_valid = false;
 
-    Mc2IpcState st;
+    xr_session::ViewState st;
     bool ok = true;
-    if (!ipc::read_state(&st)) {
+    if (!xr_session::read_state(&st)) {
         g_miss_read++;
         ok = false;
-    } else if (!(st.flags & MC2VR_IPC_STF_TRACKED)) {
+    } else if (!st.tracked) {
         g_miss_untracked++;
         ok = false;
     } else if (!eye_is_sane(st.eye[0]) || !eye_is_sane(st.eye[1])) {
@@ -163,7 +162,7 @@ void sample_pose()
     g_pose_pos = {0.5f * (st.eye[0].pos.x + st.eye[1].pos.x),
                   0.5f * (st.eye[0].pos.y + st.eye[1].pos.y),
                   0.5f * (st.eye[0].pos.z + st.eye[1].pos.z)};
-    g_pose_id = st.hostFrame + 1;
+    g_pose_id = st.pose_id;
     g_pose_valid = true;
     g_pose_ms = GetTickCount64();
 
@@ -180,7 +179,7 @@ void sample_pose()
     bool fov_ok = true;
     const Quat mid_inv = math::conj(g_pose_rot);
     for (int e = 0; e < 2 && fov_ok; e++) {
-        const Mc2IpcEyePose &eye = st.eye[e];
+        const xr_session::EyePose &eye = st.eye[e];
         const Quat er{eye.rot.x, eye.rot.y, eye.rot.z, eye.rot.w};
         const Quat rel = mid_inv * er;
         cant = std::fmax(cant, 2.0f * std::acos(std::fmin(1.0f, std::fabs(rel.w))));

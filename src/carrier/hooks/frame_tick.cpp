@@ -10,10 +10,10 @@
 #include "debug/wait_census.hpp"
 #include "game/addresses.h"
 #include "hooks/site.hpp"
-#include "ipc.hpp"
 #include "log.hpp"
 #include "vr/hud.hpp"
 #include "vr/pacing.hpp"
+#include "vr/xr_session.hpp"
 
 namespace mc2vr::hooks {
 
@@ -171,10 +171,9 @@ void post_update_midhook(safetyhook::Context &)
         MC2VR_LOG("PostUpdateHook call site (g_RenderShell slot 5) hit, frame=%llu",
                   (unsigned long long)frame_count());
     }
-    // The host-event drain point (main thread, once per frame — before the
-    // next pass-1 pose sample so events apply to THIS frame's camera).
-    // No-op when disconnected. Pose sampling itself happens at pass-1 start.
-    ipc::drain_events();
+    // The runtime's recommended eye size reaches render_size here (update
+    // thread, once per frame). Pose sampling itself happens at pass-1 start.
+    xr_session::on_update_tick();
     hud::on_update_tick();  // HUD layout mode switch (update thread)
 }
 

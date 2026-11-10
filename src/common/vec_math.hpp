@@ -1,5 +1,4 @@
-// Tiny header-only vector/quaternion math shared by the carrier (i386) and the
-// host (x86_64). Plain value types, no allocation, no dependencies beyond
+// Tiny header-only vector/quaternion math for the carrier. Plain value types, no allocation, no dependencies beyond
 // <cmath>. Keeps camera/pose math out of hand-expanded x/y/z arithmetic.
 #pragma once
 
@@ -12,7 +11,7 @@ struct Vec3 {
     float x = 0, y = 0, z = 0;
 };
 
-// Unit quaternion, xyzw (OpenXR / mc2_ipc layout).
+// Unit quaternion, xyzw (OpenXR layout).
 struct Quat {
     float x = 0, y = 0, z = 0, w = 1;
 };

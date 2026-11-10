@@ -21,10 +21,6 @@
 #include "xr_runtime.h"
 
 #define GAME_EXE_DEFAULT     L"MERCENARIES2.EXE"
-#define HOST_EXE_DEFAULT     L"mc2vr_host.exe"
-#define HOST_LOG_DEFAULT     L"mc2vr_host.log"
-#define HOST_READY_MARKER    "mc2vr_host: ready"
-#define HOST_READY_TIMEOUT_MS (30 * 1000)
 #define INJECT_TIMEOUT_MS   (30 * 1000)
 #define ACK_TIMEOUT_MS      (15 * 1000)
 
@@ -143,11 +139,6 @@ int main(void) // no arguments: everything is resolved from the install layout
     path_join(game_exe, MAX_PATH, game_dir, GAME_EXE_DEFAULT);
     path_join(carrier_dll, MAX_PATH, g_launcher_dir, L"mc2vr_carrier.dll");
 
-    wchar_t host_exe[MAX_PATH];
-    wchar_t host_log[MAX_PATH];
-    path_join(host_exe, MAX_PATH, g_launcher_dir, HOST_EXE_DEFAULT);
-    path_join(host_log, MAX_PATH, g_launcher_dir, HOST_LOG_DEFAULT);
-
     if (!file_exists(game_exe)) {
         mc2_log("fatal: game exe not found: %ls", game_exe);
         return 1;
@@ -161,9 +152,9 @@ int main(void) // no arguments: everything is resolved from the install layout
 
     // ---- VR environment -------------------------------------------------
     // Whether a 32-bit process finds a 32-bit OpenXR runtime (xr_runtime.h):
-    // the registry init below and in-process OpenXR both need one. Then
-    // the Wine VR registry both the host's and the game's DXVK read at device
-    // creation, published before either starts (vr_registry.h).
+    // the registry init below and the game's OpenXR session both need one.
+    // Then the Wine VR registry the game's DXVK reads at device creation,
+    // published before the game starts (vr_registry.h).
     {
         char fix[1400];
         const char *why = "";
@@ -178,67 +169,6 @@ int main(void) // no arguments: everything is resolved from the install layout
         }
     }
     vr_registry_init(mc2_log);
-
-    // ---- Start the OpenXR host  ----------------------------------------
-    // The host owns the VR session and its IPC section; the carrier connects
-    // at attach by name. Spawn it first so the section exists before the
-    // carrier attaches. Everything here is non-fatal: no host (or a failed
-    // host) means the game runs the monitor-stereo path exactly as today.
-    char no_host[8];
-    if (GetEnvironmentVariableA("MC2VR_NO_HOST", no_host, sizeof no_host) > 0 &&
-        no_host[0] != '0') {
-        mc2_log("host skipped (MC2VR_NO_HOST set)");
-    } else if (!file_exists(host_exe)) {
-        mc2_log("host exe not found — running without VR (build with "
-                 "cmake -B build/win64 -DCMAKE_TOOLCHAIN_FILE="
-                 "cmake/x86_64-w64-mingw32.cmake)");
-    } else {
-        // Drop the previous run's host log so the ready marker below can only
-        // come from this run.
-        DeleteFileW(host_log);
-
-        STARTUPINFOW hsi;
-        ZeroMemory(&hsi, sizeof(hsi));
-        hsi.cb = sizeof(hsi);
-        PROCESS_INFORMATION hpi;
-        ZeroMemory(&hpi, sizeof(hpi));
-        if (!CreateProcessW(host_exe, NULL, NULL, NULL, FALSE,
-                            DETACHED_PROCESS, NULL, g_launcher_dir, &hsi, &hpi)) {
-            mc2_log("warning: host CreateProcessW failed (%lu) — running "
-                    "without VR", GetLastError());
-        } else {
-            mc2_log("host started (pid=%lu) — waiting for ready", hpi.dwProcessId);
-            BOOL ready = FALSE;
-            BOOL exitedEarly = FALSE;
-            DWORD rc = 0;
-            for (DWORD waited = 0; waited < HOST_READY_TIMEOUT_MS; waited += 50) {
-                if (log_has_line(host_log, HOST_READY_MARKER)) {
-                    ready = TRUE;
-                    break;
-                }
-                if (WaitForSingleObject(hpi.hProcess, 0) == WAIT_OBJECT_0) {
-                    // Exited before the marker appeared; re-scan once in case
-                    // it was written just before exit.
-                    ready = log_has_line(host_log, HOST_READY_MARKER);
-                    GetExitCodeProcess(hpi.hProcess, &rc);
-                    exitedEarly = TRUE;
-                    break;
-                }
-                Sleep(50);
-            }
-            if (ready) {
-                mc2_log("host ready — proceeding");
-            } else if (exitedEarly) {
-                mc2_log("warning: host exited early (rc=%lu) — running without "
-                        "VR (SteamVR up? see mc2vr_host.log)", rc);
-            } else {
-                mc2_log("warning: host not ready after %us — running without "
-                        "VR", HOST_READY_TIMEOUT_MS / 1000);
-            }
-            CloseHandle(hpi.hProcess);
-            CloseHandle(hpi.hThread);
-        }
-    }
 
     // ---- Start the game ----------------------------------------------------
     STARTUPINFOW si;

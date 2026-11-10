@@ -5,77 +5,60 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 
-#include "hooks/device.hpp"
 #include "debug/gpu_census.hpp"
-#include "ipc.hpp"
+#include "hooks/device.hpp"
 #include "log.hpp"
+#include "vr/dxvk_interop.hpp"
 #include "vr/view_rewrite.hpp"
+#include "vr/xr_session.hpp"
 
 namespace mc2vr::eye_share {
 
 namespace {
 
-constexpr uint32_t RING_SLOTS = 4u; // per eye; >=3 so the host's read window
-                                    // never overlaps the carrier's write slot
-                                    // in practice at 30 Hz game cadence
-constexpr uint32_t SYNC_BUDGET_MS = 8u; // bounded; the next BeginSubmit spin
-                                       // waits for the same work anyway
+// Pairs per ring. The session thread takes each pair within about a frame of
+// its fence, so one slot being written, one being copied and one spare cover
+// it; each slot is 2 eyes x render size x 4 bytes (~36 MB at 2016x2240).
+constexpr uint32_t kSlots = 3;
+constexpr double kSlotWaitMs = 50.0;   // render thread: slot still being copied
+constexpr double kResetWaitMs = 500.0; // Reset: log interval while the session thread holds a slot
+constexpr double kGpuWaitMs = 50.0;    // session thread: a taken pair's GPU work
 
-bool g_broken = false;       // resource creation failed — module off this run
-IDirect3DDevice9 *g_device = nullptr;
-IDirect3DSurface9 *g_bb = nullptr;
-uint32_t g_w = 0, g_h = 0, g_fmt = 0;
+enum class State { Free, Writing, Issued, InUse };
 
 struct Slot {
-    IDirect3DTexture9 *tex;  // owned
-    IDirect3DSurface9 *surf; // level-0 surface (owned ref from GetSurfaceLevel)
-    HANDLE handle;
+    IDirect3DTexture9 *tex[2] = {};           // owned
+    IDirect3DSurface9 *surf[2] = {};          // level 0 (owned ref)
+    dxvk::ID3D9VkInteropTexture *vk[2] = {};  // owned
+    IDirect3DQuery9 *query = nullptr;         // the pair's fence
+    State state = State::Free;
+    uint64_t frame_id = 0;
+    uint32_t pose_id = 0;
 };
-Slot g_slots[2][RING_SLOTS] = {};
-bool g_slots_ok = false;
-bool g_config_pending = false; // CONFIG to send once the host is connected
-IDirect3DQuery9 *g_query = nullptr; // event query for the synchronous path
 
-// ---- async completion (default) ----------------------------------------------
-// One event query per ring slot; the render thread issues it after the RIGHT
-// capture and moves on, the completion thread polls it and sends the pair.
-bool g_async = true;  // debug_sync_frame_ready=on -> false
-IDirect3DQuery9 *g_qring[RING_SLOTS] = {};
-struct Pending {
-    volatile LONG state;  // 0 free, 1 issued (completion thread owns it)
-    uint64_t frame_id;
-    HANDLE hl, hr;
-    uint32_t pose_l, pose_r;
-    double t_issue;
-};
-Pending g_pend[RING_SLOTS] = {};
-CRITICAL_SECTION g_poll_lock;  // completion thread vs Reset (query lifetime)
-HANDLE g_poll_event = nullptr;  // signalled when a pair is issued
-HANDLE g_poll_thread = nullptr;
-uint64_t g_async_done = 0, g_ring_waits = 0;
-double g_done_sum_ms = 0.0, g_done_max_ms = 0.0;
+// Guards the slot states and metadata; the render thread and the session
+// thread wait on g_cv for each other.
+SRWLOCK g_lock = SRWLOCK_INIT;
+CONDITION_VARIABLE g_cv = CONDITION_VARIABLE_INIT;
+Slot g_slots[kSlots];
+bool g_ok = false;        // ring created (render thread writes, under g_lock)
+bool g_broken = false;    // creation failed — off until the next Reset
+bool g_resetting = false; // Reset in progress: the session thread takes nothing
+IDirect3DDevice9 *g_device = nullptr;
+uint32_t g_w = 0, g_h = 0;
+VkFormat g_format = VK_FORMAT_UNDEFINED;
 
-uint32_t g_ring = 0;     // ring index for the frame being built
-uint64_t g_frame_id = 0; // published (complete) frame ids
-// LEFT captured this frame, its FRAME_READY deferred to the RIGHT capture:
-// the host consumes complete pairs only, so ONE GPU sync after pass 2 covers
-// both eyes (a sync at 1->2 would stall the CPU on pass 1's GPU work before
-// it could queue pass 2).
+// Render thread only.
+uint32_t g_ring = 0;        // slot of the frame being captured
+uint64_t g_next_frame = 1;  // id of the next issued pair
 bool g_left_pending = false;
-uint32_t g_left_pose_id = 0;
 
-// ---- window counters (render thread writes; poller reads+resets) ----------
-uint64_t g_captures[2] = {0, 0};
-uint64_t g_publishes = 0;
-uint64_t g_sync_timeouts = 0;
-uint64_t g_ring_full = 0;
-uint64_t g_ipc_skipped = 0; // captures while no host
-// CPU time stalled in gpu_sync (Issue -> query done): the cost of having no
-// cross-process fence — a native OpenXR app would not wait here.
-uint64_t g_sync_n = 0;
-double g_sync_sum_ms = 0.0, g_sync_max_ms = 0.0;
+// Window counters (approximate across threads; logs only).
+uint64_t g_captures[2] = {};
+uint64_t g_issued = 0, g_taken_fresh = 0, g_taken_late = 0, g_dropped = 0;
+uint64_t g_slot_waits = 0, g_slot_timeouts = 0, g_gpu_timeouts = 0, g_no_session = 0;
+double g_gpu_sum_ms = 0.0, g_gpu_max_ms = 0.0;
 
 double qpc_ms()
 {
@@ -88,387 +71,326 @@ double qpc_ms()
     return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
 }
 
-DWORD WINAPI completion_thread(void *);
-
-bool ensure_resources(IDirect3DDevice9 *device, IDirect3DSurface9 *bb)
+void release_resources()
 {
-    if (g_slots_ok) return true;
-    if (g_broken || device == nullptr || bb == nullptr) return false;
+    for (Slot &s : g_slots) {
+        for (int e = 0; e < 2; e++) {
+            if (s.vk[e]) s.vk[e]->Release();
+            if (s.surf[e]) s.surf[e]->Release();
+            if (s.tex[e]) s.tex[e]->Release();
+            s.vk[e] = nullptr;
+            s.surf[e] = nullptr;
+            s.tex[e] = nullptr;
+        }
+        if (s.query) s.query->Release();
+        s.query = nullptr;
+        s.state = State::Free;
+    }
+}
 
-    g_device = device;
-    g_bb = bb;
-
+bool create_resources(IDirect3DDevice9 *device, IDirect3DSurface9 *source)
+{
     D3DSURFACE_DESC desc = {};
-    if (FAILED(bb->GetDesc(&desc))) {
-        MC2VR_LOG("share: backbuffer GetDesc failed — shared eyes inactive");
-        g_broken = true;
+    if (FAILED(source->GetDesc(&desc))) {
+        MC2VR_LOG("share: front GetDesc failed — eye images off");
         return false;
     }
+    for (Slot &s : g_slots) {
+        for (int e = 0; e < 2; e++) {
+            // RENDERTARGET: the captures are StretchRect blits. The shared
+            // handle keeps the VkImage fixed (eye_share.hpp); it is not used.
+            HANDLE shared = nullptr;
+            HRESULT hr = device->CreateTexture(desc.Width, desc.Height, 1, D3DUSAGE_RENDERTARGET, desc.Format,
+                                               D3DPOOL_DEFAULT, &s.tex[e], &shared);
+            if (FAILED(hr) || s.tex[e] == nullptr) {
+                MC2VR_LOG("share: CreateTexture(%ux%u fmt %u, shared RT) FAILED hr=%08lx — eye images off. "
+                          "mc2vr needs DXVK's d3d9.dll (docs/platforms.md)",
+                          desc.Width, desc.Height, (unsigned)desc.Format, (unsigned long)hr);
+                return false;
+            }
+            if (FAILED(s.tex[e]->GetSurfaceLevel(0, &s.surf[e])) ||
+                FAILED(s.tex[e]->QueryInterface(dxvk::kIID_InteropTexture, reinterpret_cast<void **>(&s.vk[e]))) ||
+                s.vk[e] == nullptr) {
+                MC2VR_LOG("share: surface / ID3D9VkInteropTexture unavailable — eye images off (not DXVK?)");
+                return false;
+            }
+        }
+        if (FAILED(device->CreateQuery(D3DQUERYTYPE_EVENT, &s.query)) || s.query == nullptr) {
+            MC2VR_LOG("share: CreateQuery(EVENT) failed — eye images off");
+            return false;
+        }
+    }
+    VkImage img = VK_NULL_HANDLE;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    if (FAILED(g_slots[0].vk[0]->GetVulkanImageInfo(&img, &layout, &info)) || img == VK_NULL_HANDLE) {
+        MC2VR_LOG("share: GetVulkanImageInfo failed — eye images off");
+        return false;
+    }
+    g_device = device;
     g_w = desc.Width;
     g_h = desc.Height;
-    g_fmt = (uint32_t)desc.Format;
-
-    char fmt_name[32];
-    snprintf(fmt_name, sizeof fmt_name, "D3DFMT_%u", g_fmt);
-    MC2VR_LOG("share: creating %u slots/eye %ux%u fmt %s shared RT ring "
-              "(backbuffer MS=%u/%u)",
-              RING_SLOTS, g_w, g_h, fmt_name,
-              (unsigned)desc.MultiSampleType, (unsigned)desc.MultiSampleQuality);
-
-    for (uint32_t eye = 0; eye < 2; ++eye) {
-        for (uint32_t s = 0; s < RING_SLOTS; ++s) {
-            Slot &slot = g_slots[eye][s];
-            HANDLE h = nullptr;
-            // RENDERTARGET usage: the boundary capture blits run through
-            // device::blit_surfaces (StretchRect), which requires RT surfaces.
-            // RT + pSharedHandle opened fine in the probe (usage-0) — RT usage
-            // is verified live by this module's own counters.
-            HRESULT hr = device->CreateTexture(g_w, g_h, 1, D3DUSAGE_RENDERTARGET, desc.Format,
-                                               D3DPOOL_DEFAULT, &slot.tex, &h);
-            if (FAILED(hr) || slot.tex == nullptr || h == nullptr) {
-                // Stock Windows D3D9 refuses shared handles on the game's
-                // plain (non-Ex) device; DXVK allows them. The supported
-                // Windows setup ships DXVK's d3d9.dll (docs/platforms.md).
-                MC2VR_LOG("share: CreateTexture(shared RT) FAILED hr=%08lx "
-                          "h=%p — shared eyes inactive this run. mc2vr needs DXVK's "
-                          "d3d9.dll (on Windows: next to Mercenaries2.exe, docs/platforms.md)",
-                          (unsigned long)hr, (void *)h);
-                g_broken = true;
-                return false;
-            }
-            hr = slot.tex->GetSurfaceLevel(0, &slot.surf);
-            if (FAILED(hr) || slot.surf == nullptr) {
-                MC2VR_LOG("share: GetSurfaceLevel FAILED hr=%08lx",
-                          (unsigned long)hr);
-                g_broken = true;
-                return false;
-            }
-            slot.handle = h;
-        }
-    }
-
-    // One reusable event query (the same GPU-sync primitive the game's
-    // BeginSubmit spins on; the probe proved cross-process reads are coherent
-    // behind it — no fence needed on legacy handles).
-    HRESULT hr = device->CreateQuery(D3DQUERYTYPE_EVENT, &g_query);
-    if (FAILED(hr) || g_query == nullptr) {
-        MC2VR_LOG("share: CreateQuery FAILED hr=%08lx — shared eyes inactive",
-                  (unsigned long)hr);
-        g_broken = true;
-        return false;
-    }
-
-    if (g_async) {
-        if (g_poll_thread == nullptr) {
-            InitializeCriticalSection(&g_poll_lock);
-            g_poll_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-            g_poll_thread = CreateThread(nullptr, 0, completion_thread, nullptr, 0, nullptr);
-        }
-        EnterCriticalSection(&g_poll_lock);
-        bool ok = g_poll_thread != nullptr;
-        for (uint32_t i = 0; i < RING_SLOTS && ok; ++i) {
-            g_pend[i].state = 0;
-            if (FAILED(device->CreateQuery(D3DQUERYTYPE_EVENT, &g_qring[i])) ||
-                g_qring[i] == nullptr) {
-                ok = false;
-            }
-        }
-        LeaveCriticalSection(&g_poll_lock);
-        if (!ok) {
-            MC2VR_LOG("share: async completion unavailable (thread/query creation failed) — "
-                      "synchronous end-of-frame wait");
-            g_async = false;
-        }
-    }
-
-    g_slots_ok = true;
-    g_config_pending = true;
-    MC2VR_LOG("share: shared RT ring ready (handles eye0: 0x%08x 0x%08x 0x%08x 0x%08x, "
-              "eye1: 0x%08x 0x%08x 0x%08x 0x%08x)",
-              (unsigned)(uintptr_t)g_slots[0][0].handle,
-              (unsigned)(uintptr_t)g_slots[0][1].handle,
-              (unsigned)(uintptr_t)g_slots[0][2].handle,
-              (unsigned)(uintptr_t)g_slots[0][3].handle,
-              (unsigned)(uintptr_t)g_slots[1][0].handle,
-              (unsigned)(uintptr_t)g_slots[1][1].handle,
-              (unsigned)(uintptr_t)g_slots[1][2].handle,
-              (unsigned)(uintptr_t)g_slots[1][3].handle);
+    g_format = info.format;
+    MC2VR_LOG("share: eye ring ready: %u pairs %ux%u, D3DFMT %u = VkFormat %d, layout %d, usage 0x%x",
+              kSlots, g_w, g_h, (unsigned)desc.Format, (int)info.format, (int)layout, (unsigned)info.usage);
     return true;
 }
 
-// Front-load the GPU wait for everything enqueued so far (capture blit + the
-// pass's composite). Bounded — on timeout we publish anyway and count it: the
-// host reads the newest COMPLETE slot, worst case it sees the previous ring
-// slot's content for one frame. DXVK needs D3DGETDATA_FLUSH here or the
-// pending command buffer is never submitted (probe-proven 2026-10-04).
-bool gpu_sync()
+bool ensure_resources(IDirect3DDevice9 *device, IDirect3DSurface9 *source)
 {
-    if (g_query == nullptr) return true;
-    const double t0 = qpc_ms();
-    g_query->Issue(D3DISSUE_END);
-    const ULONGLONG deadline = GetTickCount64() + SYNC_BUDGET_MS;
-    bool done = true;
-    for (;;) {
-        DWORD data = 0;
-        const HRESULT hr = g_query->GetData(&data, sizeof data, D3DGETDATA_FLUSH);
-        if (hr != S_FALSE) break; // S_OK (done) or error (logged by count)
-        if (GetTickCount64() > deadline) {
-            g_sync_timeouts++;
-            done = false;
-            break;
-        }
-        Sleep(0);
+    if (g_ok) {
+        return true;
     }
-    const double ms = qpc_ms() - t0;
-    g_sync_n++;
-    g_sync_sum_ms += ms;
-    if (ms > g_sync_max_ms) g_sync_max_ms = ms;
-    return done;
+    if (g_broken || device == nullptr || source == nullptr) {
+        return false;
+    }
+    if (!create_resources(device, source)) {
+        release_resources();
+        g_broken = true;
+        return false;
+    }
+    AcquireSRWLockExclusive(&g_lock);
+    g_ok = true;
+    g_resetting = false;
+    ReleaseSRWLockExclusive(&g_lock);
+    return true;
 }
 
-// Completion thread: sends each issued pair once its event query signals, in
-// frame order. GetData from this thread is safe because the device is created
-// D3DCREATE_MULTITHREADED in async mode (device.cpp).
-DWORD WINAPI completion_thread(void *)
+// Render thread, LEFT: claims the frame's slot. False when the session thread
+// still copies from it after the bounded wait (the frame is not captured).
+bool claim_slot()
 {
-    for (;;) {
-        bool any = false;
-        EnterCriticalSection(&g_poll_lock);
-        // oldest issued pair first
-        int best = -1;
-        for (uint32_t i = 0; i < RING_SLOTS; ++i) {
-            if (g_pend[i].state == 1 &&
-                (best < 0 || g_pend[i].frame_id < g_pend[best].frame_id)) {
-                best = (int)i;
-            }
-        }
-        if (best >= 0 && g_qring[best] != nullptr) {
-            any = true;
-            Pending &p = g_pend[best];
-            DWORD data = 0;
-            const HRESULT hr = g_qring[best]->GetData(&data, sizeof data, 0);
-            if (hr != S_FALSE) {  // S_OK (done) or an error: publish either way
-                const bool ok_l = ipc::send_frame_ready(p.frame_id, (uint64_t)(uintptr_t)p.hl,
-                                                        (uint32_t)best, 0u, g_w, g_h, p.pose_l);
-                const bool ok_r = ok_l && ipc::send_frame_ready(p.frame_id,
-                                                                (uint64_t)(uintptr_t)p.hr,
-                                                                (uint32_t)best, 1u, g_w, g_h,
-                                                                p.pose_r);
-                if (ok_r) {
-                    const double ms = qpc_ms() - p.t_issue;
-                    g_done_sum_ms += ms;
-                    if (ms > g_done_max_ms) g_done_max_ms = ms;
-                    g_async_done++;
-                    g_publishes++;
-                    InterlockedExchange(&p.state, 0);
-                } else {
-                    g_ring_full++;  // retried on the next poll
-                }
-            }
-        }
-        LeaveCriticalSection(&g_poll_lock);
-        if (any) {
-            Sleep(0);
-        } else {
-            WaitForSingleObject(g_poll_event, 2);
+    AcquireSRWLockExclusive(&g_lock);
+    Slot &s = g_slots[g_ring];
+    if (s.state == State::InUse) {
+        g_slot_waits++;
+        const double t0 = qpc_ms();
+        while (s.state == State::InUse) {
+            const double left = kSlotWaitMs - (qpc_ms() - t0);
+            if (left <= 0.0) break;
+            SleepConditionVariableSRW(&g_cv, &g_lock, (DWORD)left + 1, 0);
         }
     }
-    return 0;
+    bool ok = s.state != State::InUse;
+    if (ok) {
+        if (s.state == State::Issued) {
+            g_dropped++;  // never taken (session not consuming)
+        }
+        s.state = State::Writing;
+    } else {
+        g_slot_timeouts++;
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    return ok;
 }
 
-// Wait (render thread) until ring slot `i` is no longer owned by the
-// completion thread — only when the host fell 4 pairs behind.
-void wait_slot_free(uint32_t i)
+void set_state(uint32_t slot, State st)
 {
-    if (g_pend[i].state == 0) return;
-    g_ring_waits++;
-    const double t0 = qpc_ms();
-    while (g_pend[i].state != 0 && qpc_ms() - t0 < 50.0) {
-        Sleep(0);
-    }
+    AcquireSRWLockExclusive(&g_lock);
+    g_slots[slot].state = st;
+    ReleaseSRWLockExclusive(&g_lock);
+    WakeAllConditionVariable(&g_cv);
 }
 
 } // namespace
 
-bool set_sync_frame_ready(const char *value)
-{
-    if (strcmp(value, "on") == 0) g_async = false;
-    else if (strcmp(value, "off") == 0) g_async = true;
-    else return false;
-    MC2VR_LOG("share: debug_sync_frame_ready=%s (%s)", value,
-              g_async ? "completion thread" : "synchronous end-of-frame wait");
-    return true;
-}
+// ---- render thread --------------------------------------------------------------
 
-bool async_completion()
-{
-    return g_async;
-}
-
-// ---- public entry points ------------------------------------------------------
-
-void on_pass_boundary(uint32_t next_pass, IDirect3DDevice9 *device, IDirect3DSurface9 *bb)
+void on_pass_boundary(uint32_t next_pass, IDirect3DDevice9 *device, IDirect3DSurface9 *source)
 {
     // 2 = 1->2 boundary (LEFT capture); 0 = 2->0 boundary (RIGHT capture).
-    // Pass 1 (the 0->1 boundary) carries no fresh eye — the backbuffer still
-    // holds the previous frame's already-presented RIGHT — so it is ignored.
+    // The 0->1 boundary carries no fresh eye.
     if (next_pass != 2u && next_pass != 0u) return;
-    if (!ipc::connected()) {
-        // No host (permanent for the run — the carrier only connects at
-        // attach): count the boundaries and skip. Avoids allocating ~118 MB of
-        // shared RTs that nobody would read.
-        g_ipc_skipped++;
+    if (source == nullptr) {
+        // Front not owned (boot, mid-Reset) or the post-Reset transition
+        // frame: no capture, the session re-submits the previous pair.
+        g_left_pending = false;
         return;
     }
-    if (!ensure_resources(device, bb)) return;
-
-    const uint32_t eye = (next_pass == 2) ? 0u : 1u; // 1->2 = LEFT, 2->0 = RIGHT
-    Slot &slot = g_slots[eye][g_ring];
-
-    if (g_config_pending && ipc::send_config(g_w, g_h, g_fmt)) {
-        g_config_pending = false;
-    }
-
+    const uint32_t eye = next_pass == 2 ? 0u : 1u;
     if (eye == 0) {
         g_left_pending = false;
-        if (g_async) {
-            wait_slot_free(g_ring);  // never overwrite a pair still in flight
+        if (!xr_session::presenting()) {
+            g_no_session++;  // nobody would take the pair
+            return;
         }
+    } else if (!g_left_pending) {
+        return;  // no LEFT this frame: a lone RIGHT can never complete a pair
     }
+    if (!ensure_resources(device, source)) return;
+    if (eye == 0 && !claim_slot()) return;
+
+    Slot &s = g_slots[g_ring];
     gpu_census::carrier_begin();
-    const bool blitted = device::blit_surfaces(bb, slot.surf);
+    const bool blitted = device::blit_surfaces(source, s.surf[eye]);
     gpu_census::carrier_end();
     if (!blitted) {
-        // Counted by eye_replay's window as blit failures there; nothing else
-        // to do — publishing a half-copied slot is worse than skipping.
+        // Counted by eye_replay as a blit failure; a half-copied pair is
+        // worse than none.
+        g_left_pending = false;
+        set_state(g_ring, State::Free);
         return;
     }
     g_captures[eye]++;
-
     if (eye == 0) {
         g_left_pending = true;
-        g_left_pose_id = view_rewrite::current_pose_id();
-        return;  // published together with RIGHT, after one GPU sync
-    }
-    if (!g_left_pending) {
-        return;  // no LEFT this frame: a lone RIGHT can never complete a pair
+        return;
     }
     g_left_pending = false;
 
-    if (g_async) {
-        // Fence the pair and hand it to the completion thread; the render
-        // thread goes straight on to the next frame.
-        IDirect3DQuery9 *q = g_qring[g_ring];
-        q->Issue(D3DISSUE_END);
-        DWORD data = 0;
-        q->GetData(&data, sizeof data, D3DGETDATA_FLUSH); // submit, no wait
-        Pending &p = g_pend[g_ring];
-        p.frame_id = g_frame_id;
-        p.hl = g_slots[0][g_ring].handle;
-        p.hr = slot.handle;
-        p.pose_l = g_left_pose_id;
-        p.pose_r = view_rewrite::current_pose_id();
-        p.t_issue = qpc_ms();
-        InterlockedExchange(&p.state, 1);
-        SetEvent(g_poll_event);
-        g_frame_id++;
-        g_ring = (g_ring + 1) % RING_SLOTS;
-        return;
-    }
-
-    gpu_sync();
-
-    const Slot &left = g_slots[0][g_ring];
-    const bool ok_l = ipc::send_frame_ready(g_frame_id, (uint64_t)(uintptr_t)left.handle,
-                                            g_ring, 0u, g_w, g_h, g_left_pose_id);
-    const bool ok_r = ok_l && ipc::send_frame_ready(g_frame_id,
-                                                    (uint64_t)(uintptr_t)slot.handle, g_ring,
-                                                    1u, g_w, g_h,
-                                                    view_rewrite::current_pose_id());
-    if (ok_r) {
-        // Advance only on a fully pushed pair (the host pairs by frameId; a
-        // half-pushed pair is superseded by the next frame's same-id retry).
-        g_publishes++;
-        g_frame_id++;
-        g_ring = (g_ring + 1) % RING_SLOTS;
-    } else {
-        g_ring_full++;
-    }
+    // Fence the pair and submit it (DXVK never submits a query's work
+    // without the FLUSH); the session thread polls the fence.
+    s.query->Issue(D3DISSUE_END);
+    DWORD data = 0;
+    s.query->GetData(&data, sizeof data, D3DGETDATA_FLUSH);
+    AcquireSRWLockExclusive(&g_lock);
+    s.frame_id = g_next_frame++;
+    s.pose_id = view_rewrite::current_pose_id();  // one pose per frame (sampled at pass 1)
+    s.state = State::Issued;
+    ReleaseSRWLockExclusive(&g_lock);
+    WakeAllConditionVariable(&g_cv);
+    g_issued++;
+    g_ring = (g_ring + 1) % kSlots;
 }
 
 void on_reset()
 {
-    if (g_poll_thread != nullptr) {
-        // Keep the completion thread off the queries while they go away;
-        // pending pairs are dropped (their textures go with the Reset).
-        EnterCriticalSection(&g_poll_lock);
-        for (uint32_t i = 0; i < RING_SLOTS; ++i) {
-            g_pend[i].state = 0;
-            if (g_qring[i]) {
-                g_qring[i]->Release();
-                g_qring[i] = nullptr;
-            }
+    // The session thread may be waiting on a fence or recording a copy from
+    // a slot: let it finish, keep it off the ring, then wait out the GPU
+    // copies (DXVK does not know about them) before the images go.
+    // The session thread's hold is bounded by its own timeouts, and it needs
+    // nothing from this thread to finish (its GetData takes DXVK's device
+    // lock, which isn't held here), so this waits until it lets go.
+    AcquireSRWLockExclusive(&g_lock);
+    g_resetting = true;
+    for (uint32_t waited = 0;; waited++) {
+        bool busy = false;
+        for (const Slot &s : g_slots) busy = busy || s.state == State::InUse;
+        if (!busy) break;
+        if (waited % 10 == 9) {
+            MC2VR_LOG("share: Reset — still waiting for the session thread to release a pair");
         }
-        LeaveCriticalSection(&g_poll_lock);
+        SleepConditionVariableSRW(&g_cv, &g_lock, (DWORD)kResetWaitMs / 10, 0);
     }
-    if (g_query) {
-        g_query->Release();
-        g_query = nullptr;
-    }
-    for (uint32_t eye = 0; eye < 2; ++eye) {
-        for (uint32_t s = 0; s < RING_SLOTS; ++s) {
-            Slot &slot = g_slots[eye][s];
-            if (slot.surf) {
-                slot.surf->Release();
-                slot.surf = nullptr;
-            }
-            if (slot.tex) {
-                slot.tex->Release();
-                slot.tex = nullptr;
-            }
-            slot.handle = nullptr;
-        }
-    }
-    g_slots_ok = false;
+    g_ok = false;
+    ReleaseSRWLockExclusive(&g_lock);
+    xr_session::wait_gpu_copies();
+
+    release_resources();
     g_left_pending = false;
-    g_broken = false; // retry after Reset — the probe is cheap to re-run
-    g_config_pending = false; // new ring -> config re-sent on next boundary
-    MC2VR_LOG("share: Reset — shared RT ring dropped");
+    g_broken = false;  // retry after the Reset
+    MC2VR_LOG("share: Reset — eye ring dropped");
 }
 
 void report_window()
 {
-    if (g_captures[0] || g_captures[1] || g_publishes || g_ring_full ||
-        g_sync_timeouts || g_ipc_skipped) {
-        MC2VR_LOG("share window: capturesL=%llu capturesR=%llu published=%llu "
-                  "ringFull=%llu syncTimeouts=%llu noHostSkips=%llu | sync stall "
-                  "avg=%.2fms max=%.2fms (n=%llu)",
-                  (unsigned long long)g_captures[0],
-                  (unsigned long long)g_captures[1],
-                  (unsigned long long)g_publishes,
-                  (unsigned long long)g_ring_full,
-                  (unsigned long long)g_sync_timeouts,
-                  (unsigned long long)g_ipc_skipped,
-                  g_sync_n ? g_sync_sum_ms / (double)g_sync_n : 0.0, g_sync_max_ms,
-                  (unsigned long long)g_sync_n);
-        if (g_async) {
-            MC2VR_LOG("share window: async completion pairs=%llu fence->done avg=%.2fms "
-                      "max=%.2fms ringWaits=%llu",
-                      (unsigned long long)g_async_done,
-                      g_async_done ? g_done_sum_ms / (double)g_async_done : 0.0, g_done_max_ms,
-                      (unsigned long long)g_ring_waits);
+    if (g_captures[0] || g_captures[1] || g_issued || g_slot_timeouts || g_gpu_timeouts) {
+        MC2VR_LOG("share window: capturesL=%llu capturesR=%llu pairs=%llu taken fresh=%llu late=%llu "
+                  "dropped=%llu | slot waits=%llu timeouts=%llu | fence->taken avg=%.2fms max=%.2fms "
+                  "gpuTimeouts=%llu",
+                  (unsigned long long)g_captures[0], (unsigned long long)g_captures[1],
+                  (unsigned long long)g_issued, (unsigned long long)g_taken_fresh,
+                  (unsigned long long)g_taken_late, (unsigned long long)g_dropped,
+                  (unsigned long long)g_slot_waits, (unsigned long long)g_slot_timeouts,
+                  (g_taken_fresh + g_taken_late) ? g_gpu_sum_ms / (double)(g_taken_fresh + g_taken_late) : 0.0,
+                  g_gpu_max_ms, (unsigned long long)g_gpu_timeouts);
+    }
+    g_captures[0] = g_captures[1] = 0;
+    g_issued = g_taken_fresh = g_taken_late = g_dropped = 0;
+    g_slot_waits = g_slot_timeouts = g_gpu_timeouts = g_no_session = 0;
+    g_gpu_sum_ms = g_gpu_max_ms = 0.0;
+}
+
+// ---- session thread ---------------------------------------------------------------
+
+Take take_pair(uint64_t after_frame, uint32_t want_pose, uint32_t timeout_ms, Pair *out)
+{
+    const double t0 = qpc_ms();
+    AcquireSRWLockExclusive(&g_lock);
+    int pick = -1;
+    Take kind = Take::None;
+    for (;;) {
+        // The newest issued pair; anything older is superseded.
+        int newest = -1;
+        for (uint32_t i = 0; i < kSlots; i++) {
+            const Slot &s = g_slots[i];
+            if (s.state == State::Issued && s.frame_id > after_frame &&
+                (newest < 0 || s.frame_id > g_slots[newest].frame_id)) {
+                newest = (int)i;
+            }
+        }
+        const bool ready = newest >= 0 && (g_slots[newest].pose_id == 0 ||
+                                           (int32_t)(g_slots[newest].pose_id - want_pose) >= 0);
+        const double left = (double)timeout_ms - (qpc_ms() - t0);
+        if (!g_ok || g_resetting) {
+            break;
+        }
+        if (ready || (newest >= 0 && left <= 0.0)) {
+            pick = newest;
+            kind = ready ? Take::Fresh : Take::Late;
+            break;
+        }
+        if (left <= 0.0) {
+            break;
+        }
+        SleepConditionVariableSRW(&g_cv, &g_lock, (DWORD)left + 1, 0);
+    }
+    if (pick < 0) {
+        ReleaseSRWLockExclusive(&g_lock);
+        return Take::None;
+    }
+    for (uint32_t i = 0; i < kSlots; i++) {
+        Slot &s = g_slots[i];
+        if ((int)i != pick && s.state == State::Issued && s.frame_id < g_slots[pick].frame_id) {
+            s.state = State::Free;
+            g_dropped++;
         }
     }
-    g_captures[0] = 0;
-    g_captures[1] = 0;
-    g_publishes = 0;
-    g_ring_full = 0;
-    g_sync_timeouts = 0;
-    g_ipc_skipped = 0;
-    g_sync_n = 0;
-    g_sync_sum_ms = g_sync_max_ms = 0.0;
-    g_async_done = g_ring_waits = 0;
-    g_done_sum_ms = g_done_max_ms = 0.0;
+    Slot &s = g_slots[pick];
+    s.state = State::InUse;
+    out->slot = (uint32_t)pick;
+    out->frame_id = s.frame_id;
+    out->pose_id = s.pose_id;
+    out->w = g_w;
+    out->h = g_h;
+    out->format = g_format;
+    out->device = g_device;
+    ReleaseSRWLockExclusive(&g_lock);
+
+    // The pair's GPU work (the device is MULTITHREADED, so polling from this
+    // thread is safe). Done = DXVK has submitted it, so our copy, submitted
+    // later on the same queue, reads the finished images.
+    const double g0 = qpc_ms();
+    bool done = false;
+    for (;;) {
+        DWORD data = 0;
+        const HRESULT hr = s.query->GetData(&data, sizeof data, 0);
+        if (hr != S_FALSE) {
+            done = hr == S_OK;
+            break;
+        }
+        if (qpc_ms() - g0 > kGpuWaitMs) break;
+        SwitchToThread();
+    }
+    for (int e = 0; done && e < 2; e++) {
+        done = SUCCEEDED(s.vk[e]->GetVulkanImageInfo(&out->eye[e].image, &out->eye[e].layout, nullptr)) &&
+               out->eye[e].image != VK_NULL_HANDLE;
+    }
+    if (!done) {
+        g_gpu_timeouts++;
+        set_state(out->slot, State::Free);
+        return Take::None;
+    }
+    const double ms = qpc_ms() - g0;
+    g_gpu_sum_ms += ms;
+    if (ms > g_gpu_max_ms) g_gpu_max_ms = ms;
+    (kind == Take::Fresh ? g_taken_fresh : g_taken_late)++;
+    return kind;
+}
+
+void release_pair(const Pair &p)
+{
+    set_state(p.slot, State::Free);
 }
 
 } // namespace mc2vr::eye_share

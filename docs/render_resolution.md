@@ -1,6 +1,6 @@
 # Render resolution (HMD-native per-eye rendering)
 
-While the HMD is in use, the engine renders at the runtime's recommended per-eye size (2016×2240 on the current HMD). The window, present params and swapchain keep the game's own resolution. With the HMD on standby, or no host, the game renders exactly as unmodded. Code: `src/carrier/vr/render_size.cpp`, `src/carrier/vr/adaptation.cpp`; outputs in [render_outputs.md](render_outputs.md). RE basis: [reverse_engineering/rt_dims_source.md](reverse_engineering/rt_dims_source.md).
+While the HMD is in use, the engine renders at the runtime's recommended per-eye size (2016×2240 on the current HMD). The window, present params and swapchain keep the game's own resolution. With the HMD on standby, or no OpenXR session, the game renders exactly as unmodded. Code: `src/carrier/vr/render_size.cpp`, `src/carrier/vr/adaptation.cpp`; outputs in [render_outputs.md](render_outputs.md). RE basis: [reverse_engineering/rt_dims_source.md](reverse_engineering/rt_dims_source.md).
 
 ## Mechanism
 
@@ -19,7 +19,7 @@ The carrier's own surfaces are created from the render fields. The view-rewrite 
 
 ## Following the HMD
 
-- **Size source.** `render_size=hmd` takes the size from the host's `MC2VR_MSG_VIEW_SIZE` ([ipc.md](ipc.md)), the OpenXR recommended image rect, and always follows the HMD. An explicit `render_size=WxH` follows by default (`render_size_follow_hmd`).
+- **Size source.** `render_size=hmd` takes the OpenXR recommended image rect from the session ([xr_session.md](xr_session.md)), and always follows the HMD. An explicit `render_size=WxH` follows by default (`render_size_follow_hmd`).
 - **"In use"** means the session is VISIBLE/FOCUSED. That is the runtime's lifecycle signal, already debounced by the runtime (proximity sensor/standby), so the carrier adds no debounce. The per-frame tracked flag is deliberately excluded: a tracking drop only gives camera pass-through, never a device reset.
 - **Switching** uses the engine's own device-lost recovery. On a state change the device hook answers `RenderSystem_CheckDevice`'s per-frame `TestCooperativeLevel` once with `D3DERR_DEVICENOTRESET` (only for calls from CheckDevice's range). The engine then releases, Resets, runs `OnScreenResize` (the entry hook applies the new target) and restores, and the carrier retakes its outputs. Each switch costs a short hitch.
 - **Exposure continuity** (`adaptation.cpp`; RE: [reverse_engineering/hdr_adaptation.md](reverse_engineering/hdr_adaptation.md)):

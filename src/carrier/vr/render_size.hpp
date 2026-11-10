@@ -29,9 +29,9 @@ namespace mc2vr::render_size {
 
 // mc2vr.conf render_size=hmd | WxH (e.g. 2016x2240) | off (default: stock —
 // render size = window size). hmd = the runtime's recommended per-eye size,
-// sent by the host (MC2VR_MSG_VIEW_SIZE); implies following the HMD.
+// from the OpenXR session (xr_session.hpp); implies following the HMD.
 bool set_size(const char *value);
-// ipc.cpp event drain: the host's recommended per-eye size (render_size=hmd).
+// xr_session::on_update_tick: the runtime's recommended per-eye size (render_size=hmd).
 void on_hmd_view_size(uint32_t w, uint32_t h);
 // mc2vr.conf render_aspect=true|snap (default true: the real W/H ratio;
 // snap = keep the engine's 4:3/16:9 snapping).

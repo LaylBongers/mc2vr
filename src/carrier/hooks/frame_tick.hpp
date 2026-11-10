@@ -15,7 +15,7 @@
 namespace mc2vr::hooks {
 
 // MidHook at FrameTick's g_RenderShell slot-5 (PostUpdateHook) call site:
-// the once-per-frame host-event drain (ipc::drain_events), main thread.
+// the once-per-frame session tick (xr_session::on_update_tick), main thread.
 void install_post_update();
 uint64_t post_update_calls();  // since install (diagnostics)
 

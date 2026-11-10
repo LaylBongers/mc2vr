@@ -1,6 +1,6 @@
 # Stereo pipeline
 
-GPU-boundary per-eye injection: the frame renders once per eye. During an eye pass the `viewContextData` uploads are rewritten for that eye ([view_rewrite.md](view_rewrite.md)); the eye images go to the [host](host.md) over [shared textures](shared_textures.md).
+GPU-boundary per-eye injection: the frame renders once per eye. During an eye pass the `viewContextData` uploads are rewritten for that eye ([view_rewrite.md](view_rewrite.md)); the eye images go to the in-process OpenXR session ([eye_images.md](eye_images.md), [xr_session.md](xr_session.md)).
 
 Premises (proven, do not re-litigate; RE detail: [draw_camera_chain.md](reverse_engineering/draw_camera_chain.md), [view_context_records.md](reverse_engineering/view_context_records.md)):
 
@@ -19,7 +19,7 @@ Lesson that still applies: never suppress backbuffer writes under SwapEffect=DIS
 
 ## HUD/2D lands in both eyes
 
-`g_RenderQueue2` (`0x00ff3650`, 2D/overlay) is consumed by unlocated code; the frame-ctx block carries `&g_RenderQueue2`. It is not thunk `0x0050c660` ([reverse_engineering/securom_vm.md](reverse_engineering/securom_vm.md)). The HUD/2D is ordinary draw records from the Scaleform renderer, built once per frame in the record build ([reverse_engineering/gui_renderer.md](reverse_engineering/gui_renderer.md)), so both passes do walk the same HUD records. Measured with `src/carrier/vr/hud_timing.cpp`: both queues are fully consumed between SubmitToGPU entry and pass-1's BeginSubmit Present and are FROZEN from `p1` through `b0` — the interpreter builds the 2D/HUD draw records once per frame BEFORE pass 1, and pass 2 re-walks the same record table. The HUD lands in both eyes' composites; the one-eye-HUD scenario is structurally impossible (the host quad-layer fallback is dead). Side finding — queue counter protocol: `+0x10` high16 = pending-unconsumed count cleared by the consumer pre-Present, low16 = ring position frozen during passes, `+0x14` unused. Residual HUD defects: [hud.md](hud.md).
+`g_RenderQueue2` (`0x00ff3650`, 2D/overlay) is consumed by unlocated code; the frame-ctx block carries `&g_RenderQueue2`. It is not thunk `0x0050c660` ([reverse_engineering/securom_vm.md](reverse_engineering/securom_vm.md)). The HUD/2D is ordinary draw records from the Scaleform renderer, built once per frame in the record build ([reverse_engineering/gui_renderer.md](reverse_engineering/gui_renderer.md)), so both passes do walk the same HUD records. Measured with `src/carrier/vr/hud_timing.cpp`: both queues are fully consumed between SubmitToGPU entry and pass-1's BeginSubmit Present and are FROZEN from `p1` through `b0` — the interpreter builds the 2D/HUD draw records once per frame BEFORE pass 1, and pass 2 re-walks the same record table. The HUD lands in both eyes' composites; the one-eye-HUD scenario is structurally impossible (the old host's quad-layer fallback is gone). Side finding — queue counter protocol: `+0x10` high16 = pending-unconsumed count cleared by the consumer pre-Present, low16 = ring position frozen during passes, `+0x14` unused. Residual HUD defects: [hud.md](hud.md).
 
 ## Known gaps (open, low priority)
 

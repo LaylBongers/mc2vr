@@ -1,11 +1,10 @@
-# Carrier: the DLL the launcher injects. Hosts SafetyHook and (later) the
-# hot-swappable gameplay-mod module — keep it thin (docs/carrier.md,
+# Carrier: the DLL the launcher injects. Hosts SafetyHook, the OpenXR session
+# and (later) the hot-swappable gameplay-mod module — keep it thin (docs/carrier.md,
 # motion-control track).
 add_library(mc2vr_carrier SHARED
-    # Infrastructure: attach, conf, log, host IPC, build lock.
+    # Infrastructure: attach, conf, log, build lock.
     dllmain.cpp
     init.cpp
-    ipc.cpp
     log.cpp
     sha256.c
     # hooks/: every attachment to game code (docs/code_structure.md).
@@ -45,6 +44,9 @@ add_library(mc2vr_carrier SHARED
     vr/view_rewrite.cpp
     vr/world_markers.cpp
     vr/vp_camera.cpp
+    vr/xr_present.cpp
+    vr/xr_runtime.cpp
+    vr/xr_session.cpp
     # debug/: debugging tools, self-contained (conf-gated, default off).
     debug/build_census.cpp
     debug/camera_census.cpp
@@ -58,7 +60,6 @@ add_library(mc2vr_carrier SHARED
     debug/vm_dump.cpp
     debug/wait_census.cpp
     debug/watch.cpp
-    debug/xr_probe.cpp
 )
 
 # Reimplemented engine code does float math like the original: scalar SSE
@@ -71,18 +72,21 @@ set_source_files_properties(${MC2VR_REIMPL_SOURCES} PROPERTIES COMPILE_OPTIONS "
 # launcher and the deploy script both expect mc2vr_carrier.dll.
 set_target_properties(mc2vr_carrier PROPERTIES PREFIX "")
 
+# OpenXR and Vulkan: headers only. The carrier negotiates with the OpenXR
+# runtime DLL itself and takes Vulkan from the library DXVK loaded
+# (docs/xr_session.md).
 target_include_directories(mc2vr_carrier PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../common
+)
+target_include_directories(mc2vr_carrier SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/vendor/openxr-sdk/include
+    ${CMAKE_SOURCE_DIR}/vendor/vulkan-headers/include
 )
 
 target_compile_definitions(mc2vr_carrier PRIVATE UNICODE _UNICODE)
 
 target_link_libraries(mc2vr_carrier PRIVATE safetyhook mc2vr_game)
-# OpenXR headers only (no loader): debug/xr_probe.cpp negotiates with the
-# runtime DLL directly.
-set_source_files_properties(debug/xr_probe.cpp PROPERTIES
-    INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/vendor/openxr-sdk/include)
 
 # Static runtimes: an injected DLL must not depend on libstdc++-6.dll etc.
 # being present in the Wine prefix.
