@@ -7,6 +7,11 @@
 //   - Per segment: draw calls, CPU submission time (QPC) and GPU time from
 //     D3D9 timestamp queries, read back a few frames later without stalling.
 //   - A frame spans pass-1 start to the next pass-1 start.
+//   - Reading it: pass 1's first segment opens at the pass boundary, before
+//     the pacing render gate (the pass-1 pose sample) and BeginSubmit's
+//     Present + GPU drain, so its CPU time includes the lockstep wait
+//     (`pace: render gate` avg). 2026-11-10: pass1 main CPU 6.1 ms = ~4.6
+//     gate + ~1.5 submission, against pass 2's 1.3 ms for the same draws.
 // Render thread only. Inert unless enabled (draw-call hooks are only
 // installed then).
 #pragma once

@@ -125,8 +125,8 @@ void RenderCmd_ExecuteStream(const uint32_t *stream, void *vs_ctx, void *ps_ctx)
         case RenderCmdOp::StretchRectFromGlobal:
             RenderCmd_StretchRectFromGlobal(as<rcmd::StretchRectFromGlobal>(c).a1);
             break;
-        case RenderCmdOp::SetPassObject:
-            g_RenderCmdPassObject::set(as<rcmd::SetPassObject>(c).object);
+        case RenderCmdOp::SetCullMode:
+            g_PassCullMode::set(as<rcmd::SetCullMode>(c).cull_mode);
             RenderCmd_ResetPassState();
             break;
         case RenderCmdOp::Clear: {

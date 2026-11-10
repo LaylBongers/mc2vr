@@ -3,8 +3,8 @@
 
 namespace mc2vr::hooks {
 
-// Install the builder MidHook (installed always; handler gated on the conf)
-// and the third-person camera-clearance MidHook.
+// Install the builder MidHook and the third-person camera-clearance MidHook
+// (both always on; inert without a tracked HMD).
 void install_cull_frustum();
 
 } // namespace mc2vr::hooks

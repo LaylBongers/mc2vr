@@ -7,7 +7,7 @@
 // op 23 calls the original VM thunk.
 //
 // Replaces the original: hooks/reimpl.cpp. Writes g_LastExecuteStream,
-// g_ClipPlaneEnableMask, g_RenderCmdPassObject, g_HalfResPassAllowed and
+// g_ClipPlaneEnableMask, g_PassCullMode, g_HalfResPassAllowed and
 // g_HalfResPassActive.
 #pragma once
 

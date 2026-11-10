@@ -74,7 +74,7 @@ OP_NAME = [
     "DisableClipPlanes",
     "ViewType9StretchBlit",
     "StretchRectFromGlobal",
-    "SetPassObject",
+    "SetCullMode",
     "Thunk_004a05b9",
     "BeginSurfacePass",
     "EndSurfacePass",

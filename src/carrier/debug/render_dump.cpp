@@ -28,6 +28,8 @@
 #include "debug/camera_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/gui_census.hpp"
+#include "debug/occlusion_off.hpp"
+#include "vr/occlusion_queries.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
 
@@ -302,6 +304,7 @@ void report_window()
     gui_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
+    occlusion_queries::report_window();
     build_census::report_window();
     s2c::report_window();
     eye_replay::report_window();
@@ -414,6 +417,8 @@ void install_early()
 
     // Optional scene -> draw-record build census (mc2vr.conf debug_build_census=on).
     build_census::install();
+    // Optional occlusion culling off (mc2vr.conf debug_occlusion_off=on).
+    occlusion_off::install();
 }
 
 void install_late()

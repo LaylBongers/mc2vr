@@ -35,7 +35,7 @@ enum class RenderCmdOp : uint32_t {
     DisableClipPlanes = 11,
     ViewType9StretchBlit = 12,
     StretchRectFromGlobal = 13,
-    SetPassObject = 14,
+    SetCullMode = 14,
     Clear = 15,
     BeginSurfacePass = 16,
     EndSurfacePass = 17,
@@ -67,7 +67,7 @@ struct ReapplyClipPlanes { RenderCmdOp op; };
 struct DisableClipPlanes { RenderCmdOp op; };
 struct ViewType9StretchBlit { RenderCmdOp op; };
 struct StretchRectFromGlobal { RenderCmdOp op; uint32_t a1; };
-struct SetPassObject { RenderCmdOp op; uint32_t object; };
+struct SetCullMode { RenderCmdOp op; uint32_t cull_mode; };  // D3DCULL, applied by the pass pickers
 struct Clear { RenderCmdOp op; D3DCOLOR color; DWORD flags; };
 struct SurfacePass { RenderCmdOp op; uint32_t a1, a2, a3; uint32_t gate; };  // runs when gate is 1 or 2
 struct BindTextureAndSamplers { RenderCmdOp op; uint32_t unused[2]; };    // payload not read
@@ -91,7 +91,7 @@ constexpr uint8_t kRenderCmdSize[kRenderCmdOpCount] = {
     sizeof(rcmd::SetRenderTargetAndDepth) / 4, sizeof(rcmd::SetRenderTarget) / 4,
     sizeof(rcmd::SetScreenConstants) / 4, sizeof(rcmd::SetClipPlane) / 4, sizeof(rcmd::ReapplyClipPlanes) / 4,
     sizeof(rcmd::DisableClipPlanes) / 4, sizeof(rcmd::ViewType9StretchBlit) / 4,
-    sizeof(rcmd::StretchRectFromGlobal) / 4, sizeof(rcmd::SetPassObject) / 4, sizeof(rcmd::Clear) / 4,
+    sizeof(rcmd::StretchRectFromGlobal) / 4, sizeof(rcmd::SetCullMode) / 4, sizeof(rcmd::Clear) / 4,
     sizeof(rcmd::SurfacePass) / 4, sizeof(rcmd::SurfacePass) / 4, sizeof(rcmd::BindTextureAndSamplers) / 4,
     sizeof(rcmd::Nop) / 4, sizeof(rcmd::BindViewTexture) / 4, sizeof(rcmd::Op21) / 4, sizeof(rcmd::StretchRect) / 4,
     sizeof(rcmd::VmOp23) / 4, sizeof(rcmd::UnbindTextureStage) / 4, sizeof(rcmd::BeginHalfRes) / 4,
@@ -107,7 +107,7 @@ static_assert(kRenderCmdSize[1] == 3 && kRenderCmdSize[2] == 4 && kRenderCmdSize
 
 using g_LastExecuteStream = Global<const uint32_t *, 0x011697b8u>;  // dedupe
 using g_ClipPlaneEnableMask = Global<uint32_t, 0x01169784u>;        // D3DRS_CLIPPLANEENABLE shadow
-using g_RenderCmdPassObject = Global<uint32_t, 0x017d2ac0u>;        // op 14
+using g_PassCullMode = Global<uint32_t, 0x017d2ac0u>;        // RenderShell+0x3fd0: D3DRS_CULLMODE the pass pickers apply; op 14, surface passes
 // Source path string Dx9_CheckHResult reports ("D:\projects\Mercs2_PC\Odin\Win32...").
 using s_OdinWin32SourcePath = Global<const char, 0x00be860cu>;
 

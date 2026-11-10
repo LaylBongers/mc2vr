@@ -21,6 +21,9 @@
 //     each pass ends by compositing the layer into its eye image.
 //   - world markers (vr/world_markers.hpp): each marker quad is moved and
 //     scaled for the pass's eye around its draw.
+//   - occlusion queries (vr/occlusion_queries.hpp): the engine's query ring
+//     is wrapped in per-eye pairs at frame start; each pass's box draws issue
+//     its own eye's query.
 //
 // Writes directly: g_InRenderFrame, g_NameHash_PgPrimitiveSubmitToGPU, the
 // precache globals, g_SuppressPresent, g_CurPassObject, g_LastRecViewFlags,

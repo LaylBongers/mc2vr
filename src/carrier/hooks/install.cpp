@@ -8,7 +8,6 @@
 #include "hooks/device.hpp"
 #include "hooks/frame_tick.hpp"
 #include "hooks/hud.hpp"
-#include "hooks/occluder_boxes.hpp"
 #include "hooks/reimpl.hpp"
 #include "hooks/render_outputs.hpp"
 #include "hooks/render_size.hpp"
@@ -25,7 +24,6 @@ void install_attach()
     install_post_update();    // FrameTick slot-5 site: host-event drain
     install_camera_table();   // HMD pose injection at g_CameraTable
     install_cull_frustum();   // HMD cull frustum
-    install_occluder_boxes(); // occlusion-query boxes off (VR smearing)
     install_render_outputs(); // carrier-owned outputs: setup wrap + restore
     install_render_size();    // render_size=WxH policy
     install_adaptation();     // exposure continuity across render-size switches

@@ -182,7 +182,17 @@ using g_TechniqueTable = GlobalArray<Technique *, 0x0197d248u, 0x100>;
 using g_ScreenConstsVS = Global<const uint8_t, 0x017d2aa0u>;  // address only
 using g_ScreenConstsPS = Global<const uint8_t, 0x017d2ab0u>;  // address only
 using g_ScreenEffectsEnabled = Global<uint8_t, 0x00dfb345u>;
+// The occlusion-query ring: RenderShell+0x2e8c, kOcclusionQueryCount entries,
+// set by RenderShell_InitDrawRecordTables only while LtiRenderer flags bit 4 is
+// on (NULL otherwise). FUN_0074a180 (from SetupRenderTargets) fills it with
+// CreateQuery(D3DQUERYTYPE_OCCLUSION); LtiRenderer_ReleaseRenderTargets
+// releases every entry and NULLs it. Ring ids come from OcclusionBox_EmitPrimRecord
+// only. GetData readers: ObjectOcclusionQueries_PollAndMarkVisible,
+// FUN_004a6730 (both: visible unless S_OK with 0 pixels) and
+// OcclusionQuery_GetPixelCount (S_OK ? pixels : 0xffffffff; its callers want
+// >= 64 / != 0). None of them waits for a result.
 using g_OcclusionQueryArray = Global<IDirect3DQuery9 **, 0x01163768u>;
+constexpr uint32_t kOcclusionQueryCount = 0x400;
 
 // ---- draw-state cache (block at 0x01169788, reset by RenderShell_ResetDrawStateCache) ----
 // Each submit compares a record against these to skip redundant state.

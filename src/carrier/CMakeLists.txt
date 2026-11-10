@@ -16,7 +16,6 @@ add_library(mc2vr_carrier SHARED
     hooks/frame_tick.cpp
     hooks/hud.cpp
     hooks/install.cpp
-    hooks/occluder_boxes.cpp
     hooks/entry.cpp
     hooks/reimpl.cpp
     hooks/render_outputs.cpp
@@ -38,6 +37,7 @@ add_library(mc2vr_carrier SHARED
     vr/hud.cpp
     vr/hud_timing.cpp
     vr/msaa.cpp
+    vr/occlusion_queries.cpp
     vr/pacing.cpp
     vr/render_outputs.cpp
     vr/render_size.cpp
@@ -51,6 +51,7 @@ add_library(mc2vr_carrier SHARED
     debug/census_hooks.cpp
     debug/gpu_census.cpp
     debug/gui_census.cpp
+    debug/occlusion_off.cpp
     debug/ps_census.cpp
     debug/render_dump.cpp
     debug/stream_capture.cpp

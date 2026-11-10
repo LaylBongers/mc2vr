@@ -62,7 +62,7 @@ bool union_for_camera(const math::Vec3 &R, const math::Vec3 &U, const math::Vec3
                       math::Quat *rot, math::Vec3 *pos);
 
 // True + fills *half_h/*half_v with the HMD FOV-union half-angles (radians,
-// outermost bound over BOTH eyes, no margin) from a pose sampled within the
+// outermost bound over BOTH eyes) from a pose sampled within the
 // last second. Input of the cull frustum (cull_frustum.hpp).
 bool get_fov_union(float *half_h, float *half_v);
 

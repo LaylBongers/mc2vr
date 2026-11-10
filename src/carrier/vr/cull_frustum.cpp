@@ -18,22 +18,50 @@ namespace mc2vr::cull_frustum {
 
 namespace {
 
-float g_margin_deg = 5.0f;
 
 // Per-window counters (builder calls can come from any thread; the counts are
 // diagnostics, a lost increment is harmless).
 uint64_t g_builds = 0, g_widened = 0, g_other_view = 0, g_no_cam = 0, g_no_fov = 0;
 float g_game_th = 0.0f, g_game_tv = 0.0f;  // last HMD-view game extents seen
 float g_out_th = 0.0f, g_out_tv = 0.0f;    // what we wrote
+float g_clear_th = 0.0f, g_clear_tv = 0.0f;  // the camera clearance's reference extents
 uint64_t g_clear_restored = 0, g_clear_stock = 0;
 
-// The last widened view's (game, written) extent magnitudes, published to the
-// camera thread (on_camera_frustum_copied). Written by the builder (render thread).
-std::atomic<float> g_pub_game_th{0.0f}, g_pub_game_tv{0.0f};
+// The last widened view's (clearance reference, written) extent magnitudes,
+// published to the camera thread (on_camera_frustum_copied). Written by the
+// builder (render thread).
+std::atomic<float> g_pub_clear_th{0.0f}, g_pub_clear_tv{0.0f};
 std::atomic<float> g_pub_out_th{0.0f}, g_pub_out_tv{0.0f};
 
 constexpr float DEG = 0.017453293f;
 constexpr float MAX_HALF = 85.0f * DEG;  // tan pole guard
+
+// The aspect the camera clearance is kept at. In VR the engine builds its
+// views at the eye's render aspect (0.9 on the reference HMD, render_size),
+// so its own extents are a narrow 18.5°/20.4° quad, not the 16:9 one the
+// third-person camera was tuned against (36.7°/22.7°): the clearance would
+// shrink with the render size. The 16:9 reference keeps the camera as it is
+// on a 16:9 monitor, ADS zoom included.
+constexpr float CLEAR_REF_ASPECT = 16.0f / 9.0f;
+
+// The builder computes halfH = fov * 0.375 * aspect, tanH = tan(halfH),
+// tanV = tanH / aspect (docs/culling.md); so the game's own pair gives
+// aspect = tanH / tanV and fov * 0.375 = atan(tanH) / aspect, and the same
+// fov at the reference aspect follows. Magnitudes in and out.
+bool clearance_extents(float game_th, float game_tv, float *th, float *tv)
+{
+    if (!(game_th > 0.0f) || !(game_tv > 0.0f)) {
+        return false;
+    }
+    const float aspect = game_th / game_tv;
+    const float half = std::atan(game_th) / aspect * CLEAR_REF_ASPECT;
+    if (!(half > 0.0f) || half > MAX_HALF) {
+        return false;
+    }
+    *th = std::tan(half);
+    *tv = *th / CLEAR_REF_ASPECT;
+    return true;
+}
 
 } // namespace
 
@@ -66,9 +94,12 @@ bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
         g_no_fov++;
         return false;
     }
-    const float margin = g_margin_deg * DEG;
-    const float hmd_th = std::tan(std::fmin(half_h + margin, MAX_HALF));
-    const float hmd_tv = std::tan(std::fmin(half_v + margin, MAX_HALF));
+    // Exactly the eyes' union, no margin: anything wider is off-screen in
+    // both eyes, yet gets occlusion boxes there, which count 0 pixels and read
+    // as occluded; such objects then stay undrawn for frames after they turn
+    // into view (docs/occluder_boxes.md).
+    const float hmd_th = std::tan(std::fmin(half_h, MAX_HALF));
+    const float hmd_tv = std::tan(std::fmin(half_v, MAX_HALF));
 
     // The builder's own signs kept; magnitudes widened, never narrowed.
     g_game_th = th;
@@ -79,8 +110,15 @@ bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
     memcpy((void *)(vctx + MC2_VCCAM_CTX_TANV_OFF), &tv, 4);
     g_out_th = th;
     g_out_tv = tv;
-    g_pub_game_th.store(std::fabs(g_game_th), std::memory_order_relaxed);
-    g_pub_game_tv.store(std::fabs(g_game_tv), std::memory_order_relaxed);
+    float clear_th, clear_tv;
+    if (!clearance_extents(std::fabs(g_game_th), std::fabs(g_game_tv), &clear_th, &clear_tv)) {
+        clear_th = std::fabs(g_game_th);  // degenerate game extents: the game's own
+        clear_tv = std::fabs(g_game_tv);
+    }
+    g_clear_th = clear_th;
+    g_clear_tv = clear_tv;
+    g_pub_clear_th.store(clear_th, std::memory_order_relaxed);
+    g_pub_clear_tv.store(clear_tv, std::memory_order_relaxed);
     g_pub_out_th.store(std::fabs(th), std::memory_order_relaxed);
     g_pub_out_tv.store(std::fabs(tv), std::memory_order_relaxed);
     g_widened++;
@@ -88,15 +126,16 @@ bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
 }
 
 // Third-person camera clearance: if the copy's near quad has the extents we
-// wrote, shrink its four near corners back to the game's own extents — the
-// camera's obstacle clearance stays stock while the cull keeps the HMD
-// frustum. Only the private copy is touched.
+// wrote, rescale its four near corners to the 16:9 reference extents of the
+// game's fov (clearance_extents) — the camera's obstacle clearance stays as on
+// a 16:9 monitor while the cull keeps the HMD frustum. Only the private copy
+// is touched.
 void on_camera_frustum_copied(float *f)
 {
     const float out_th = g_pub_out_th.load(std::memory_order_relaxed);
     const float out_tv = g_pub_out_tv.load(std::memory_order_relaxed);
-    const float game_th = g_pub_game_th.load(std::memory_order_relaxed);
-    const float game_tv = g_pub_game_tv.load(std::memory_order_relaxed);
+    const float clear_th = g_pub_clear_th.load(std::memory_order_relaxed);
+    const float clear_tv = g_pub_clear_tv.load(std::memory_order_relaxed);
     if (!(out_th > 0.0f) || !(out_tv > 0.0f)) {
         g_clear_stock++;
         return;  // nothing widened yet
@@ -125,7 +164,7 @@ void on_camera_frustum_copied(float *f)
         g_clear_stock++;
         return;
     }
-    const float sh = game_th / out_th, sv = game_tv / out_tv;
+    const float sh = clear_th / out_th, sv = clear_tv / out_tv;
     static const float SIGN_H[4] = {1, 1, -1, -1}, SIGN_V[4] = {1, -1, -1, 1};
     for (int i = 0; i < 4; i++) {
         for (int k = 0; k < 3; k++) {
@@ -144,33 +183,22 @@ double deg(float tan_value)
 
 } // namespace
 
-bool set_margin(double degrees)
-{
-    if (!(degrees >= 0.0) || degrees > 30.0) {
-        MC2VR_LOG("cullfov: cull_fov_margin=%.3f out of range [0,30] — kept %.1f",
-                  degrees, (double)g_margin_deg);
-        return false;
-    }
-    g_margin_deg = (float)degrees;
-    MC2VR_LOG("cullfov: margin = %.1f°", degrees);
-    return true;
-}
-
 void report_window()
 {
     // Oracles: widened > 0 every window while the HMD is tracked; game vs
     // out angles show the extension (game ~36.7°/22.7° stock widescreen).
     // widened == 0 with otherView > 0 = the union-camera match failed.
     // camClear restored > 0 while widened > 0 = the camera clearance is kept
-    // stock; stock-only while widened > 0 = the copy match failed (pull-in).
+    // at the 16:9 reference (camClear angles, ~36.7°/22.7° unzoomed);
+    // stock-only while widened > 0 = the copy match failed (pull-in).
     MC2VR_LOG("cullfov: window: builds=%llu widened=%llu otherView=%llu noCam=%llu "
               "noFov=%llu | game %.1f°/%.1f° -> cull %.1f°/%.1f° (halfH/halfV) | "
-              "camClear restored=%llu stock=%llu",
+              "camClear %.1f°/%.1f° restored=%llu stock=%llu",
               (unsigned long long)g_builds, (unsigned long long)g_widened,
               (unsigned long long)g_other_view, (unsigned long long)g_no_cam,
               (unsigned long long)g_no_fov, deg(g_game_th), deg(g_game_tv),
-              deg(g_out_th), deg(g_out_tv), (unsigned long long)g_clear_restored,
-              (unsigned long long)g_clear_stock);
+              deg(g_out_th), deg(g_out_tv), deg(g_clear_th), deg(g_clear_tv),
+              (unsigned long long)g_clear_restored, (unsigned long long)g_clear_stock);
     g_builds = g_widened = g_other_view = g_no_cam = g_no_fov = 0;
     g_clear_restored = g_clear_stock = 0;
 }

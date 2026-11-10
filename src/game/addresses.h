@@ -256,6 +256,14 @@
 #define MC2_CAMCLEAR_FRUSTUM_COPIED ((uintptr_t)0x007107f9u)
 #define MC2_CAMCLEAR_COPY_ESP_OFF ((uintptr_t)0x18u)
 
+// Occluder boxes (docs/occluder_boxes.md): ViewObjects_DrawAndEmitOcclusionBoxes
+// (0x00468ea0) calls OcclusionBox_EmitPrimRecord at two sites (`call rel32`,
+// 5 bytes, no stack args) — per flagged object and for the ctx+0x1430 list.
+// mc2vr NOPs both (occlusion culling off).
+#define MC2_OCCLUSION_BOX_EMIT ((uintptr_t)0x0046edf0u)
+#define MC2_OCCLUSION_BOX_CALL_A ((uintptr_t)0x00468eedu)
+#define MC2_OCCLUSION_BOX_CALL_B ((uintptr_t)0x00468f12u)
+
 // g_CameraPoseClearBlock (E2b step-3 CORRECTED 2026-10-06, plate there): a
 // STATIC zero template (never written at runtime) — NOT a live pose source
 // (the step-2 "canonical pose global" interpretation is retracted).

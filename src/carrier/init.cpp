@@ -22,6 +22,7 @@
 #include "debug/render_dump.hpp"
 #include "debug/stream_capture.hpp"
 #include "debug/build_census.hpp"
+#include "debug/occlusion_off.hpp"
 #include "debug/camera_census.hpp"
 #include "debug/watch.hpp"
 #include "vr/view_rewrite.hpp"
@@ -121,13 +122,7 @@ static void load_conf()
                                end[-1] == '\r' || end[-1] == '\n')) {
             *--end = '\0';
         }
-        if (strcmp(key, "cull_fov_margin") == 0) {
-            // Degrees added to each HMD half-angle (default 5).
-            double v;
-            if (parse_double(key, value, &v)) {
-                cull_frustum::set_margin(v);
-            }
-        } else if (strcmp(key, "debug_view_identity") == 0) {
+        if (strcmp(key, "debug_view_identity") == 0) {
             // Decomposition oracle (view_rewrite.cpp): rebuild with the game's
             // own camera instead of the per-eye HMD rewrite.
             if (!view_rewrite::set_identity_oracle(value)) {
@@ -207,6 +202,11 @@ static void load_conf()
             // Which shaders take the camera from outside viewContextData (debug/camera_census.hpp).
             if (!camera_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_camera_census=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_occlusion_off") == 0) {
+            // Occlusion culling off, for A/B (debug/occlusion_off.hpp).
+            if (!occlusion_off::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_occlusion_off=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_camera_census_skip") == 0) {
             camera_census::set_skip(value);

@@ -38,9 +38,11 @@ constexpr uint64_t kPoseHoldMs = 250;  // reuse the last good pose this long on 
 // untracked / eye pose or FOV failed the sanity check; held = a miss bridged
 // by the last good pose.
 uint64_t g_miss_read = 0, g_miss_untracked = 0, g_miss_insane = 0, g_pose_held = 0;
-// HMD FOV union (radians, outermost bound over both eyes) — the cull frustum
-// input (cull_frustum.cpp via get_fov_union).
-float g_fov_half_h = 0.0f, g_fov_half_v = 0.0f;
+// HMD FOV union (radians, outermost bound over both eyes about the mid pose's
+// axes) — the cull frustum input (cull_frustum.cpp via get_fov_union).
+// g_fov_cant = the larger eye's rotation away from the mid pose (radians,
+// window report only: 0 on parallel-display headsets).
+float g_fov_half_h = 0.0f, g_fov_half_v = 0.0f, g_fov_cant = 0.0f;
 
 // ---- rewritten-entry history (union-camera identification) ---------------
 // The view-context builder (cull_frustum.cpp) works on camera entries that are
@@ -165,19 +167,42 @@ void sample_pose()
     g_pose_valid = true;
     g_pose_ms = GetTickCount64();
 
-    // Cull frustum input: the FOV UNION over both eyes — half-angles in
-    // radians (the IPC fov fields are angles; vp_camera tans them directly).
-    // Union = outermost bound on each side: max(|left|,|right|) horizontally,
-    // max(|up|,|down|) vertically, across BOTH eyes. Sanity-bounded so a
-    // garbage host value never stretches the culling volume.
-    const auto &fa = st.eye[0].fov, &fb = st.eye[1].fov;
-    const float hh = std::fmax(std::fmax(-fa.left, fa.right),
-                               std::fmax(-fb.left, fb.right));
-    const float hv = std::fmax(std::fmax(-fa.down, fa.up),
-                               std::fmax(-fb.down, fb.up));
-    if (hh > 0.05f && hh < 1.5f && hv > 0.05f && hv < 1.5f) {
+    // Cull frustum input: the FOV UNION over both eyes, as half-angles in
+    // radians about the MID pose's axes (the frame the union camera renders
+    // in). Each eye's FOV is relative to that eye's own orientation, which on
+    // canted-display headsets is turned outward from the mid pose; so each
+    // eye's four frustum-corner rays are rotated into the mid frame and the
+    // outermost |x/-z|, |y/-z| over all eight is the union (a linear-fractional
+    // extremum over the frustum is at a corner). Symmetric, outermost side on
+    // each axis. Sanity-bounded so a garbage host value never stretches the
+    // culling volume.
+    float th = 0.0f, tv = 0.0f, cant = 0.0f;
+    bool fov_ok = true;
+    const Quat mid_inv = math::conj(g_pose_rot);
+    for (int e = 0; e < 2 && fov_ok; e++) {
+        const Mc2IpcEyePose &eye = st.eye[e];
+        const Quat er{eye.rot.x, eye.rot.y, eye.rot.z, eye.rot.w};
+        const Quat rel = mid_inv * er;
+        cant = std::fmax(cant, 2.0f * std::acos(std::fmin(1.0f, std::fabs(rel.w))));
+        const float xs[2] = {std::tan(eye.fov.left), std::tan(eye.fov.right)};
+        const float ys[2] = {std::tan(eye.fov.down), std::tan(eye.fov.up)};
+        for (float x : xs) {
+            for (float y : ys) {
+                const Vec3 d = math::rotate(rel, Vec3{x, y, -1.0f});  // OpenXR: -Z forward
+                if (!(-d.z > 0.05f)) {
+                    fov_ok = false;  // a corner at or behind the mid plane: not a sane HMD
+                    break;
+                }
+                th = std::fmax(th, std::fabs(d.x / -d.z));
+                tv = std::fmax(tv, std::fabs(d.y / -d.z));
+            }
+        }
+    }
+    const float hh = std::atan(th), hv = std::atan(tv);
+    if (fov_ok && hh > 0.05f && hh < 1.5f && hv > 0.05f && hv < 1.5f) {
         g_fov_half_h = hh;
         g_fov_half_v = hv;
+        g_fov_cant = cant;
     }
 }
 
@@ -568,7 +593,7 @@ void report_window()
 {
     MC2VR_LOG("camtable: window: fills=%llu rewritten=%llu noPose=%llu badEntry=%llu "
               "badRows=%llu frameWaits=%llu poseId=%u%s | poseMiss read=%llu "
-              "untracked=%llu insane=%llu held=%llu",
+              "untracked=%llu insane=%llu held=%llu | fov union %.1f°/%.1f° cant %.2f°",
               (unsigned long long)g_fills, (unsigned long long)g_rewrites,
               (unsigned long long)g_no_pose, (unsigned long long)g_bad_entry,
               (unsigned long long)g_bad_rows, (unsigned long long)g_frame_waits,
@@ -576,7 +601,9 @@ void report_window()
               g_s0 == 0 ? " | FRAME UNLOCKED — rewrite waiting for calibration"
                         : "",
               (unsigned long long)g_miss_read, (unsigned long long)g_miss_untracked,
-              (unsigned long long)g_miss_insane, (unsigned long long)g_pose_held);
+              (unsigned long long)g_miss_insane, (unsigned long long)g_pose_held,
+              (double)g_fov_half_h * 57.29577951, (double)g_fov_half_v * 57.29577951,
+              (double)g_fov_cant * 57.29577951);
     MC2VR_LOG("camtable: VP union age (game frames between the union baked into an "
               "uploaded VP and the upload; >0 = pipelined camera) 0=%llu 1=%llu 2=%llu "
               "3=%llu none=%llu",

@@ -92,7 +92,7 @@ const char *const OP_NAME[OP_COUNT] = {
     "DisableClipPlanes",
     "ViewType9StretchBlit",
     "StretchRectFromGlobal",
-    "SetPassObject+InvalidatePassState",
+    "SetCullMode+InvalidatePassState",
     "thunk_Dx9_Clear_Direct(0,0,p2,p1,1.0)",
     "BeginSurfacePass(gate)",
     "EndSurfacePass(gate)",

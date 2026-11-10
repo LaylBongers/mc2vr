@@ -13,7 +13,7 @@ Each draw record's `cmdStream` (`PgPrimitive+0x2c`) is a dword stream: an opcode
 
 ## Verified
 
-- **Faithful:** a dry-run comparison against the original matched every call sequence in gameplay. `g_RenderCmdPassObject` is left out of the end-state comparison, because `RenderCmd_BeginSurfacePass` / `EndSurfacePass` also write it (1 / 2) and a dry run doesn't execute callees.
+- **Faithful:** a dry-run comparison against the original matched every call sequence in gameplay. `g_PassCullMode` is left out of the end-state comparison, because `RenderCmd_BeginSurfacePass` / `EndSurfacePass` also write it (1 / 2) and a dry run doesn't execute callees.
 - **No frame cost** against the original (A/B in the same scene).
 
 ## OPEN
