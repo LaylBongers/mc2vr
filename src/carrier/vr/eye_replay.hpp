@@ -5,7 +5,7 @@
 //   - Pass 1 renders LEFT, pass 2 renders RIGHT (view_rewrite::set_pass_eye).
 //   - Pass boundaries drive the eye captures: the engine's final frame of each
 //     pass lands in the carrier-owned front surface (render_outputs.cpp),
-//     captured into the shared ring at 1->2 (LEFT) and 2->0 (RIGHT). Pass 2
+//     captured into the eye images at 1->2 (LEFT) and 2->0 (RIGHT). Pass 2
 //     simply re-renders into the engine's own targets (pass 1 is already
 //     composited and captured by then).
 //   - debug_eye_dump_frames=N: after debug_dump_delay seconds, write BMP pairs
@@ -21,6 +21,9 @@
 
 #include <cstdint>
 
+#include "vr/eye_share.hpp"
+#include "vr/xr_session.hpp"
+
 namespace mc2vr::eye_replay {
 
 // mc2vr.conf debug_eye_dump_frames=N (0 = never).
@@ -30,21 +33,28 @@ void set_dump_frames(uint32_t n);
 void set_dump_delay(float seconds);
 
 // The stereo frame, called by the PgPrimitive_SubmitToGPU reimplementation
-// around its two submission passes (LEFT, then RIGHT):
-//   begin_left_pass()   pass 1; its present-prev is skipped (duplicate of pass 2's)
-//   begin_right_pass()  pass 2; starts the replay timer
-//   end_frame()         replay stats; back to "outside a submit"
-void begin_left_pass();
-void begin_right_pass();
-void end_frame();
+// around its two submission passes (LEFT, then RIGHT), with the frame's OpenXR
+// state passed through:
+//   begin_left_pass(xr)        pass 1; the frame's views go to pacing and the
+//                              view rewrite. Returns the views both passes
+//                              render with (nullptr = none); its present-prev
+//                              is skipped (duplicate of pass 2's).
+//   begin_right_pass(capture)  captures the LEFT eye (when the frame is shown),
+//                              then pass 2; starts the replay timer.
+//   end_frame(capture, pair)   captures the RIGHT eye and flushes the pair
+//                              (true = *pair filled); replay stats; back to
+//                              "outside a submit".
+const xr_session::ViewState *begin_left_pass(const xr_session::Frame &xr);
+void begin_right_pass(bool capture);
+bool end_frame(bool capture, eye_share::Pair *pair);
 
-// Pass tracking — set by the pass boundaries above (0 = not inside a submit). Sets the per-pass eye-sign override
-// (pass 1 = LEFT/-1, pass 2 = RIGHT/+1).
+// Pass tracking — set by the pass boundaries above (0 = not inside a submit).
+// Sets the per-pass eye-sign override (pass 1 = LEFT/-1, pass 2 = RIGHT/+1).
 void set_pass(uint32_t pass);
 // Current pass: 0 = outside a submit, 1/2 while the passes run (render thread).
 uint32_t current_pass();
 
-// Called from device.cpp's Reset hook — the shared ring is dropped.
+// Called from device.cpp's Reset hook — the eye images are dropped.
 void on_reset();
 
 // 10s window report (render_dump.cpp poller); resets counters.

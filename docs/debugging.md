@@ -4,13 +4,19 @@
 
 The agent implements/logs; the human runs `./launch.sh` into GAMEPLAY (SteamVR up — gameplay, not menu, for render instrumentation) and reports; the agent audits `<GAME_DIR>/mc2vr/mc2vr_{carrier,launcher}.log` (`GAME_DIR` from `launch.conf`). `tools/analyze_dumps.py <log>` parses view/stream/eye evidence (view dumps need `debug_view_dumps=on`).
 
+Render-thread timings use integer QPC ticks (`src/carrier/qpc.hpp`); census CPU times logged before 2026-11-10 were quantized to 4 ms steps ([x87_precision.md](x87_precision.md)).
+
+## Vulkan validation
+
+`MC2VR_VK_VALIDATION=1 ./launch.sh`: the Khronos validation layer with synchronization validation in the game's Vulkan stack, uncapped, logged to `<GAME_DIR>/mc2vr/mc2vr_vk_validation.log`. Needs the 32-bit layer (`lib32-vulkan-validation-layers`): the game's Vulkan calls go through Proton's i386 Unix side. ~17 Hz in the HMD, so keep runs short. DXVK produces ~2 messages per frame of its own; ours are found by the handles the carrier logs ([xr_session.md](xr_session.md#live-results)).
+
 ## Deployed conf steady state
 
 `render_size=hmd vsync=off` (the VR pipeline itself has no keys — it is always on and passes through without an OpenXR session). The deployed `mc2vr.conf` is never overwritten by `launch.sh` — edit it in place.
 
 ## Healthy-run signatures
 
-Session ([xr_session.md](xr_session.md#live-result)): `xr: session created on DXVK's device`, `xr: swapchains … format 50`, `submit:` ~900 frames per 10 s at 90 Hz, all `fresh`, `stale=0 empty=0 copyFail=0 layerRejected=0`, `pose ids miss=0`. Eye ring: `share window:` captures = pairs = taken, `slot timeouts=0 gpuTimeouts=0`. `pace:` gate `timeouts=0`. `view/hmd: split=0 decompFail=0`. Game with `vsync=off` and no HMD: `FrameTick: dt avg` ~7.4 ms (~135 Hz).
+Session ([xr_session.md](xr_session.md#live-results)): `xr: session created on DXVK's device`, `xr: swapchains … format 50`, `submit:` ~900 frames per 10 s at 90 Hz with `shown` ≈ frames and `noPair noPose copyFail layerRejected` all 0 outside Resets. Eye images: `share window:` pairs ≈ frames, `flush` avg ~1 ms. `view/hmd: split=0 decompFail=0`. Game with `vsync=off` and no HMD: `FrameTick: dt avg` ~7.4 ms (~135 Hz).
 
 ## Phase oracles (reading a run's log)
 
@@ -37,4 +43,4 @@ Session ([xr_session.md](xr_session.md#live-result)): `xr: session created on DX
 
 ## Debug tools (carrier `debug_*` conf keys, default off — [carrier.md](carrier.md))
 
-`debug_occlusion_off` (engine occlusion culling off, for A/B — [occluder_boxes.md](occluder_boxes.md)), `debug_build_census` (scene → draw-record build: threads, timing, task order, records per emitter/sub-view/type — [reverse_engineering/scene_record_build.md](reverse_engineering/scene_record_build.md)), `debug_vm_dump` (live thunk slot census → `vm_thunks.csv`; a 2026-10-03 copy at `reverse_engineering/data/vm_thunks_runtime.csv`), `debug_watch` (hardware watchpoints, `addr:0x…`), `debug_camtable_probe` (camera transfer-function probe — [camera.md](camera.md)), `debug_eye_dump_frames` (per-eye BMPs). `debug_gui_census` (draw-time view of the GUI records — [hud.md](hud.md)). Removed after their tracks closed (git history): `debug_xr_probe` (in-process OpenXR feasibility, [xr_session.md](xr_session.md)), `debug_sync_frame_ready`, `debug_terrain_cull_probe`, `debug_zstate_probe`, the E2/E2b inject_probe module, `debug_stub_trace` ([reverse_engineering/vm_stub_callbacks.md](reverse_engineering/vm_stub_callbacks.md)), `debug_rt_probe` ([render_resolution.md](render_resolution.md)), `debug_hud_probe` (minimap widget fields and per-caller `Gui_DrawTexturedRect` rects, found the border's sizing — [hud.md](hud.md)), `debug_msaa_census` ([msaa.md](msaa.md)), the SecuROM pre-probes.
+`debug_occlusion_off` (engine occlusion culling off, for A/B — [occluder_boxes.md](occluder_boxes.md)), `debug_build_census` (scene → draw-record build: threads, timing, task order, records per emitter/sub-view/type — [reverse_engineering/scene_record_build.md](reverse_engineering/scene_record_build.md)), `debug_vm_dump` (live thunk slot census → `vm_thunks.csv`; a 2026-10-03 copy at `reverse_engineering/data/vm_thunks_runtime.csv`), `debug_watch` (hardware watchpoints, `addr:0x…`), `debug_camtable_probe` (camera transfer-function probe — [camera.md](camera.md)), `debug_eye_dump_frames` (per-eye BMPs). `debug_gui_census` (draw-time view of the GUI records — [hud.md](hud.md)). Removed after their tracks closed (git history): `debug_xr_probe` (in-process OpenXR feasibility, [xr_session.md](xr_session.md)), `debug_sync_frame_ready`, `debug_pair_gpu_wait` (the hand-off A/B, [xr_session.md](xr_session.md#live-results)), `debug_terrain_cull_probe`, `debug_zstate_probe`, the E2/E2b inject_probe module, `debug_stub_trace` ([reverse_engineering/vm_stub_callbacks.md](reverse_engineering/vm_stub_callbacks.md)), `debug_rt_probe` ([render_resolution.md](render_resolution.md)), `debug_hud_probe` (minimap widget fields and per-caller `Gui_DrawTexturedRect` rects, found the border's sizing — [hud.md](hud.md)), `debug_msaa_census` ([msaa.md](msaa.md)), the SecuROM pre-probes.

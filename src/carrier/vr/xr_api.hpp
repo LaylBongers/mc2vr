@@ -6,6 +6,7 @@
 
 #include <vulkan/vulkan_core.h>
 
+#define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_VULKAN
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>

@@ -84,15 +84,12 @@ void copy_back_params(D3DPRESENT_PARAMETERS *engine, const D3DPRESENT_PARAMETERS
 
 DWORD apply_behavior_policy(DWORD behavior_flags)
 {
+    // Unchanged: the game creates its device D3DCREATE_MULTITHREADED itself
+    // (it uses it from more than one thread). Logged because DXVK's device
+    // lock (eye_share's flush) is a no-op without it.
     MC2VR_LOG("D3D: CreateDevice behavior flags 0x%08lx (MULTITHREADED %s by the game)",
               (unsigned long)behavior_flags,
-              (behavior_flags & D3DCREATE_MULTITHREADED) ? "already set" : "not set");
-    if (!(behavior_flags & D3DCREATE_MULTITHREADED)) {
-        // The OpenXR session thread polls the eye pairs' event queries
-        // (eye_share.cpp).
-        behavior_flags |= D3DCREATE_MULTITHREADED;
-        MC2VR_LOG("D3D: CreateDevice + D3DCREATE_MULTITHREADED (the session thread polls eye-pair fences)");
-    }
+              (behavior_flags & D3DCREATE_MULTITHREADED) ? "set" : "not set");
     return behavior_flags;
 }
 

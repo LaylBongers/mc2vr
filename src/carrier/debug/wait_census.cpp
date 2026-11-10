@@ -1,3 +1,4 @@
+#include "qpc.hpp"
 #include "wait_census.hpp"
 
 #include <windows.h>
@@ -22,7 +23,6 @@ constexpr uintptr_t IAT_TIMEGETTIME = 0x00b05520;
 bool g_enabled = false;
 bool g_installed = false;
 DWORD g_main_tid = 0;
-double g_qpc_to_ms = 0.0;
 
 using Sleep_t = VOID(WINAPI *)(DWORD);
 using SleepEx_t = DWORD(WINAPI *)(DWORD, BOOL);
@@ -35,12 +35,8 @@ Wfso_t o_wfso = nullptr;
 Qpc_t o_qpc = nullptr;
 Tgt_t o_tgt = nullptr;
 
-inline double now_ms()
-{
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);  // the carrier's own import, not the game slot
-    return (double)t.QuadPart * g_qpc_to_ms;
-}
+// Timing in QPC ticks; only differences become ms (qpc.hpp: exact on the
+// single-precision render thread). The carrier's own import, not the game slot.
 
 // ---- caller attribution -----------------------------------------------------
 struct Caller {
@@ -93,18 +89,18 @@ VOID WINAPI w_sleep(DWORD ms)
     const int w = which();
     if (w < 0) return o_sleep(ms);
     const uintptr_t ret = (uintptr_t)__builtin_return_address(0);
-    const double t0 = now_ms();
+    const int64_t t0 = qpc::now();
     o_sleep(ms);
-    g_sleep[w].add(ret, now_ms() - t0, ms);
+    g_sleep[w].add(ret, qpc::ms_since(t0), ms);
 }
 DWORD WINAPI w_sleepex(DWORD ms, BOOL alertable)
 {
     const int w = which();
     if (w < 0) return o_sleepex(ms, alertable);
     const uintptr_t ret = (uintptr_t)__builtin_return_address(0);
-    const double t0 = now_ms();
+    const int64_t t0 = qpc::now();
     const DWORD r = o_sleepex(ms, alertable);
-    g_sleepex[w].add(ret, now_ms() - t0, ms);
+    g_sleepex[w].add(ret, qpc::ms_since(t0), ms);
     return r;
 }
 DWORD WINAPI w_wfso(HANDLE h, DWORD ms)
@@ -112,9 +108,9 @@ DWORD WINAPI w_wfso(HANDLE h, DWORD ms)
     const int w = which();
     if (w < 0) return o_wfso(h, ms);
     const uintptr_t ret = (uintptr_t)__builtin_return_address(0);
-    const double t0 = now_ms();
+    const int64_t t0 = qpc::now();
     const DWORD r = o_wfso(h, ms);
-    g_wfso[w].add(ret, now_ms() - t0, ms);
+    g_wfso[w].add(ret, qpc::ms_since(t0), ms);
     return r;
 }
 BOOL WINAPI w_qpc(LARGE_INTEGER *out)
@@ -153,9 +149,9 @@ bool patch(uintptr_t slot, T wrapper, T *orig, const char *name)
 
 // ---- phase split ------------------------------------------------------------
 constexpr int kMarks = 6;
-double g_t[kMarks] = {};
+int64_t g_t[kMarks] = {};  // QPC ticks
 bool g_have[kMarks] = {};
-double g_prev_exit = 0.0;
+int64_t g_prev_exit = 0;
 // phases: 0 gate, 1 update, 2 pass1, 3 pass2, 4 tail, 5 outside
 constexpr int kPhases = 6;
 double g_phase_sum[kPhases] = {}, g_phase_max[kPhases] = {};
@@ -168,10 +164,10 @@ DWORD g_mark_tid[kMarks] = {};  // thread that last set each mark
 void close_frame()
 {
     const bool full = g_have[0] && g_have[1] && g_have[2] && g_have[3] && g_have[4] && g_have[5];
-    if (full && g_prev_exit > 0.0) {
+    if (full && g_prev_exit > 0) {
         const double ph[kPhases] = {
-            g_t[1] - g_t[0], g_t[2] - g_t[1], g_t[3] - g_t[2],
-            g_t[4] - g_t[3], g_t[5] - g_t[4], g_t[0] - g_prev_exit,
+            qpc::to_ms(g_t[1] - g_t[0]), qpc::to_ms(g_t[2] - g_t[1]), qpc::to_ms(g_t[3] - g_t[2]),
+            qpc::to_ms(g_t[4] - g_t[3]), qpc::to_ms(g_t[5] - g_t[4]), qpc::to_ms(g_t[0] - g_prev_exit),
         };
         for (int i = 0; i < kPhases; i++) {
             g_phase_sum[i] += ph[i];
@@ -234,9 +230,6 @@ bool set_enabled(const char *value)
 void install()
 {
     if (!g_enabled || g_installed) return;
-    LARGE_INTEGER f;
-    QueryPerformanceFrequency(&f);
-    g_qpc_to_ms = 1000.0 / (double)f.QuadPart;
     g_main_tid = GetCurrentThreadId();  // first Present: the device/main thread
     patch(IAT_SLEEP, &w_sleep, &o_sleep, "Sleep");
     patch(IAT_SLEEPEX, &w_sleepex, &o_sleepex, "SleepEx");
@@ -261,7 +254,7 @@ void mark(Mark m)
         if (q > g_qpc_max_per_frame) g_qpc_max_per_frame = q;
         g_qpc_at_frame = qc;
     }
-    g_t[i] = now_ms();
+    g_t[i] = qpc::now();
     g_have[i] = true;
     g_mark_tid[i] = GetCurrentThreadId();
     // Phase the main thread enters at this mark.

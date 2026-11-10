@@ -8,7 +8,7 @@
 
 - **Attach** (game suspended; `init.cpp` `init`): conf, base/build-lock gate, FrameTick hook, the VR hooks (`hooks::install_attach`: the reimplementations, camera/culling, outputs, sizing), the debug installs (`render::install_early`), and the `Direct3DCreate9` thunk hook (always installed). Logs `early init done` — the launcher's resume signal. The init thread then exits.
 - **Device creation** (`hooks/device.cpp` `createdevice_hook`): `Direct3DCreate9` → IDirect3D9 VmtHook → `CreateDevice` → the device VmtHook is installed before the engine receives the pointer. Device creation happens inside the first `SetupRenderTargets` ([reverse_engineering/render_target_table.md](reverse_engineering/render_target_table.md)), so this is the only race-free point. A re-created device is re-hooked.
-- **First Present** (`init.cpp` `on_engine_running`): `render::install_late` (queue poller thread), vmdump, the OpenXR session thread on the game's device ([xr_session.md](xr_session.md)). (The g_RenderShell slot 4/5 hooks used to be a vtable claim here; they are now attach-time MidHooks at the FrameTick call sites — [hooks.md](hooks.md).) Logs `init complete`.
+- **First Present** (`init.cpp` `on_engine_running`): `render::install_late` (queue poller thread), vmdump, the game's device handed to the OpenXR session, set up at the next stereo frame on the render thread ([xr_session.md](xr_session.md)). (The g_RenderShell slot 4/5 hooks used to be a vtable claim here; they are now attach-time MidHooks at the FrameTick call sites — [hooks.md](hooks.md).) Logs `init complete`.
 
 Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races the main thread's setup-tail device calls. The frame counter `0x011755bc` is not a device-ready signal (it spins ~1400 Hz pre-D3D).
 
@@ -16,7 +16,7 @@ Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races
 
 - The carrier stays thin (inject + install + mod host); gameplay mod logic would go in a separate hot-swappable module the carrier hosts.
 - Install everything at attach; hooks on objects that don't exist yet chain off the object's creation (or the first Present), on the engine's own thread — never poll from a side thread.
-- The game's threads never block on the OpenXR session beyond bounded waits ([pacing.md](pacing.md)); no session ⇒ the game runs with camera pass-through, logged once.
+- The OpenXR frame calls run inside the game's own stereo frame, so the runtime paces the render thread as it would a native app ([pacing.md](pacing.md)); no session ⇒ the game runs with camera pass-through, logged once.
 - Reimplemented game systems live in `src/carrier/reimpl/` and replace their originals (`hooks/reimpl.cpp`; [reimpl.md](reimpl.md)). Directory layout: [code_structure.md](code_structure.md).
 
 ## Debug modules

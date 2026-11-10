@@ -28,7 +28,7 @@ Device policy is applied to a COPY of the engine's `D3DPRESENT_PARAMETERS` at Cr
 - **2→0 (RIGHT done):** capture the front.
 - **Present:** blit the mirror into the swapchain, aspect-fit with black bars, before every Present. DISCARD requires writing the backbuffer each frame.
 - **One Present per frame:** pass 1's present-prev is skipped via the engine's own `g_SuppressPresent` (`0x011755c3`, set before pass 1, cleared again before pass 2), so the remaining Present shows the current LEFT. Device-lost detection still rides on that Present.
-- **Transition frame after every Reset:** its HDR exposure is invalid ([reverse_engineering/hdr_adaptation.md](reverse_engineering/hdr_adaptation.md)). It is not captured (the session re-submits the previous pair) and the monitor shows black. The capture runs before the transition flag clears at 2→0.
+- **Transition frame after every Reset:** its HDR exposure is invalid ([reverse_engineering/hdr_adaptation.md](reverse_engineering/hdr_adaptation.md)). It is not captured (that OpenXR frame ends with no layers) and the monitor shows black. The capture runs before the transition flag clears at 2→0.
 
 ## Logs
 

@@ -417,8 +417,9 @@ void on_engine_running()
     // debug_wait_census: game IAT wrappers (the loader has filled the IAT).
     wait_census::install();
 
-    // The OpenXR session on the game's (DXVK) device, on its own thread
-    // (vr/xr_session.hpp). No runtime = camera pass-through, logged once.
+    // The OpenXR session on the game's (DXVK) device: set up at the next
+    // stereo frame, on the render thread (vr/xr_session.hpp). No runtime =
+    // camera pass-through, logged once.
     xr_session::start(render_outputs::device());
 
     MC2VR_LOG("init complete"); // launcher waits for this before dumping the log

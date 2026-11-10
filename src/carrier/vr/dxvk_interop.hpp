@@ -38,12 +38,18 @@ struct ID3D9VkInteropDevice : public IUnknown {
                                                            const VkImageSubresourceRange *subresources,
                                                            VkImageLayout old_layout,
                                                            VkImageLayout new_layout) = 0;
-    // Not thread-safe against the D3D9 thread (no device lock in DXVK).
+    // Submits DXVK's pending work and waits until its CS thread has handed
+    // everything recorded so far to the submission queue — DXVK's contract
+    // before our own submissions use a D3D9 resource's image. Takes no device
+    // lock itself: hold LockDevice() around it.
     virtual void STDMETHODCALLTYPE FlushRenderingCommands() = 0;
     // Waits until DXVK has handed every queued submission to Vulkan, then
     // holds the queue. No D3D9 calls from the locking thread meanwhile.
     virtual void STDMETHODCALLTYPE LockSubmissionQueue() = 0;
     virtual void STDMETHODCALLTYPE ReleaseSubmissionQueue() = 0;
+    // The D3D9 device lock (recursive; a no-op without D3DCREATE_MULTITHREADED).
+    virtual void STDMETHODCALLTYPE LockDevice() = 0;
+    virtual void STDMETHODCALLTYPE UnlockDevice() = 0;
 };
 
 inline constexpr GUID kIID_InteropTexture = {0xd56344f5, 0x8d35, 0x46fd,

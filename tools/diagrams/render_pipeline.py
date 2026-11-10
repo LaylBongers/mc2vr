@@ -20,7 +20,7 @@ OUT = os.path.join(os.path.dirname(__file__), '..', '..', 'docs', 'render_pipeli
 # (all pairs pass CVD / normal-vision; aqua relies on its visible labels).
 PAGE, SURFACE, CARD = '#f9f9f7', '#fcfcfb', '#ffffff'
 INK, INK2, INK3, GRID, RULE = '#0b0b0b', '#52514e', '#8a8984', '#e4e3df', '#c9c8c2'
-THREAD = {'render': '#eb6834', 'update': '#2a78d6', 'xr': '#1baf7a'}
+THREAD = {'render': '#eb6834', 'update': '#2a78d6'}
 
 SANS = "Inter,'Segoe UI','DejaVu Sans',Helvetica,Arial,sans-serif"
 MONO = "'JetBrains Mono','DejaVu Sans Mono',Consolas,monospace"
@@ -42,7 +42,7 @@ STEPS = [
     ('D3D9 calls ×2', 'shaders, constants, states, command-stream ops, DrawIndexedPrimitive — once per eye',
      'eye capture at the pass boundaries'),
     ('Eye images', 'LEFT + RIGHT render targets, their VkImages via DXVK interop (+ HUD panel composited)',
-     'Vulkan copy on DXVK\'s queue → xrEndFrame'),
+     'xr_session::end_frame: Vulkan copy on DXVK\'s queue → xrEndFrame'),
     ('HMD', 'OpenXR swapchains, submitted with the frame\'s own pose / FOV', ''),
 ]
 STEP_MOD = {  # MC2VR's hand in a step
@@ -50,7 +50,7 @@ STEP_MOD = {  # MC2VR's hand in a step
     2: 'cull FOV widened to the HMD',
     3: 'HUD / marker record ranges',
     5: 'two passes; camera constants per eye',
-    6: 'HUD layer; capture + share',
+    6: 'HUD layer; eye capture',
 }
 
 # ---------------------------------------------------------------- call trees
@@ -82,7 +82,9 @@ RENDER = [
     (3, 'PgPrimitive_SortList · PgPrimitive_Reset', 'sort → g_PrimitiveHead; flip the ping-pong buffer', 4, '', ''),
     (1, 'node 2  RenderTask_RenderFrame  0x0046a290', '→ RenderShell_RenderFrameTimed', 0, '', ''),
     (2, 'PgPrimitive_SubmitToGPU  0x00855690', 'the frame, as two complete passes over the same records', 5,
-     'stereo: pass 1 LEFT, pass 2 RIGHT; one pose sample + lockstep gate', 'R'),
+     'stereo: pass 1 LEFT, pass 2 RIGHT; one OpenXR frame', 'R'),
+    (3, 'xr_session::begin_frame', 'the frame the frame thread began → xrLocateViews: this frame\'s views', 5,
+     'OpenXR on DXVK\'s Vulkan device + queue', ''),
     (3, 'LtiRenderer_BeginSubmit  0x0074aaa0', 'Present (previous frame) · BeginScene · GPU drain · bind + clear targets', 5,
      'Present only in pass 2; drain skipped in pass 2; MSAA', 'R'),
     (3, 'RenderShell_ResetDrawStateCache', 'per pass: makes pass 2 a full re-submit', 5, '', ''),
@@ -97,7 +99,9 @@ RENDER = [
      'world markers moved per eye, sized to 3°', ''),
     (3, 'HUD records', 'held out of the walk', 6, 'pass 1: drawn once into the 1920×1080 HUD target', ''),
     (3, 'LtiRenderer_EndSubmit  0x0074ac30', 'EndScene', 5, '', ''),
-    (3, 'after each pass', '', 6, 'HUD panel composited 1.5 m ahead · eye image captured and shared', ''),
+    (3, 'after each pass', '', 6, 'HUD panel composited 1.5 m ahead · eye image captured', ''),
+    (3, 'xr_session::end_frame', 'eye pair flushed → vkCmdCopyImage into the swapchains → layer to the frame thread', 8,
+     'frame thread: xrEndFrame, the runtime\'s throttle', ''),
 ]
 UPDATE = [
     (0, 'GameShell_FrameTick  0x00630e10', 'one simulation frame (GameShell_Run\'s loop)', 0, 'dt = the HMD\'s display period', ''),
@@ -111,17 +115,9 @@ UPDATE = [
     (1, 'PostUpdateHook call site  0x00630ee7', 'slot 5 (no-op)', 0, 'HMD view size applied; HUD mode switch', ''),
     (1, 'wait for render tasks', 'not the current frame\'s: update runs ~1 frame ahead', 0, '', ''),
 ]
-XR = [
-    (0, 'OpenXR frame loop', 'carrier session thread, Vulkan on DXVK\'s device + queue', 0, '', ''),
-    (1, 'xrWaitFrame → xrBeginFrame → locate views', 'both eyes at the predicted display time', 0, '', ''),
-    (1, 'publish the views', 'pose + FOV → read by the camera table and the lockstep gate', 0, '', ''),
-    (1, 'wait for the eye pair', 'rendered from this frame\'s pose id, its fence signalled', 7, '', ''),
-    (1, 'vkCmdCopyImage eye images → swapchains → xrEndFrame', 'with the pair\'s own pose / FOV', 8, '', ''),
-]
 TREES = [
     ('RENDER WORKER', 'the build and draw of one frame — runs one frame behind the update thread', 'render', RENDER),
     ('UPDATE THREAD', 'simulation and render producers', 'update', UPDATE),
-    ('OPENXR SESSION THREAD', 'pose in, eye images out', 'xr', XR),
 ]
 
 
@@ -263,10 +259,8 @@ def render():
     out.append(svg)
     svg, hu = tree(M + colw_l + 60, y, colw_r, *TREES[1][:3], TREES[1][3])
     out.append(svg)
-    svg, hh = tree(M + colw_l + 60, y + hu + 40, colw_r, *TREES[2][:3], TREES[2][3])
-    out.append(svg)
     # device note
-    ry = y + hu + 40 + hh + 40
+    ry = y + hu + 40
     rx = M + colw_l + 60
     out.append(f'<rect x="{rx}" y="{ry}" width="5" height="40" rx="2" fill="{INK3}"/>')
     out.append(t(rx + 16, ry + 17, 'D3D9 DEVICE  (DXVK → Vulkan)', 15, INK, 'bold'))
@@ -287,8 +281,7 @@ def render():
     hand = [
         ('update → render', 'g_CameraTable, g_ViewTable, g_RenderQueue (its consumer is unlocated)'),
         ('render → render', 'node 4 publishes the sorted records that node 2 draws'),
-        ('session → game', 'published views: camera-table fill + pass-1 sample / lockstep gate'),
-        ('render → session', 'eye ring pair + event-query fence per frame'),
+        ('render → update', 'each frame\'s OpenXR views: the camera-table union pose'),
     ]
     yy = hy + 24
     for k, v in hand:

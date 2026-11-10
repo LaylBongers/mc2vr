@@ -40,3 +40,11 @@ node 2  RenderTask_RenderFrame     0x0046a290  -> shell->vtbl[3] RenderFrameTime
 - `PgPrimitiveScratchRecord_Submit`: per record, cheap to filter (record type byte at `0x0116374c`: 4 = occlusion box, etc. — see its plate).
 - `PgPrimitive_PublishFrame` exit: the finished, sorted frame before any pass walks it.
 - HUD/2D: ordinary records from the Scaleform renderer `GuiRenderer` ([gui_renderer.md](gui_renderer.md)), a few dozen per frame, emitted inside this build. The first census missed them because they're few and share sub-view 1 and type 8 with the scene. `RenderShell_EmitScreenQuad` (×4 from the post chain `PgLtiBloom_EmitPasses`) is a full-screen-pass emitter, not HUD.
+
+## OPEN: building frame N+1 while frame N is submitted
+
+The largest render-thread lever for 120 Hz ([../pacing.md](../pacing.md#frame-time-headroom)): nodes 0 → 3 → 4 for frame N+1 concurrent with node 2 (submission) of frame N would take ~3 ms of build off the render thread's ~8.5 ms. In favour: the draw records are double-buffered (emitters write one buffer while `SubmitToGPU` reads the published one). Unknown or against, to settle in Ghidra first:
+- Whether the PC build ever ran the nodes concurrently. Only one render worker was seen running them, strictly in order.
+- What else the build shares with submission besides the record buffers: view-context tables, the camera table, materials, the HUD/GUI renderer, `g_RenderShell` state.
+- The dependency release between nodes (`NodeArray_DecrementChildRefs`) goes through a SecuROM VM thunk, so the scheduling may have to be done by us (a reimplemented render task) rather than by the engine's graph.
+- The update thread waits on render tasks, so a deeper render pipeline changes that wait too ([render_threading.md](render_threading.md)).

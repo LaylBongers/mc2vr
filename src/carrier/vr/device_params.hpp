@@ -1,6 +1,6 @@
 // Device-creation policy: what the carrier changes in the engine's
-// CreateDevice / Reset requests (vsync=off interval patch, swapchain MSAA drop,
-// D3DCREATE_MULTITHREADED: the OpenXR session thread polls eye-pair fences) and the one-shot
+// CreateDevice / Reset requests (vsync=off interval patch, swapchain MSAA drop;
+// the behavior flags are only logged) and the one-shot
 // present-parameter log. Plain functions; the IDirect3D9::CreateDevice and
 // device Reset/Present hooks (hooks/device.cpp) call them.
 #pragma once

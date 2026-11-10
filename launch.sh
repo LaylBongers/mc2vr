@@ -36,5 +36,22 @@ rm -f "$DEPLOY_DIR/mc2vr_host.exe" "$DEPLOY_DIR/mc2vr_host.log"
 # across launches (view_row_rewrite=off|on|pulse; see conf/mc2vr.conf).
 cp -n "$MC2VR_ROOT/conf/mc2vr.conf" "$DEPLOY_DIR/mc2vr.conf" 2>/dev/null || true
 
+# MC2VR_VK_VALIDATION=1: the Khronos validation layer (with synchronization
+# validation) in the game's Vulkan stack, logged to <deploy dir>/mc2vr_vk_validation.log.
+# Needs the 32-bit layer (lib32-vulkan-validation-layers): the game's Vulkan
+# calls go through Proton's i386 Unix side. Slow; a short run is enough.
+if [ -n "$MC2VR_VK_VALIDATION" ]; then
+    export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+    export VK_LAYER_VALIDATE_SYNC=true
+    export VK_LAYER_REPORT_FLAGS=error,warn,perf
+    export VK_LAYER_DEBUG_ACTION=VK_DBG_LAYER_ACTION_LOG_MSG
+    export VK_LAYER_LOG_FILENAME="$DEPLOY_DIR/mc2vr_vk_validation.log"
+    # No per-message cap: DXVK's own repeated messages (16x16 internal copies,
+    # 2026-11-10) would otherwise use up the cap of an ID ours could share.
+    export VK_LAYER_ENABLE_MESSAGE_LIMIT=false
+    rm -f "$VK_LAYER_LOG_FILENAME"
+    echo "Vulkan validation on: $VK_LAYER_LOG_FILENAME"
+fi
+
 cd "$GAME_DIR"
 exec "$PROTON_PATH/proton" run "$DEPLOY_DIR/mc2vr_launcher.exe" "$@"

@@ -5,7 +5,9 @@
 // Note: docs/reverse_engineering/submit_to_gpu.md.
 // Original: void(void), called from RenderShell_RenderFrameTimed (0x0085abd0)
 // Ours renders the stereo frame: the original's body runs as two passes,
-// LEFT then RIGHT (vr/eye_replay.hpp marks the boundaries).
+// LEFT then RIGHT (vr/eye_replay.hpp marks the boundaries), bracketed by one
+// OpenXR frame (vr/xr_session.hpp: begin_frame before pass 1, end_frame with
+// the eye pair after pass 2).
 //
 // One frame's GPU submission: BeginSubmit, then the sorted draw-record walk
 // (per record: view type, shader constants, pass pick, RT/stencil state,

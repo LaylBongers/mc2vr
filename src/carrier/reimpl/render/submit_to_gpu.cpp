@@ -24,10 +24,12 @@
 #include "game/render_shell.hpp"
 #include "vr/adaptation.hpp"
 #include "vr/eye_replay.hpp"
+#include "vr/eye_share.hpp"
 #include "vr/hud.hpp"
 #include "vr/occlusion_queries.hpp"
 #include "vr/world_markers.hpp"
 #include "vr/view_rewrite.hpp"
+#include "vr/xr_session.hpp"
 
 namespace mc2vr::reimpl {
 
@@ -451,18 +453,23 @@ void submit_pass(uint32_t pass)
 
 // VR: one frame is two complete passes over the same records, LEFT then
 // RIGHT; each pass resets its own draw-state caches, so the second
-// re-submits the identical frame for the other eye.
+// re-submits the identical frame for the other eye. The frame is also one
+// OpenXR frame (vr/xr_session.hpp): it starts with the runtime's wait and this
+// frame's views, and ends with the eye pair copied out and submitted.
 void PgPrimitive_SubmitToGPU()
 {
     adaptation::on_frame_begin();  // exposure restore after a render-size switch
     occlusion_queries::on_submit_begin();  // per-eye query pairs for the engine's ring
-    eye_replay::begin_left_pass();
-    hud::begin_frame();  // after the pass-1 pose sample
+    const xr_session::Frame xr = xr_session::begin_frame();  // xrWaitFrame, xrBeginFrame, views
+    const xr_session::ViewState *rendered = eye_replay::begin_left_pass(xr);
+    hud::begin_frame();  // after the frame's pose is set
     world_markers::begin_frame();
     submit_pass(1);
-    eye_replay::begin_right_pass();
+    eye_replay::begin_right_pass(xr.show);  // LEFT captured
     submit_pass(2);
-    eye_replay::end_frame();
+    eye_share::Pair pair;
+    const bool have_pair = eye_replay::end_frame(xr.show, &pair);  // RIGHT captured, pair flushed
+    xr_session::end_frame(xr, rendered, have_pair ? &pair : nullptr);  // copy + xrEndFrame
 }
 
 } // namespace mc2vr::reimpl

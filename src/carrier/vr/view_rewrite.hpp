@@ -12,6 +12,8 @@
 //   - set_identity_oracle()/set_view_world_scale(): mc2vr.conf controls.
 #pragma once
 
+#include "vr/xr_session.hpp"
+
 #include <windows.h>
 #include <d3d9.h>
 
@@ -70,13 +72,18 @@ void set_view_world_scale(float units_per_metre);
 // The world scale the camtable union injection composes with (shared conf key).
 float world_scale();
 
+// The stereo frame's start (eye_replay::begin_left_pass): the frame's views
+// from the OpenXR session (nullptr = none). Returns the views both passes
+// render with: these, the previous ones held for a short tracking drop, or
+// nullptr (no HMD pose: the game's own camera). Valid until the next call.
+const xr_session::ViewState *begin_frame(const xr_session::ViewState *views);
+
 // Pose id (xr_session ViewState::pose_id) the CURRENT frame renders with, 0 when the frame
-// is not rendered from an HMD pose. Constant across both passes of a frame;
-// eye_share tags the eye pair with it.
+// is not rendered from an HMD pose. Constant across both passes of a frame.
 uint32_t current_pose_id();
 
-// The two eye poses (LEFT, RIGHT) the current frame renders with, sampled at
-// pass 1. False when the frame has no HMD pose (current_pose_id() == 0).
+// The two eye poses (LEFT, RIGHT) the current frame renders with (from
+// begin_frame). False when the frame has no HMD pose (current_pose_id() == 0).
 bool frame_eyes(vp_camera::EyePose out[2]);
 
 // The RAW (pre-rewrite) game camera decomposed from the most recent
@@ -91,8 +98,7 @@ bool get_game_camera(vp_camera::Camera *out);
 bool mono_clip_to_eye(const double in[4], double out[4]);
 
 // Per-pass eye override (eye_replay.cpp): pass 1 = -1, pass 2 = +1,
-// 0 = none. hmd_delta requires it (per-pass eye); the pass-1 transition
-// samples the HMD pose once per frame.
+// 0 = none. hmd_delta requires it (per-pass eye).
 void set_pass_eye(int sign);
 
 // 10s window report (called from render_dump.cpp's poller); resets counters.

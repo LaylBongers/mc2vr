@@ -10,6 +10,7 @@
 #include <new>
 
 #include "vr/eye_share.hpp"
+#include "vr/pacing.hpp"
 #include "hooks/frame_tick.hpp"
 #include "vr/hud_timing.hpp"
 #include "log.hpp"
@@ -359,15 +360,6 @@ void set_pass(uint32_t pass)
     // pass-1 start, 2 = pass 1 done, 0 = pass 2 done). Main thread.
     hud_timing::on_boundary(pass);
 
-    // Capture: the carrier front holds pass 1's LEFT final at 1->2 and pass
-    // 2's RIGHT final at 2->0 (the 0->1 boundary carries no fresh eye — the
-    // callee ignores it). Inactive (boot / mid-Reset) or the post-Reset
-    // transition frame -> no capture. Must run BEFORE render_outputs sees the
-    // boundary: its 2->0 handling ends the transition frame, and capturing
-    // after that published the white RIGHT eye (live 2026-11-08).
-    mc2vr::eye_share::on_pass_boundary(pass, render_outputs::device(),
-                                       render_outputs::capture_source());
-
     // Carrier-owned outputs: refresh the LEFT monitor mirror at 1->2 (before
     // the dumps below read it); end the transition frame at 2->0.
     render_outputs::on_pass_boundary(pass);
@@ -418,7 +410,7 @@ void set_pass(uint32_t pass)
 
 void on_reset()
 {
-    mc2vr::eye_share::on_reset();
+    eye_share::on_reset();
 }
 
 namespace {
@@ -428,22 +420,42 @@ double g_replay_ms_max = 0.0;
 LARGE_INTEGER g_replay_t0 = {};
 } // namespace
 
-void begin_left_pass()
+// The eye captures (eye_share): the carrier front holds pass 1's LEFT final
+// at 1->2 and pass 2's RIGHT final at 2->0. Inactive (boot / mid-Reset) or the
+// post-Reset transition frame -> no capture (capture_source() is null). They
+// run BEFORE set_pass, so before render_outputs sees the boundary: its 2->0
+// handling ends the transition frame, and capturing after that published the
+// white RIGHT eye (live 2026-11-08).
+namespace {
+bool capture_eye(uint32_t eye)
 {
+    return eye_share::capture(eye, render_outputs::device(), render_outputs::capture_source());
+}
+} // namespace
+
+const xr_session::ViewState *begin_left_pass(const xr_session::Frame &xr)
+{
+    pacing::on_frame(xr);
+    const xr_session::ViewState *rendered = view_rewrite::begin_frame(xr.begun ? &xr.views : nullptr);
     set_pass(1);  // pass 1 = LEFT eye
     // Two passes -> two present-prevs per frame; skip pass 1's (duplicate).
     render_outputs::begin_present_skip();
+    return rendered;
 }
 
-void begin_right_pass()
+void begin_right_pass(bool capture)
 {
     QueryPerformanceCounter(&g_replay_t0);
     render_outputs::end_present_skip();
+    if (capture) {
+        capture_eye(0);
+    }
     set_pass(2);  // pass 2 = RIGHT eye
 }
 
-void end_frame()
+bool end_frame(bool capture, eye_share::Pair *pair)
 {
+    const bool have = capture && capture_eye(1) && eye_share::finish(pair);
     LARGE_INTEGER freq, t1;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t1);
@@ -454,6 +466,7 @@ void end_frame()
         g_replay_ms_max = ms;
     }
     set_pass(0);  // back to "outside a submit"
+    return have;
 }
 
 void report_window()
@@ -465,7 +478,7 @@ void report_window()
     g_replays = 0;
     g_replay_ms_sum = 0.0;
     g_replay_ms_max = 0.0;
-    mc2vr::eye_share::report_window();
+    eye_share::report_window();
     if (g_dump_failures > 0 || g_dumps_written > 0 || g_dump_empty > 0) {
         MC2VR_LOG("eye window: dumps=%llu dumpFails=%llu dumpEmpty=%llu",
                   (unsigned long long)g_dumps_written, (unsigned long long)g_dump_failures,

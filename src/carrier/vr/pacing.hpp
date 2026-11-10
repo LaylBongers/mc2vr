@@ -1,10 +1,8 @@
 // Lockstep frame pacing with the OpenXR frame loop (docs/pacing.md).
-//   - render_gate(): render thread, at the pass-1 pose sample. While the
-//     session is VISIBLE/FOCUSED, waits (bounded 50 ms) until the session
-//     thread has published views newer than the ones the last frame rendered
-//     with, and returns them. The update thread is never held, so the next
-//     frame's update and render prep overlap the session thread's
-//     xrEndFrame / xrWaitFrame.
+//   - on_frame(): render thread, the stereo frame's start: records the frame's
+//     display time and period while the session shows frames. The OpenXR
+//     frame loop itself paces the render thread (xr_session.hpp); the update
+//     thread is never held.
 //   - frame_start(): update thread, GameShell_FrameTick entry, before the
 //     game's QPC sample: feeds the dt governor the display-time step (last
 //     rendered display time + one display period, minus the previous target).
@@ -17,8 +15,7 @@
 namespace mc2vr::pacing {
 
 void frame_start();
-// False when VR is off for the run.
-bool render_gate(xr_session::ViewState *st);
+void on_frame(const xr_session::Frame &xr);
 
 // The replay pass (pass 2) skips LtiRenderer_BeginSubmit's GPU drain, so the
 // CPU queues the right eye while the GPU still draws the left (DXVK tracks

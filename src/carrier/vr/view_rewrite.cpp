@@ -12,7 +12,6 @@
 #include <cstring>
 
 #include "game/addresses.h"
-#include "vr/pacing.hpp"
 #include "log.hpp"
 #include "vec_math.hpp"
 #include "vr/camera_table.hpp"
@@ -217,10 +216,11 @@ struct HmdSnapshot {
     bool valid = false;
     uint32_t id = 0;  // xr_session pose id the frame renders with
     vp_camera::EyePose eye[2];
+    xr_session::ViewState views;  // the same views as the session gave them (for the layer)
 };
 HmdSnapshot g_hmd;
 
-ULONGLONG g_hmd_ms = 0;  // last successful pass-1 pose sample
+ULONGLONG g_hmd_ms = 0;  // last frame with sane views
 float g_world_scale = 1.0f;  // game world units per metre (VERIFIED: metres — gravity 9.81, docs/reverse_engineering/world_units.md)
 
 // Per-pass cache of the rebuilt camera position, for uploads that carry only
@@ -625,28 +625,29 @@ bool frame_eyes(vp_camera::EyePose out[2])
     return true;
 }
 
+const xr_session::ViewState *begin_frame(const xr_session::ViewState *views)
+{
+    if (g_mode != RewriteMode::HmdDelta) {
+        return nullptr;  // debug camera modes render without the HMD pose
+    }
+    const bool sane = views != nullptr && views->tracked && eye_is_sane(views->eye[0]) &&
+                      eye_is_sane(views->eye[1]);
+    // Without sane views keep the previous ones for a short window (same hold
+    // as camtable's sample_pose) so the frame still renders with a head pose.
+    const ULONGLONG now = GetTickCount64();
+    g_hmd.valid = sane || (g_hmd.valid && now - g_hmd_ms < 250);
+    if (sane) {
+        g_hmd_ms = now;
+        g_hmd.id = views->pose_id;
+        g_hmd.eye[0] = to_eye_pose(views->eye[0]);
+        g_hmd.eye[1] = to_eye_pose(views->eye[1]);
+        g_hmd.views = *views;
+    }
+    return g_hmd.valid ? &g_hmd.views : nullptr;
+}
+
 void set_pass_eye(int sign)
 {
-    // Pass 1 start (-1 = LEFT): sample the HMD pose ONCE for the whole frame —
-    // both eyes render with it and the id travels with the eye pair. In
-    // lockstep the sample first waits for the session thread's next views
-    // (pacing::render_gate).
-    if (sign < 0 && g_mode == RewriteMode::HmdDelta) {
-        xr_session::ViewState st;
-        const bool have = pacing::render_gate(&st);  // lockstep: waits for this frame's views
-        const bool sane = have && st.tracked &&
-                          eye_is_sane(st.eye[0]) && eye_is_sane(st.eye[1]);
-        // On a miss keep the previous snapshot for a short window (same hold as
-        // camtable's sample_pose) so the frame still renders with a head pose.
-        const ULONGLONG now = GetTickCount64();
-        g_hmd.valid = sane || (g_hmd.valid && now - g_hmd_ms < 250);
-        if (sane) {
-            g_hmd_ms = now;
-            g_hmd.id = st.pose_id;
-            g_hmd.eye[0] = to_eye_pose(st.eye[0]);
-            g_hmd.eye[1] = to_eye_pose(st.eye[1]);
-        }
-    }
     if (sign != g_pass_eye) {
         g_pw_valid = false;     // per-pass camPos cache
         g_delta_valid = false;  // per-pass camera delta

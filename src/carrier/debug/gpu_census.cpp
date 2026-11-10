@@ -1,3 +1,4 @@
+#include "qpc.hpp"
 #include "gpu_census.hpp"
 
 #include <windows.h>
@@ -43,7 +44,7 @@ uint64_t g_frames = 0;    // frames opened
 uint32_t g_pass = 0;
 uint8_t g_cat = CAT_OTHER;
 uint8_t g_cat_before_carrier = CAT_OTHER;
-double g_seg_t0 = 0.0;
+int64_t g_seg_t0 = 0;  // QPC ticks (qpc.hpp: exact on the single-precision render thread)
 
 // window accumulators
 uint64_t w_frames = 0, w_unread = 0, w_disjoint = 0;
@@ -51,14 +52,6 @@ double w_gpu[kPasses][CAT_N] = {}, w_cpu[kPasses][CAT_N] = {};
 uint64_t w_draws[kPasses][CAT_N] = {};
 double w_gpu_frame = 0.0;
 
-double qpc_ms()
-{
-    static LARGE_INTEGER f = {};
-    if (f.QuadPart == 0) QueryPerformanceFrequency(&f);
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
-}
 
 IDirect3DQuery9 *create_query(D3DQUERYTYPE type)
 {
@@ -101,8 +94,8 @@ void open_segment()
 {
     if (g_cur < 0) return;
     Frame &f = g_ring[g_cur];
-    const double now = qpc_ms();
-    if (f.n > 0) f.cpu_ms[f.n - 1] += now - g_seg_t0;
+    const int64_t now = qpc::now();
+    if (f.n > 0) f.cpu_ms[f.n - 1] += qpc::to_ms(now - g_seg_t0);
     g_seg_t0 = now;
     if (f.n >= kMaxSeg) return;  // overflow: the last segment absorbs the rest
     issue(f.ts[f.n], D3DISSUE_END);
@@ -149,7 +142,7 @@ void close_frame()
 {
     if (g_cur < 0) return;
     Frame &f = g_ring[g_cur];
-    if (f.n > 0) f.cpu_ms[f.n - 1] += qpc_ms() - g_seg_t0;
+    if (f.n > 0) f.cpu_ms[f.n - 1] += qpc::ms_since(g_seg_t0);
     issue(f.ts[f.n < kMaxSeg ? f.n : kMaxSeg], D3DISSUE_END);
     issue(f.disjoint, D3DISSUE_END);
     f.closed_at = g_frames;
@@ -172,7 +165,7 @@ void open_frame()
     issue(f.disjoint, D3DISSUE_BEGIN);
     issue(f.freq, D3DISSUE_END);
     g_cur = idx;
-    g_seg_t0 = qpc_ms();
+    g_seg_t0 = qpc::now();
     open_segment();
 }
 

@@ -43,7 +43,7 @@ struct Slot {
 };
 Slot g_slots[kSlots];
 uint32_t g_next = 0;
-CRITICAL_SECTION g_fence_lock;  // fence waits/resets: session thread vs wait_idle()
+CRITICAL_SECTION g_fence_lock;  // fence waits/resets: the copies vs wait_idle() (any thread)
 
 constexpr uint64_t kFenceTimeoutNs = 100ull * 1000 * 1000;
 uint32_t g_fail_logs = 0;
@@ -166,6 +166,11 @@ bool init(dxvk::ID3D9VkInteropDevice *interop, VkInstance instance, VkDevice dev
     }
     MC2VR_LOG("xr: present: command pool on DXVK's device (queue family %u), %u copy slots", queue_family,
               kSlots);
+    // Handles as the native side (validation layers) sees them: Wine passes
+    // non-dispatchable handles through unchanged (docs/xr_session.md).
+    MC2VR_LOG("xr: present: handles: VkCommandPool 0x%llx, VkFence 0x%llx 0x%llx 0x%llx",
+              (unsigned long long)g_pool, (unsigned long long)g_slots[0].fence,
+              (unsigned long long)g_slots[1].fence, (unsigned long long)g_slots[2].fence);
     return true;
 }
 
@@ -187,10 +192,13 @@ bool copy_pair(const CopyImage src[2], const VkImage dst[2], uint32_t w, uint32_
         return false;
     }
 
-    // In: the eye images were written by DXVK's earlier submissions on this
-    // queue (the pair's event query has signalled, so they are complete; the
-    // barrier makes the writes visible). The swapchain images' old contents
-    // are discarded.
+    // In: the eye images were written by DXVK's submissions on this queue,
+    // all earlier in submission order than this one (the render thread
+    // flushed them before handing the pair over, and the queue lock drains
+    // DXVK's submission queue first). A barrier's first scope covers every
+    // earlier-submitted command on the queue, so this one waits for those
+    // writes on the GPU and makes them visible. The swapchain images' old
+    // contents are discarded.
     VkImageMemoryBarrier pre[4];
     for (int e = 0; e < 2; e++) {
         pre[e] = barrier(src[e].image, src[e].layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

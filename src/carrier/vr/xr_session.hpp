@@ -1,15 +1,23 @@
-// The OpenXR session, in the game process (docs/xr_session.md).
+// The OpenXR session, woven into the game's stereo frame (docs/xr_session.md).
 //
-// One carrier thread runs the OpenXR app loop with the game as the renderer,
-// on DXVK's own Vulkan device and queue (dxvk_interop.hpp):
-//   xrWaitFrame -> xrBeginFrame -> locate + publish this frame's views (the
-//   render thread's pass-1 gate waits for them, pacing.hpp) -> wait for the
-//   pair rendered from them (eye_share.hpp) -> copy it into the swapchains on
-//   DXVK's queue (xr_present.hpp) -> xrEndFrame with the pair's own pose.
-// Both waits are bounded, so neither side can hang the other.
+// The frame is the game's: our PgPrimitive_SubmitToGPU
+// (reimpl/render/submit_to_gpu.cpp) brackets its two eye passes with
+//   begin_frame()  takes the OpenXR frame the frame thread began and locates
+//                  this frame's views (xrLocateViews) on the render thread;
+//   ...            both eye passes render from those views;
+//   end_frame()    copies the eye pair into the swapchains on DXVK's queue
+//                  (xr_present.hpp) and hands the layer, with the views it was
+//                  rendered from, to the frame thread.
+// The frame thread runs the calls that block or change the session: events,
+// xrBegin/EndSession, xrWaitFrame + xrBeginFrame, and xrEndFrame, where
+// SteamVR throttles. The render thread meanwhile Presents and builds the next
+// scene, as engines split a render thread from the thread that submits to the
+// runtime. One frame in flight; a frame exists only when the game renders
+// one, so the runtime sees the game's real cadence. Both run on DXVK's own
+// Vulkan device and queue (dxvk_interop.hpp).
 //
 // No runtime / no DXVK / any setup failure: logged once, the game runs on
-// with camera pass-through (no published views).
+// with camera pass-through (no views).
 #pragma once
 
 #include <cstdint>
@@ -17,6 +25,10 @@
 #include <d3d9.h>
 
 #include "vec_math.hpp"
+
+namespace mc2vr::eye_share {
+struct Pair;
+}
 
 namespace mc2vr::xr_session {
 
@@ -35,35 +47,47 @@ struct EyePose {
 // XrSessionState values the carrier tests.
 inline constexpr uint32_t kStateVisible = 4, kStateFocused = 5;
 
-// The latest published frame state.
+// A frame's views and session state.
 struct ViewState {
     uint32_t session_state = 0;  // XrSessionState (0 = no session)
     bool tracked = false;        // views valid (position + orientation)
-    uint32_t pose_id = 0;        // id of the published views (0 = none yet)
+    uint32_t pose_id = 0;        // frame counter of the views (0 = none yet)
     int64_t display_time = 0;    // XrFrameState.predictedDisplayTime, ns
     int64_t display_period = 0;  // XrFrameState.predictedDisplayPeriod, ns
     EyePose eye[2];              // [0] = LEFT, [1] = RIGHT
 };
 
-// Session VISIBLE/FOCUSED: frames are shown, the lockstep is on.
+// Session VISIBLE/FOCUSED: frames are shown.
 inline bool lockstep(uint32_t session_state)
 {
     return session_state == kStateVisible || session_state == kStateFocused;
 }
 
-// The engine's first Present: starts the session thread on the game's device.
+// One OpenXR frame, from begin_frame() to end_frame() (render thread).
+struct Frame {
+    bool begun = false;   // an OpenXR frame is begun for it: end_frame() must follow
+    bool show = false;    // the runtime shows this frame: capture the eyes
+    uint32_t serial = 0;  // which begun frame (the frame thread's count)
+    ViewState views;      // this frame's views (tracked = false: none)
+};
+
+// The engine's first Present: the game's device. Setup runs at the next
+// begin_frame().
 void start(IDirect3DDevice9 *device);
 
-// Any thread. False when no session thread runs (VR off for the run).
+// Render thread, the start of the stereo frame. Waits (bounded) for the
+// frame thread's next begun frame — SteamVR's throttle, when the render thread
+// is early. Not begun when VR is off or the session isn't running.
+Frame begin_frame();
+
+// Render thread, after the RIGHT pass. `rendered` = the views both passes
+// rendered with (view_rewrite; nullptr = none), `pair` = the frame's eye
+// images (nullptr = none). Without both, the frame ends with no layers.
+void end_frame(const Frame &frame, const ViewState *rendered, const eye_share::Pair *pair);
+
+// Any thread: the latest frame's views and the session state. False when VR
+// is off.
 bool read_state(ViewState *out);
-
-// The render gate (render thread): waits at most timeout_ms for views newer
-// than `last_pose_id`. False when VR is off; *timed_out says whether the wait
-// ran out.
-bool wait_views(uint32_t last_pose_id, uint32_t timeout_ms, ViewState *out, bool *timed_out);
-
-// The session runs and shows frames (VISIBLE/FOCUSED): eye pairs are wanted.
-bool presenting();
 
 // Update thread, once per frame (slot-5 PostUpdateHook): hands the runtime's
 // recommended per-eye size to render_size (render_size=hmd).
