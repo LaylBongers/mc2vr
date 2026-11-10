@@ -6,7 +6,7 @@ Runs in the same Proton prefix with DXVK D3D11 (`proton run`; plain `wine` only 
 
 ## Source map (`src/host/`)
 
-`main.cpp` (args `--mock --frames N --xr-debug`), `xr_session.cpp` (instance/session/swapchains/event pump/frame loop, pose history, Wine registry fixups), `mock.cpp` (no runtime: synthetic pose + blit smoke test), `d3d.cpp` (D3D11 device on the runtime LUID), `eyes.cpp` (test pattern fallback), `shared_eyes.cpp` (handle open cache, mirror window, `latest()` seam), `submit.cpp` (swapchain blit), `ipc.cpp`, `log.cpp`, `pose.hpp`. Carrier counterparts: `src/carrier/vr/eye_share.cpp` (capture ring), `src/carrier/ipc.cpp`.
+`main.cpp` (args `--mock --frames N --xr-debug`), `xr_session.cpp` (instance/session/swapchains/event pump/frame loop, pose history), `mock.cpp` (no runtime: synthetic pose + blit smoke test), `d3d.cpp` (D3D11 device on the runtime LUID), `eyes.cpp` (test pattern fallback), `shared_eyes.cpp` (handle open cache, mirror window, `latest()` seam), `submit.cpp` (swapchain blit), `ipc.cpp`, `log.cpp`, `pose.hpp`. Carrier counterparts: `src/carrier/vr/eye_share.cpp` (capture ring), `src/carrier/ipc.cpp`.
 
 ## Frame loop
 
@@ -29,6 +29,13 @@ Probe: `debug_xr_probe=on`, run with the host skipped: `MC2VR_NO_HOST=1 ./launch
 What it needs:
 - A 32-bit OpenXR runtime registered for 32-bit processes (`active_runtime.i686.json`; the launcher checks and logs the fix, [openxr_proton.md](openxr_proton.md) item 4). DXVK's own OpenXR extension query at device creation goes through the same loader.
 - The Wine VR registry published before DXVK creates its instance (the launcher, [openxr_proton.md](openxr_proton.md) item 2).
+
+**Decided 2026-11-10: convert to in-process OpenXR and remove the host.** What moves or goes, and what the conversion has to settle:
+- The frame loop ([Frame loop](#frame-loop)) moves into the carrier. `xrWaitFrame` / `xrBeginFrame` / `xrLocateViews` take the place of the host's pose publish and the carrier's render gate ([pacing.md](pacing.md) lockstep); `xrEndFrame` with the pair's own pose.
+- Presentation: copy the two eye images into Vulkan swapchain images on DXVK's queue (`ID3D9VkInteropTexture` for the source images, the submission-queue lock, ordering against DXVK's own work), replacing the shared textures, the async completion thread, FRAME_READY and the host's blit ([shared_textures.md](shared_textures.md), [Submission](#submission): the sRGB swapchain-format rules carry over).
+- The IPC section, the host process, the launcher's host spawn and ready wait, and the host's desktop mirror go away. The carrier already shows the LEFT eye on the monitor itself.
+- Session state events (focus, visibility, exit) and the pose history move with the frame loop.
+- Unaffected: the Wine VR registry init is already the launcher's, a direct call ([openxr_proton.md](openxr_proton.md) item 2).
 
 Still OPEN:
 - Not exercised yet: swapchains, copying the eye images into them on DXVK's queue (`ID3D9VkInteropTexture`, queue lock, ordering against DXVK's own submissions), frame pacing at the render gate, and memory pressure from the 32-bit runtime in the game's address space.

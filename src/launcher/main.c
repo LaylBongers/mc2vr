@@ -160,23 +160,24 @@ int main(void) // no arguments: everything is resolved from the install layout
     mc2_log("carrier  : %ls", carrier_dll);
 
     // ---- VR environment -------------------------------------------------
-    // The Wine VR registry both the host's and the game's DXVK read at device
-    // creation, published before either starts (vr_registry.h); then whether
-    // a 32-bit process finds a 32-bit OpenXR runtime, which in-process OpenXR
-    // needs (xr_runtime.h).
-    vr_registry_init(host_exe, mc2_log);
+    // Whether a 32-bit process finds a 32-bit OpenXR runtime (xr_runtime.h):
+    // the registry init below and in-process OpenXR both need one. Then
+    // the Wine VR registry both the host's and the game's DXVK read at device
+    // creation, published before either starts (vr_registry.h).
     {
         char fix[1400];
         const char *why = "";
         if (xr_runtime_32_check(fix, sizeof(fix), &why)) {
             mc2_log("32-bit OpenXR runtime: ok (%s)", why);
         } else if (fix[0] != '\0') {
-            mc2_log("warning: 32-bit OpenXR runtime: %s — in-process OpenXR won't find a runtime. "
-                    "Register SteamVR's 32-bit one (once): %s", why, fix);
+            mc2_log("warning: 32-bit OpenXR runtime: %s — the Wine VR registry init and in-process "
+                    "OpenXR won't find a runtime. Register SteamVR's 32-bit one (once): %s", why, fix);
         } else {
-            mc2_log("warning: 32-bit OpenXR runtime: %s — in-process OpenXR won't find a runtime", why);
+            mc2_log("warning: 32-bit OpenXR runtime: %s — the Wine VR registry init and in-process "
+                    "OpenXR won't find a runtime", why);
         }
     }
+    vr_registry_init(mc2_log);
 
     // ---- Start the OpenXR host  ----------------------------------------
     // The host owns the VR session and its IPC section; the carrier connects

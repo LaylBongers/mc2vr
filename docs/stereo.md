@@ -28,4 +28,5 @@ Lesson that still applies: never suppress backbuffer writes under SwapEffect=DIS
   - `Mvp`/`TexGen` (2-row, screen-space): the Scaleform HUD, a separate track ([hud.md](hud.md)).
   - Rain/particles/billboards are unchecked. `debug_camera_census=on` lists every main-pass shader with camera constants outside `viewContextData` and who fills them. `debug_camera_census_skip=<name>` hides such draws, to identify an artifact.
 - PS-side camera data (`cameraPos` c92, texgen matrices) is mono — hook `SetPixelShaderConstantF` (slot 109) if reflections/shadows skew at IPD scale.
+- Water, from a static survey (2026-11-10, unverified live): the reflection pass (render size / 3, e.g. 853×480) uses a mono reflection camera that isn't rewritten, so both eyes see the same reflection. The water simulation's 128² height surface (created in VM code) may ping-pong; if so, the stereo frame steps it once per pass, twice per frame (water moving at double speed?). Check live before changing either.
 - Scene MSAA: [msaa.md](msaa.md).

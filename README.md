@@ -26,6 +26,8 @@ SteamVR as the OpenXR runtime.
 3. Run `./launch.sh`. It builds what's missing, deploys to `<game dir>/mc2vr/` and starts the
    game. Logs land next to the deployed files.
 
+To play without VR, run `./launch_novr.sh`: the same Proton setup, without the mod.
+
 ## Ghidra
 
 The majority of the reverse engineering effort in this project is done through ghidra.

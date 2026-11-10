@@ -17,7 +17,7 @@ launch.sh → mc2vr_launcher.exe (i386) → spawn mc2vr_host.exe (x86_64, [host.
 ## Launch sequence
 
 1. Resolve paths from deploy location (`<game dir>/mc2vr/`).
-2. Under Wine: publish the Wine VR registry through the host binary's `--vr-registry-init` helper, and check that a 32-bit process finds a 32-bit OpenXR runtime (logs the one-time fix if not) ([openxr_proton.md](openxr_proton.md) items 2 and 4).
+2. Under Wine: check that a 32-bit process finds a 32-bit OpenXR runtime (logs the one-time fix if not), then publish the Wine VR registry (`vr_registry.c`, a direct call) ([openxr_proton.md](openxr_proton.md) items 2 and 4).
 3. Spawn the [host](host.md) and wait for its `mc2vr_host: ready` log line (30 s; non-fatal on timeout/early exit/missing exe — no host ⇒ the game runs mono as before, logged once). `MC2VR_NO_HOST` skips the host; `MC2VR_IPC_NAME` overrides the [IPC](ipc.md) section name.
 4. Delete stale `mc2vr_carrier.log`, then `CreateProcessW` the game `CREATE_SUSPENDED`. No exe-base check here (a suspended process has no module list yet) — the carrier verifies base + build lock in-process.
 5. Inject the carrier: `CreateRemoteThread` + `LoadLibraryW` into the suspended process. Works under Proton and plain Wine.
