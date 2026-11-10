@@ -58,6 +58,7 @@ add_library(mc2vr_carrier SHARED
     debug/vm_dump.cpp
     debug/wait_census.cpp
     debug/watch.cpp
+    debug/xr_probe.cpp
 )
 
 # Reimplemented engine code does float math like the original: scalar SSE
@@ -78,6 +79,10 @@ target_include_directories(mc2vr_carrier PRIVATE
 target_compile_definitions(mc2vr_carrier PRIVATE UNICODE _UNICODE)
 
 target_link_libraries(mc2vr_carrier PRIVATE safetyhook mc2vr_game)
+# OpenXR headers only (no loader): debug/xr_probe.cpp negotiates with the
+# runtime DLL directly.
+set_source_files_properties(debug/xr_probe.cpp PROPERTIES
+    INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/vendor/openxr-sdk/include)
 
 # Static runtimes: an injected DLL must not depend on libstdc++-6.dll etc.
 # being present in the Wine prefix.

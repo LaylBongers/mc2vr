@@ -3,6 +3,8 @@
 add_executable(mc2vr_launcher
     main.c
     inject.c
+    xr_runtime.c
+    vr_registry.c
 )
 
 target_include_directories(mc2vr_launcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)

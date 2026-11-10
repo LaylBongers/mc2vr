@@ -17,6 +17,8 @@
 #include <stdarg.h>
 
 #include "inject.h"
+#include "vr_registry.h"
+#include "xr_runtime.h"
 
 #define GAME_EXE_DEFAULT     L"MERCENARIES2.EXE"
 #define HOST_EXE_DEFAULT     L"mc2vr_host.exe"
@@ -156,6 +158,25 @@ int main(void) // no arguments: everything is resolved from the install layout
     }
     mc2_log("game exe : %ls", game_exe);
     mc2_log("carrier  : %ls", carrier_dll);
+
+    // ---- VR environment -------------------------------------------------
+    // The Wine VR registry both the host's and the game's DXVK read at device
+    // creation, published before either starts (vr_registry.h); then whether
+    // a 32-bit process finds a 32-bit OpenXR runtime, which in-process OpenXR
+    // needs (xr_runtime.h).
+    vr_registry_init(host_exe, mc2_log);
+    {
+        char fix[1400];
+        const char *why = "";
+        if (xr_runtime_32_check(fix, sizeof(fix), &why)) {
+            mc2_log("32-bit OpenXR runtime: ok (%s)", why);
+        } else if (fix[0] != '\0') {
+            mc2_log("warning: 32-bit OpenXR runtime: %s — in-process OpenXR won't find a runtime. "
+                    "Register SteamVR's 32-bit one (once): %s", why, fix);
+        } else {
+            mc2_log("warning: 32-bit OpenXR runtime: %s — in-process OpenXR won't find a runtime", why);
+        }
+    }
 
     // ---- Start the OpenXR host  ----------------------------------------
     // The host owns the VR session and its IPC section; the carrier connects

@@ -23,6 +23,7 @@
 #include "debug/stream_capture.hpp"
 #include "debug/build_census.hpp"
 #include "debug/occlusion_off.hpp"
+#include "debug/xr_probe.hpp"
 #include "debug/camera_census.hpp"
 #include "debug/watch.hpp"
 #include "vr/view_rewrite.hpp"
@@ -202,6 +203,11 @@ static void load_conf()
             // Which shaders take the camera from outside viewContextData (debug/camera_census.hpp).
             if (!camera_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_camera_census=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_xr_probe") == 0) {
+            // In-process OpenXR probe on DXVK's device (debug/xr_probe.hpp).
+            if (!xr_probe::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_xr_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_occlusion_off") == 0) {
             // Occlusion culling off, for A/B (debug/occlusion_off.hpp).
@@ -408,6 +414,8 @@ void init()
     // the game runs the monitor-stereo path exactly as today. Only a
     // lock-passing carrier registers — an idle one stays fully idle.
     ipc::connect();
+    // debug_xr_probe: its fault log, from attach on.
+    xr_probe::install_early();
 
     adaptation::init();         // VR state that needs no hook (before the hooks fire)
     hooks::install_attach();    // the VR implementation's hooks (hooks/install.cpp)
@@ -429,6 +437,9 @@ void on_engine_running()
 
     // debug_wait_census: game IAT wrappers (the loader has filled the IAT).
     wait_census::install();
+
+    // debug_xr_probe: the in-process OpenXR probe, on its own thread.
+    xr_probe::start();
 
     MC2VR_LOG("init complete"); // launcher waits for this before dumping the log
 }

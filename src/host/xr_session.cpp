@@ -113,31 +113,9 @@ const char* state_name(XrSessionState s) {
     }
 }
 
-// Proton's wineopenxr proxy expects HKCU\\Software\\Wine\\VR to exist; nothing
-// creates it for a standalone (non-Steam-launched) process, so negotiation
-// fails with -6. The DLL exports an initializer for exactly this.
-void init_wine_vr_registry() {
-    HKEY k;
-    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\VR", 0, nullptr, 0, KEY_ALL_ACCESS,
-                        nullptr, &k, nullptr) == ERROR_SUCCESS) {
-        // vrclient_x64 normally publishes the VR "state" (1 = runtime available);
-        // without it wineopenxr negotiation fails (-6). Only fill it if absent.
-        DWORD v = 0, sz = sizeof v, type = 0;
-        if (RegQueryValueExA(k, "state", nullptr, &type, (BYTE*)&v, &sz) != ERROR_SUCCESS) {
-            v = 1;
-            RegSetValueExA(k, "state", 0, REG_DWORD, (const BYTE*)&v, sizeof v);
-            hostlog::write("openxr: set Software\\Wine\\VR\\state=1 (was absent)");
-        }
-        RegCloseKey(k);
-    }
-    HMODULE m = LoadLibraryW(L"wineopenxr.dll");
-    auto fn = m ? (void (*)())GetProcAddress(m, "wineopenxr_init_registry") : nullptr;
-    hostlog::write("openxr: wineopenxr_init_registry %s", fn ? "called" : "not present (native runtime?)");
-    if (fn) fn();
-}
-
 bool create_instance(State& s) {
-    init_wine_vr_registry();
+    // The Wine VR registry (wineopenxr's negotiation state + the runtime's
+    // Vulkan requirements DXVK reads) is the launcher's (src/launcher/vr_registry.h).
     uint32_t n = 0;
     xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr);
     std::vector<XrExtensionProperties> exts(n, {XR_TYPE_EXTENSION_PROPERTIES});
