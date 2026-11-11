@@ -94,7 +94,12 @@ uint32_t g_l2p_reg = REG_INVALID;  // the current record's shader (on_record_sha
 uint32_t g_vpm_reg = REG_INVALID;
 double g_delta[16];  // double: see math::invert4
 bool g_delta_valid = false;  // for this pass
-uint64_t g_mtx_rows = 0, g_mtx_no_delta = 0, g_mtx_split = 0;
+// This pass's eye camera with the camera at the origin (rotation + per-eye
+// projection, depth terms of the main view): the target for camera-relative
+// matrices (camera_relative_rewrite).
+float g_eye_rel[16];
+bool g_eye_rel_valid = false;  // for this pass
+uint64_t g_mtx_rows = 0, g_mtx_no_delta = 0, g_mtx_split = 0, g_mtx_rel_rows = 0;
 
 uint32_t render_w()
 {
@@ -366,6 +371,12 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         return data;  // unreachable: Off/On/Pulse/Stereo never reach hmd_rewrite
     }
     vp_camera::rebuild(cam, scratch + (base - start_register) * 4);
+    {
+        vp_camera::Camera rel = cam;
+        rel.C = {0.0f, 0.0f, 0.0f};
+        vp_camera::rebuild(rel, g_eye_rel);
+        g_eye_rel_valid = true;
+    }
     double mono_inv[16];
     if (math::invert4(raw, mono_inv)) {
         math::mul4(scratch + (base - start_register) * 4, mono_inv, g_delta);
@@ -449,6 +460,39 @@ void on_set_render_target(uint32_t w, uint32_t h)
 // |row_k.xyz| * e_k (row_k.xyz = P_kk * basis_k).
 namespace {
 
+// A camera-relative VP (the sky/fog matrices of the clouds pass: rows 0, 1 and
+// 3 have w = 0, i.e. the camera sits at the origin of its input space; its depth
+// row is its own, z = A'·z_v + B'). D·m is exact in theory, but D comes from the
+// world-space viewContextData, whose translations are ~1e3 units: the float32
+// rounding there lands in m's depth row (A' 1.0000019 became 1.000247, live
+// 2026-11-11), so distant fog crossed the far plane and was clipped or not
+// from frame to frame — the sky/fog flicker (docs/view_rewrite.md). Instead build m
+// directly: this pass's eye rotation and projection at the origin, m's own
+// depth terms. False (m untouched) when m isn't camera-relative or not of the
+// assumed form.
+bool camera_relative_rewrite(float *m)
+{
+    constexpr float EPS = 1e-6f;
+    if (std::fabs(m[3]) > EPS || std::fabs(m[7]) > EPS || std::fabs(m[15]) > EPS) {
+        return false;
+    }
+    const math::Vec3 r2 = math::load3(m + 8), r3 = math::load3(m + 12);
+    const float f2 = math::dot(r3, r3);
+    if (std::fabs(f2 - 1.0f) > 1e-3f) {
+        return false;  // row3 must be the unit forward axis
+    }
+    const float a_depth = math::dot(r2, r3);  // A' (|row3| = 1)
+    if (math::length(r2 - r3 * a_depth) > 1e-3f * (std::fabs(a_depth) + 1.0f)) {
+        return false;  // depth row not along forward
+    }
+    const float b_depth = m[11];
+    memcpy(m, g_eye_rel, sizeof(g_eye_rel));
+    const math::Vec3 f_eye = math::load3(g_eye_rel + 12);
+    math::store3(m + 8, f_eye * a_depth);
+    m[11] = b_depth;
+    return true;
+}
+
 // The current record's explicit camera matrices, corrected by this pass's D.
 const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t vec4_count)
 {
@@ -475,6 +519,10 @@ const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t
             copied = true;
         }
         float *m = scratch + (reg - start_register) * 4;
+        if (g_eye_rel_valid && camera_relative_rewrite(m)) {
+            g_mtx_rel_rows += 4;
+            continue;
+        }
         float out[16];
         math::mul4(g_delta, m, out);
         memcpy(m, out, sizeof(out));
@@ -547,10 +595,11 @@ void report_window()
                   (unsigned long long)g_hmd_blocks, (unsigned long long)g_hmd_cam_only,
                   (unsigned long long)g_hmd_split, (unsigned long long)g_hmd_decomp_fail,
                   (double)g_hmd_resid_max, g_hmd.id, (int)g_hmd.valid);
-        MC2VR_LOG("view/hmd: camera matrices (LocalToProj, g_ViewProjMtx) rewritten rows=%llu split=%llu "
-                  "noDelta=%llu", (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_split,
-                  (unsigned long long)g_mtx_no_delta);
-        g_mtx_rows = g_mtx_split = g_mtx_no_delta = 0;
+        MC2VR_LOG("view/hmd: camera matrices (LocalToProj, g_ViewProjMtx) rewritten rows=%llu "
+                  "cameraRelative=%llu split=%llu noDelta=%llu",
+                  (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_rel_rows,
+                  (unsigned long long)g_mtx_split, (unsigned long long)g_mtx_no_delta);
+        g_mtx_rows = g_mtx_split = g_mtx_no_delta = g_mtx_rel_rows = 0;
         g_hmd_blocks = g_hmd_cam_only = g_hmd_split = g_hmd_decomp_fail = 0;
         g_hmd_resid_max = 0.0f;
     }
@@ -651,6 +700,7 @@ void set_pass_eye(int sign)
     if (sign != g_pass_eye) {
         g_pw_valid = false;     // per-pass camPos cache
         g_delta_valid = false;  // per-pass camera delta
+        g_eye_rel_valid = false;
     }
     g_pass_eye = sign;
 }

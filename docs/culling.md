@@ -52,7 +52,7 @@ HMD tracked, gameplay.
 | `entry_fov_decouple` | Wrong value semantics (wrote the 300.0 scale constant into fov slots) — garbage projections. |
 | Entry-fov census, `cull_snap_dump`, `gcamtan` watch target | Diagnostics for the above; removed. |
 
-Misreadings worth not repeating: `[0x00BEAB5C]` is the base fov in radians, 4:3-normalized (0.95975) — not a cosine, not "300 engine units" (`[0x00BAD260]` = 300.0 is a separate constant). `Fov_TanIndexHelper` is camera-controller boom math, not the projection's fov reader. `PgClouds_EmitViewRecords` (reads the slot-ctx tans) builds render constants (fog/atmosphere terms), not a per-object cull. `ViewCtx_BuildSnapshot`'s snapshot is a stack temporary used only for a viewport rect.
+Misreadings worth not repeating: `[0x00BEAB5C]` is the base fov in radians, 4:3-normalized (0.95975) — not a cosine, not "300 engine units" (`[0x00BAD260]` = 300.0 is a separate constant). `Fov_TanIndexHelper` is camera-controller boom math, not the projection's fov reader. `PgClouds_EmitViewRecords` (reads the slot-ctx tans) builds render constants (fog/atmosphere terms), not a per-object cull ([below](#cloudsfog-pass-and-the-ctx-tans)). `ViewCtx_BuildSnapshot`'s snapshot is a stack temporary used only for a viewport rect.
 
 Lesson: **replace a derived value where it is DERIVED, not at one consumer's copy** (the builder recomputes every frame and consumers read sibling products); then exempt consumers that must stay stock at their own private copy. Method gotchas (raw byte decode, watchpoints): [debugging.md](debugging.md). VR smearing: [occluder_boxes.md](occluder_boxes.md).
 
@@ -60,6 +60,6 @@ Lesson: **replace a derived value where it is DERIVED, not at one consumer's cop
 
 One builder view per frame never matches the union camera (`otherView` ≈ 1 per frame in `cullfov: window`), so it keeps the game's extents. Measured (2026-11-11, `cullfov:   other view` lines): its camera is 0–25 m from the HMD camera and 25–75° off its forward axis, at times coinciding with it; which view it is is not identified. Widening it whenever its camera was within 1 m of the HMD camera (a since-removed A/B) made objects pop frame to frame, near ones included. Don't widen views that don't match.
 
-## OPEN: sky and far-terrain flicker
+## Clouds/fog pass and the ctx tans
 
-Observed (2026-11-11), long-standing: a rapid flicker of the sky and of distant mountains above a certain height, also in the tank gunner seat; it persists with occlusion culling off ([occluder_boxes.md](occluder_boxes.md)). In appearance, the fog/cloud layer that normally hides the distant mountains is what flickers. Relevant fact: `PgClouds_EmitViewRecords` reads the view's frustum tangents (ctx+0x30/+0x34) as render constants, and the builder hook widens those ([reverse_engineering/view_frustum.md](reverse_engineering/view_frustum.md)).
+`PgClouds_EmitViewRecords` maps the screen to view directions with the ctx tans (ctx+0x30/+0x34), so the widened values must be written there too: with the game's own (18.5°/20.4° at the eye aspect) the fog layer slid with head pitch (A/B 2026-11-11). They are stable frame to frame (one read per frame, render thread). The former sky/far-terrain flicker was not caused by them; it came from the per-eye rewrite of the pass's camera-relative sky matrices ([view_rewrite.md](view_rewrite.md#explicit-camera-matrices)).

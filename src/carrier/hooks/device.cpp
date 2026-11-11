@@ -388,6 +388,7 @@ HRESULT __stdcall setvsconstf_hook(IDirect3DDevice9 *self, UINT start, const flo
                   (unsigned)count, (unsigned long long)hooks::frame_count(), caller);
     }
     const float *out = view_rewrite::on_set_vs_constant((uint32_t)start, data, (uint32_t)count);
+    gui_census::on_shader_constants_out(data, out, count);
     return g_setvsconstf_hook->stdcall<HRESULT>(self, start, out, count);
 }
 

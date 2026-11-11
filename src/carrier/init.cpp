@@ -180,7 +180,7 @@ static void load_conf()
             // Draw-time view of the GUI records every 30 s (log-only;
             // debug/gui_census.hpp). Must precede the hook installs.
             if (!gui_census::set_enabled(value)) {
-                MC2VR_LOG("conf: debug_gui_census=%s not recognized (use on|off)", value);
+                MC2VR_LOG("conf: debug_gui_census=%s not recognized (use on|clouds|off)", value);
             }
         } else if (strcmp(key, "debug_gpu_census") == 0) {
             // Per-pass / per-render-target GPU + CPU + draw-call census

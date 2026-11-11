@@ -12,6 +12,10 @@
 // GUI records are marked at build time by debug_build_census's hooks
 // (installed for this even with that census off). The 10 s poller prints the
 // capture. Inert unless enabled.
+//
+// debug_gui_census=clouds: the same per-record view, but of the records the
+// clouds/fog pass emits (emitter inside PgClouds_EmitViewRecords /
+// FUN_0047e8c0), in both eye passes of two consecutive frames.
 #pragma once
 
 #include <windows.h>
@@ -34,6 +38,8 @@ void on_set_render_target(DWORD index, IDirect3DSurface9 *surface);
 void on_stretch_rect(IDirect3DSurface9 *src, IDirect3DSurface9 *dst);
 void on_set_depth(IDirect3DSurface9 *surface);
 void on_shader_constants(bool pixel, UINT start, const float *data, UINT count);
+// After the view rewrite of the same VS upload: out != in = it was rewritten.
+void on_shader_constants_out(const float *in, const float *out, UINT count);
 void on_render_state(D3DRENDERSTATETYPE state, DWORD value);
 void on_draw();
 

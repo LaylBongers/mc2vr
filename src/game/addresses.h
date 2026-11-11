@@ -236,6 +236,12 @@
 #define MC2_VCCAM_CTX_TANH_OFF ((uintptr_t)0x30u)
 #define MC2_VCCAM_CTX_TANV_OFF ((uintptr_t)0x34u)
 
+// The clouds/fog pass (docs/view_rewrite.md "Camera-relative matrices"): the two emitters'
+// extent [begin, end): PgClouds_EmitViewRecords
+// 0x0047ded0..0x0047e8b0, FUN_0047e8c0 ..0x0047f088.
+#define MC2_CLOUDS_EMIT_BEGIN ((uint32_t)0x0047ded0u)
+#define MC2_CLOUDS_EMIT_END ((uint32_t)0x0047f088u)
+
 // The builder's view frustum struct at ctx+0x38 (Frustum_Build output, 0x218 bytes):
 // +0x00 near, +0x04 far, +0x0c 8 world-space corners (vec3): near-plane corners
 // 0..3 = (+H,+V) (+H,-V) (-H,-V) (-H,+V) at distance `near`, then the 4 far-plane

@@ -52,4 +52,4 @@ Observed (2026-11-11, HMD, occlusion culling on):
 Tested and not the cause:
 - Per-eye pair desync: `pairDrift` stays 0.
 - The eye inside or within 0.6 m of a box (a guard that skipped those queries never triggered in that area).
-- The tank gunner-seat flicker persists with occlusion off, so it's a different issue ([culling.md](culling.md#open-sky-and-far-terrain-flicker)).
+- The tank gunner-seat flicker persists with occlusion off, so it's a different issue (it was the sky/fog flicker, fixed: [view_rewrite.md](view_rewrite.md#explicit-camera-matrices)).

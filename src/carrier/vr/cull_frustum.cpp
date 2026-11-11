@@ -59,7 +59,8 @@ OtherView *other_view_of(uintptr_t vctx)
 }
 
 // The builder's own signs kept; magnitudes widened, never narrowed. Writes the
-// ctx tans too (render constants + snapshot read them).
+// ctx tans too: the clouds/fog pass maps the screen to view directions with
+// them, and the game's own place the fog wrong under head pitch (docs/culling.md).
 void widen(uintptr_t vctx, float &th, float &tv, float hmd_th, float hmd_tv)
 {
     th = std::copysign(std::fmax(std::fabs(th), hmd_th), th);

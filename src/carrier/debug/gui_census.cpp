@@ -27,6 +27,19 @@ constexpr uint32_t kMaxConsts = 1024;
 constexpr uint32_t kMaxNamed = 12;
 
 bool g_enabled = false;
+// debug_gui_census=clouds: instead of the GUI range, the records emitted by
+// the clouds/fog pass (PgClouds_EmitViewRecords, FUN_0047e8c0), in both eye
+// passes of kCloudFrames consecutive frames (docs/view_rewrite.md
+// "Camera-relative matrices").
+bool g_clouds = false;
+constexpr uint32_t kCloudFrames = 2;
+uint32_t g_frames_left = 0;
+uint32_t g_pass = 0;
+
+bool is_clouds_emitter(uint32_t ret)
+{
+    return ret >= MC2_CLOUDS_EMIT_BEGIN && ret < MC2_CLOUDS_EMIT_END;
+}
 
 struct Op {
     uint32_t d[5];  // opcode + first operands
@@ -34,10 +47,13 @@ struct Op {
 
 struct Record {
     uint32_t rank;
+    uint32_t pass;
+    uint64_t frame;
     uint16_t index;
     int8_t gui;
     uint8_t view_type, view_context, rt_mask, stencil;
     uint16_t technique, material;
+    uint32_t vcd_reg, vcd_count, vp_reg, vp_count;  // the technique's resolved camera map
     bool has_stream;
     const void *stream;            // rec->cmdStream
     uint32_t emitter, emitter_above[3];  // Submit return address at build time, and further up
@@ -57,8 +73,11 @@ struct Const {
     uint32_t record;  // index into g_records
     bool pixel;
     uint32_t start, count;
-    float v[8];
+    float v[16];      // as the game uploaded them (first 4 vec4s)
+    bool rewritten;   // the view rewrite changed them (on_shader_constants_out)
+    float o[16];      // as sent to the device
 };
+Const *g_last_vs_const = nullptr;  // the latest VS upload, for on_shader_constants_out
 
 struct Named {
     void *ptr;
@@ -124,10 +143,11 @@ bool locate_gui()
 void begin_capture()
 {
     IDirect3DDevice9 *const dev = render_outputs::device();
-    if (dev == nullptr || !locate_gui()) {
+    if (dev == nullptr || (!g_clouds && !locate_gui())) {
         return;
     }
-    g_from_rank = g_first_gui_rank > kBefore ? g_first_gui_rank - kBefore : 0;
+    g_from_rank = g_clouds ? 0 : g_first_gui_rank > kBefore ? g_first_gui_rank - kBefore : 0;
+    g_frames_left = kCloudFrames;
     g_record_count = g_const_count = g_dropped = 0;
     g_rank = 0;
     g_cur = nullptr;
@@ -165,7 +185,8 @@ void bits(uint32_t mask, uint32_t n, char *out, size_t cap)
 
 void print_capture()
 {
-    MC2VR_LOG("gui: capture frame %llu pass 1: %u records logged%s", (unsigned long long)g_frame, g_record_count,
+    MC2VR_LOG("gui: capture frame %llu %s: %u records logged%s", (unsigned long long)g_frame,
+              g_clouds ? "clouds records, passes 1+2 of 2 frames" : "pass 1", g_record_count,
               g_dropped ? ", some dropped" : "");
     char line[512], a[24], b[24], zf[96], ze[16], zw[16], bl[16];
     uint32_t c = 0;
@@ -188,6 +209,9 @@ void print_capture()
         bits(r.blend_mask, 2, bl, sizeof bl);
         char size[32] = "";
         if (r.rt_w != 0) std::snprintf(size, sizeof size, "(%ux%u fmt%u)", r.rt_w, r.rt_h, r.rt_fmt);
+        if (g_clouds) MC2VR_LOG("gui: --- frame %llu pass %u", (unsigned long long)r.frame, r.pass);
+        if (g_clouds) MC2VR_LOG("gui:     tech map: vcd c%u/%u, ViewProj c%u/%u", r.vcd_reg, r.vcd_count, r.vp_reg,
+                                r.vp_count);
         MC2VR_LOG("gui: r%u idx=%u %s vt=%u vc=%u tech=%u mat=%u rtmask=%x stencil=%u draws=%u RT0=%s%s DS=%s zen={%s} "
                   "zwr={%s} zfunc={%s} blend={%s}",
                   r.rank, r.index, r.gui == 1 ? "GUI" : r.gui == 0 ? "---" : "?", r.view_type, r.view_context,
@@ -206,6 +230,16 @@ void print_capture()
             const Const &k = g_consts[c];
             MC2VR_LOG("gui:     %s c%u x%u: %.4g %.4g %.4g %.4g | %.4g %.4g %.4g %.4g", k.pixel ? "PS" : "VS", k.start,
                       k.count, k.v[0], k.v[1], k.v[2], k.v[3], k.v[4], k.v[5], k.v[6], k.v[7]);
+            if (g_clouds && k.count >= 4 && !k.pixel) {
+                MC2VR_LOG("gui:         rows 2-3: %.6g %.6g %.6g %.6g | %.6g %.6g %.6g %.6g", k.v[8], k.v[9], k.v[10],
+                          k.v[11], k.v[12], k.v[13], k.v[14], k.v[15]);
+            }
+            if (k.rewritten) {
+                MC2VR_LOG("gui:       -> rewritten: %.6g %.6g %.6g %.6g | %.6g %.6g %.6g %.6g | %.6g %.6g %.6g %.6g | "
+                          "%.6g %.6g %.6g %.6g",
+                          k.o[0], k.o[1], k.o[2], k.o[3], k.o[4], k.o[5], k.o[6], k.o[7], k.o[8], k.o[9], k.o[10],
+                          k.o[11], k.o[12], k.o[13], k.o[14], k.o[15]);
+            }
         }
     }
 }
@@ -214,8 +248,9 @@ void print_capture()
 
 bool set_enabled(const char *value)
 {
-    if (std::strcmp(value, "on") == 0) g_enabled = true;
-    else if (std::strcmp(value, "off") == 0) g_enabled = false;
+    if (std::strcmp(value, "on") == 0) g_enabled = true, g_clouds = false;
+    else if (std::strcmp(value, "clouds") == 0) g_enabled = g_clouds = true;
+    else if (std::strcmp(value, "off") == 0) g_enabled = g_clouds = false;
     else return false;
     if (g_enabled) build_census::require_gui_marks();
     MC2VR_LOG("gui: debug_gui_census=%s", value);
@@ -230,6 +265,24 @@ bool enabled()
 void on_pass(uint32_t pass)
 {
     if (!g_enabled) return;
+    g_pass = pass;
+    if (g_clouds) {
+        if (pass == 1 && !g_capturing && !g_ready.load(std::memory_order_acquire)) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= g_next_ms) {
+                g_next_ms = now + kIntervalMs;
+                begin_capture();
+            }
+        } else if (g_capturing) {
+            g_rank = 0;  // ranks per pass
+            if (pass == 0 && --g_frames_left == 0) {
+                g_capturing = false;
+                g_cur = nullptr;
+                g_ready.store(true, std::memory_order_release);
+            }
+        }
+        return;
+    }
     if (pass == 1 && !g_capturing && !g_ready.load(std::memory_order_acquire)) {
         const ULONGLONG now = GetTickCount64();
         if (now >= g_next_ms) {
@@ -249,6 +302,9 @@ void on_record(uint16_t index, const game::PgPrimitive *rec)
     const uint32_t rank = g_rank++;
     g_cur = nullptr;
     if (rank < g_from_rank) return;
+    uint32_t above[3];
+    const uint32_t emitter = build_census::record_emitter(game::g_PrimitiveBase::get(), index, above);
+    if (g_clouds && !is_clouds_emitter(emitter)) return;
     if (g_record_count >= kMaxRecords) {
         g_dropped++;
         return;
@@ -256,6 +312,8 @@ void on_record(uint16_t index, const game::PgPrimitive *rec)
     Record &r = g_records[g_record_count++];
     std::memset(&r, 0, sizeof r);
     r.rank = rank;
+    r.pass = g_pass;
+    r.frame = hooks::frame_count();
     r.index = index;
     r.gui = (int8_t)build_census::is_gui_record(game::g_PrimitiveBase::get(), index);
     r.view_type = rec->viewType;
@@ -264,9 +322,20 @@ void on_record(uint16_t index, const game::PgPrimitive *rec)
     r.stencil = rec->stencilMode;
     r.technique = rec->techniqueIdx;
     r.material = rec->materialIdx;
+    r.vcd_reg = r.vcd_count = r.vp_reg = r.vp_count = 0xffffffffu;
+    if (rec->techniqueIdx < 0x100) {
+        const uintptr_t tech = (uintptr_t)game::g_TechniqueTable::data()[rec->techniqueIdx];
+        if (tech != 0) {
+            r.vcd_reg = *(const uint32_t *)(tech + MC2_TECH_VCD_REG_OFF);
+            r.vcd_count = *(const uint32_t *)(tech + MC2_TECH_VCD_COUNT_OFF);
+            r.vp_reg = *(const uint32_t *)(tech + MC2_TECH_VP_REG_OFF);
+            r.vp_count = *(const uint32_t *)(tech + MC2_TECH_VP_COUNT_OFF);
+        }
+    }
     r.has_stream = rec->cmdStream != nullptr;
     r.stream = rec->cmdStream;
-    r.emitter = build_census::record_emitter(game::g_PrimitiveBase::get(), index, r.emitter_above);
+    r.emitter = emitter;
+    for (int i = 0; i < 3; i++) r.emitter_above[i] = above[i];
     r.stream_was_last = rec->cmdStream != nullptr && rec->cmdStream == game::g_LastExecuteStream::get();
     g_cur = &r;
 }
@@ -301,6 +370,7 @@ void on_set_depth(IDirect3DSurface9 *surface)
 
 void on_shader_constants(bool pixel, UINT start, const float *data, UINT count)
 {
+    if (!pixel) g_last_vs_const = nullptr;
     if (g_cur == nullptr) return;
     if (g_const_count >= kMaxConsts) {
         g_dropped++;
@@ -313,9 +383,20 @@ void on_shader_constants(bool pixel, UINT start, const float *data, UINT count)
     k.start = start;
     k.count = count;
     if (data != nullptr) {
-        const UINT n = count * 4 < 8 ? count * 4 : 8;
+        const UINT n = count * 4 < 16 ? count * 4 : 16;
         for (UINT i = 0; i < n; i++) k.v[i] = data[i];
     }
+    if (!pixel) g_last_vs_const = &k;
+}
+
+void on_shader_constants_out(const float *in, const float *out, UINT count)
+{
+    Const *const k = g_last_vs_const;
+    g_last_vs_const = nullptr;
+    if (k == nullptr || in == nullptr || out == nullptr || out == in) return;
+    const UINT n = count * 4 < 16 ? count * 4 : 16;
+    k->rewritten = true;
+    for (UINT i = 0; i < n; i++) k->o[i] = out[i];
 }
 
 void on_render_state(D3DRENDERSTATETYPE state, DWORD value)
