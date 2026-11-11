@@ -46,7 +46,7 @@ Session ([xr_session.md](xr_session.md#live-results)): `xr: session created on D
 - **Proton log (opt-in):** `MC2VR_PROTON_LOG=1 ./launch.sh` writes `steam-<id>.log` to the deploy dir, with Wine's view of the crash, loader errors and the default debug channels. With `debug_watch` on it grows fast (`+seh` logs every first-chance exception, including the watch traps).
 - Reading a report: the address is `module+offset`. Add `0x00400000` for the game's Ghidra VA, or match `code at EIP` against `read-memory` / host disassembly. A crash inside `Stext`/`.securom` is protected code; look at the stack's game return addresses for the plaintext caller.
 - A crash that turns out to be a game bug gets a hotpatch through the existing mechanisms ([hooks.md](hooks.md)): a guarding MidHook at the faulting site, or a reimplementation of the function ([reimpl.md](reimpl.md)). Record the bug and the fix in the note of the system it's in.
-- Unexplained crash (no report yet): 2026-11-11, ~12:14:40, on foot, ~85 s after a car → ragdoll → human camera sequence. It ran with `debug_gameplay_census` + `debug_watch` + `debug_occlusion_off`, before the logger existed. The OpenXR session had dropped to SYNCHRONIZED at 12:14:21, ~17 s earlier, with watchpoints armed. That's the same pattern as the earlier one-time crash in [culling.md](culling.md#open-items) (session drop + `debug_watch`, ~20 s). Suspect: the watch together with a session drop.
+- Crashes without a report (both before the crash logger): two crashes each came ~20 s after the OpenXR session dropped from VISIBLE to SYNCHRONIZED, both with `debug_watch` armed (2026-10, and 2026-11-11 with 2 targets). Neither recurred in runs without the watch so far.
 
 ## Hard-won gotchas
 

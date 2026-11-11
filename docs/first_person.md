@@ -1,4 +1,4 @@
-# First person (OPEN — research)
+# First person (OPEN — in progress)
 
 Goal: a VR first-person mode, built into the engine, where **the user's real head is the truth and the character follows it**:
 - Head motion moves the character's head.
@@ -9,7 +9,7 @@ Goal: a VR first-person mode, built into the engine, where **the user's real hea
 - Both standing and seated modes are supported.
 - Motion-controller aim comes later.
 
-Game side: [reverse_engineering/camera_classes.md](reverse_engineering/camera_classes.md), [reverse_engineering/character_pose.md](reverse_engineering/character_pose.md).
+Game side: [reverse_engineering/camera_classes.md](reverse_engineering/camera_classes.md), [reverse_engineering/character_pose.md](reverse_engineering/character_pose.md), [reverse_engineering/human_physics.md](reverse_engineering/human_physics.md), [reverse_engineering/player_input.md](reverse_engineering/player_input.md).
 
 ## VR play-mode practice (current choices, from the sources below)
 
@@ -43,12 +43,12 @@ HMD pose (play-space) → **character placement** → **body pose** → **camera
    - the facing comes from the body-yaw rule.
 
    The room-scale displacement is the one part that bypasses commands, because it's measured motion, not a request.
-2. **Body pose.** After animation, a bone controller of ours: a `BoneController_vtbl` subclass added with `BoneControllerRuntime_AddController`, high priority, the edit in its `OnPose(name map, pose)` ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)). It bends spine/neck/head so `Bone_Head` lands at the HMD, and lowers the pelvis with bent legs for crouching and leaning. Havok Behavior foot/hand/look-at IK classes are in the binary (`hkbFootIkModifier`, `hkbHandIkModifier`, `hkbLookAtModifier`); whether they're used and callable is OPEN. The same controller hides the head (collapsed `Bone_Head` scale; the cost is the head's shadow).
+2. **Body pose.** After animation, our bone controller ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)) bends spine/neck/head so `Bone_Head` lands at the HMD, and lowers the pelvis with bent legs for crouching and leaning. Havok Behavior foot/hand/look-at IK classes are in the binary (`hkbFootIkModifier`, `hkbHandIkModifier`, `hkbLookAtModifier`); whether they're used and callable is OPEN. The same controller hides the head (implemented, below).
 3. **Height and calibration** (per the practice above).
    - Standing (floor origin): real height is calibrated against the character's eye height.
    - Seated (eye origin): a fixed offset lifts the head to the character's standing eye height, and head motion stays relative.
    - Crouch depth: the measured drop from the calibrated standing height, plus the artificial crouch input.
-4. **Camera.** In first person, `CamHuman` becomes the HMD camera: its position is the character's eye point after step 2 (which tracks the HMD by construction). The render-side per-eye delta stays as it is ([camera.md](camera.md)). Its yaw/pitch feed gameplay heading and aim (see OPEN).
+4. **Camera.** In first person, `CamHuman` becomes the HMD camera: its position is the character's eye point after step 2 (which tracks the HMD by construction). The render-side per-eye delta stays as it is ([camera.md](camera.md)). Its yaw/pitch feed gameplay heading and aim.
 5. **Hitboxes and capsule.**
    - The hit bodies follow the bent pose, if they're pose-driven (`BodyBones_Sample` / `BoneCtrlPhysicsActor`, unverified).
    - The movement capsule follows the HMD height. The engine has discrete stance capsules: standing `ProxyCapsuleHeight`, crouch `ProxyCapsuleCrouchHeight`, and short ones. It also has a penetration-checked switch, `HumanPhysics_TrySetStance`, so standing up under an obstacle fails cleanly ([human_physics.md](reverse_engineering/human_physics.md#stances)).
@@ -61,46 +61,43 @@ HMD pose (play-space) → **character placement** → **body pose** → **camera
    - Godot suggests separate head and body shapes as the more accurate option.
 6. **Calibration moments.** Record the standing/seated reference on a "ready" confirmation (loading screen or menu), not at spawn: the headset may not be on yet, or the player may be away from the tracking centre. Recalibrate on request. Develop and test standing and walking early; seated testing hides room-scale bugs.
 
-## Where the camera plugs in
+## Implemented
 
-`CamHuman_Update` (plaintext, all callees plaintext) writes the on-foot camera's working pose each frame inside `CameraTable_FillLoop`. Everything downstream reads it: the render camera, culling, Lua `Camera.GetYaw`, spawn-from-camera, and the HMD injection at `g_CameraTable`.
+**Camera** (`first_person=on`, default off; live-verified 2026-11-11):
+- A MidHook in `CamHuman_Update` where its final world matrix is ready (`hooks/first_person.cpp` → `vr/first_person.cpp`, [hooks.md](hooks.md)) sets the matrix translation to the eye point: the character's pose position + `first_person_eye_height` (1.65 m) up + `first_person_eye_forward` (0.15 m) along the view's horizontal forward.
+- It clears the camera's obstruction flag (`+0x4fc`), so the pull-in and near-plane clearance don't run.
+- Rotation, look input, aim mode and the pose publication stay the camera's own. The HMD stays layered on top through `g_CameraTable` ([camera.md](camera.md)).
+- The character's pose position is at its feet (ground level). The resulting view height is feet + 1.65 m plus the HMD's offset in the OpenXR `LOCAL` space, whose origin is the head position at session start / recentre. No SteamVR height is used. Seated, that puts the eye at about the right height.
+- Vehicle, QTE (`script`), NPC-interaction (`script`) and ragdoll cameras keep their own classes, and switching to and from them works.
+- Report: `fp: window` (frames, character and eye positions, the stock boom length).
 
-Recommended: **reimplement `CamHuman_Update`** ([reimpl.md](reimpl.md)) with a first-person branch:
-- the position comes from the pipeline above;
-- no obstruction pull-in or near-plane clearance (`+0x4fc`, `Cam_ObstructionAdjust`);
-- the third-person path stays in the same function.
+**Head hiding** (`first_person_hide_head`, default off): **doesn't work.** The controller attaches and edits the pose every frame (live: `head hidden` = every frame, `Bone_Head` = bone 26), but the published pose drops scale ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)), so the head stays. Live-verified: the controller part (attach, `OnPose` every frame on the right character, the `Bone_Head` lookup); it's the base for the body pose. Hiding needs another way (OPEN).
+- Our own engine bone controller (`vr/head_hide.{hpp,cpp}`): the engine's controller layout ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)), a hand-built vtable with `thiscall` slot bodies and the game's no-op bodies for unused slots, priority 1000 (after the stock controllers).
+- It's attached to the character once from the first-person hook (`BoneControllerRuntime_AddController`). When the character changes, the stale one reports `IsDone` and the engine deletes it.
+- In `OnPose`, while the first-person camera is live on that character: look up `Bone_Head` in the name map (`HashTable_FindSlot`), set its local scale to 0.001, mark its subtree model-dirty and clear `modelInSync`. `syncModelSpace` right after rebuilds the subtree, but the publish then drops the scale.
+- The edit is gated to first person on the controller's own character (vehicles, cutscenes and third person are untouched).
+- Report: `fp:   head: controllers attached=… OnPose=… head hidden=… (bone N)`. The first attach attempts can fail while the character's runtime isn't ready; it retries and attaches within a few seconds.
+- While the character has no controller runtime yet, the add takes its create path, which calls VM code (`0x00538ec0`), from our call. Live, that returned "not added" without a crash (unlike the `Hud_DrawQuad` case in [hud.md](hud.md)) until the character was ready.
 
-Rejected:
-- A new camera class swapped into the on-foot mode: mode creation partly runs from VM/runtime code.
-- Overriding at `g_CameraTable`: render-only, so gameplay stays third-person.
+**Why a hook, not a reimplementation of `CamHuman_Update` (yet):** it computes the position inline (536 instructions; 28 calls to private helpers with custom register conventions; mixed SSE/x87, including x87 float returns the call shim doesn't support), so no small function owns that decision. A faithful reimplementation is the next stage for the camera, once its internals need to change (head-driven yaw, body coupling); the hook then becomes a direct call inside it. Rejected: a new camera class swapped into the on-foot mode (mode creation partly runs from VM/runtime code), and overriding at `g_CameraTable` (render-only, so gameplay stays third-person).
 
-## Ordering hazard
+## Frame order
 
-The animation update runs before `CameraTable_FillLoop` ([character_pose.md](reverse_engineering/character_pose.md#frame-order-game-thread-ingameshellstate_framepipeline)).
-
-- The frame order fits: `HumanPhysics_FrameStep` (`0x004c984c`) → animation (`0x004c990c`) → `CameraTable_FillLoop` (`0x004c993a`). The bone controllers run synchronously inside the animation phase, before the camera (live-verified 2026-11-11). Placement (step 1) goes into the physics step, the body pose (step 2) after animation, and the camera (step 4) last.
-- The body pose (step 2) has to be done before skinning and before the camera reads the eye point.
-- The HMD sample used must be the one the frame is rendered with, or the head and body lag the view. The render-side per-eye delta absorbs a residual, but only the rendered view's, not the body's.
+`HumanPhysics_FrameStep` (`0x004c984c`) → animation (`0x004c990c`, the bone controllers run synchronously inside it, live-verified) → `CameraTable_FillLoop` (`0x004c993a`) ([character_pose.md](reverse_engineering/character_pose.md#frame-order-game-thread-ingameshellstate_framepipeline)). So placement (step 1) goes into the physics step, the body pose (step 2) into a bone controller, and the camera (step 4) last. The HMD sample used must be the one the frame is rendered with, or the head and body lag the view; the render-side per-eye delta absorbs a residual, but only the rendered view's, not the body's.
 
 ## OPEN
 
-- Standing height mapping. Meta's advice is that the virtual body scales to the player. With a fixed-size character and its hitboxes, the gameplay-safe options are:
-  - proportional: real standing eye height → the character's eye height, and crouch depth scales with it;
-  - 1:1 plus a body fit (a tall player sees over walls).
-
-  Decide; probably proportional as the default, with an option.
-- Live:
-  - is the pose final at `CameraTable_FillLoop`? Check the task-queue joins;
-  - the camera-class and mode census.
-- Movement, mapped statically ([human_physics.md](reverse_engineering/human_physics.md)). Still OPEN:
-  - the per-id semantics of `HumanPhysics_ApplyCommand`;
-  - whether the player has a stock crouch, and the stance indices 2–6;
-  - the look stick lands in the human camera's own input fields ([camera_classes.md](reverse_engineering/camera_classes.md#camhuman-on-foot)), so in first person the reimplemented `CamHuman_Update` simply ignores it in favour of snap/smooth turn. Only the delivery path through VM code is unconfirmed.
-  - how the displacement is injected into `HumanPhysics_IntegrateProxy` exactly (velocity field, substep split).
-- Whether the bone controllers' order and the Havok IK are usable for the spine/legs, or we need our own analytic IK on the pose.
-- Heading: whether body facing follows the head yaw (with a dead zone, like typical VR bodies) or the stick. What gameplay "camera heading" (`Player.GetCameraXZHeading`, aim) should follow.
-- Aim ([player_input.md](reverse_engineering/player_input.md#aim-ray)). The stock aim ray is cast from the `g_CameraTable` slot through the reticle, so in first person it already follows the HMD camera, one frame late. Gaze aim works without changes, and the reticle belongs at the view centre.
-  - For motion controls, the clean substitution point is `Player_UpdateAimRay`: write the controller's ray into the player's aim origin/direction instead of the camera's. Every downstream consumer (the target collection, and presumably fire) follows.
-  - The fire site is live-verified ([player_input.md](reverse_engineering/player_input.md#fire-site-live-verified-2026-11-11-debug_watchplayer13cplayer124)). Shots aim at the player's **aim point**, and for flag-`0x1000` weapons along the weapon's own forward axis at that range. So a hand-held weapon whose pose follows the controller would fire where its barrel points; the aim point then only sets the range. Still OPEN: the no-flag branch, `MaxAimAngle`, and whether aim assist bends the ray. Aim assist is usually off or reduced in VR.
-- Mode coverage: vehicles, turrets, binoculars and script shots keep their own classes. Decide which ones get first-person variants, and how seated/standing work in a vehicle seat.
-- Near-camera fade/hide logic for the player model.
+- **Head offset policy.** The HMD's `LOCAL` offset is relative to wherever the last recentre happened, so horizontally the eye isn't always over the character's head. Right for seated height; the horizontal part needs a policy: the room-scale placement (body follows the head) or a recentre on the character.
+- **Hiding the head.** Bone scale doesn't survive publication. Options: the render side (zero the head bones' rows in the player mesh's `BoneMatrixArray` on the eye passes only; needs the skin-bone → skeleton mapping and the player's records, and keeps the shadow), or a mesh/part-level hide if the character model has separable head parts (unexplored). Moving the head bone away instead would stretch vertices that are partly weighted to the neck.
+- **Own body in view.** Looking down, the body is visible and the near plane clips through parts of it. Decide how much of the body to show, and how to keep it clear of the near plane.
+- **Strafing.** A/D makes the character turn and walk sideways; the game has no strafe animations. Needs a design, e.g. keep the body facing the view with a sideways walk, or turn the body under a fixed view (animation RE).
+- **Standing height mapping.** Meta's advice is that the virtual body scales to the player. With a fixed-size character and its hitboxes, the options are proportional (real standing eye height → the character's eye height, crouch depth scaled with it) or 1:1 plus a body fit (a tall player sees over walls).
+- **Movement** (mapped statically, [human_physics.md](reverse_engineering/human_physics.md)): the per-id semantics of `HumanPhysics_ApplyCommand`; the player's stock crouch and the stance indices 2–6; how the displacement is injected into `HumanPhysics_IntegrateProxy` (velocity field, substep split). The look stick lands in `CamHuman`'s own input fields ([camera_classes.md](reverse_engineering/camera_classes.md#camhuman-on-foot)).
+- Whether the Havok IK is usable for the spine/legs, or the pose needs our own analytic IK.
+- **Heading:** whether body facing follows the head yaw (dead zone) or the stick, and what gameplay "camera heading" (`Player.GetCameraXZHeading`, aim) should follow.
+- **Aim** ([player_input.md](reverse_engineering/player_input.md#aim-ray)). The stock aim ray is cast from the `g_CameraTable` slot through the reticle, so in first person it follows the HMD camera, one frame late, and the reticle belongs at the view centre. Shooting in first person is not tested yet.
+  - For motion controls, the substitution point is `Player_UpdateAimRay`: write the controller's ray into the player's aim origin/direction.
+  - The shot takes the player's aim point; for flag-`0x1000` weapons the direction is the weapon's own forward axis at that range ([player_input.md](reverse_engineering/player_input.md#fire-site)). Not read: the no-flag branch, `MaxAimAngle`, aim assist.
+- **Mode coverage:** vehicles, turrets, binoculars and script shots keep their own classes; decide which get first-person variants, and how seated/standing work in a vehicle seat.
+- Near-camera fade/hide logic for the player model, if any.
+- With occlusion culling on, objects pop in one area in first and third person alike ([occluder_boxes.md](occluder_boxes.md#open-objects-pop-in-and-out-with-occlusion-culling-on)).

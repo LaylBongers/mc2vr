@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "vr/cull_frustum.hpp"
+#include "vr/first_person.hpp"
 #include "game/addresses.h"
 #include "hooks/site.hpp"
 #include "vr/hud.hpp"
@@ -308,6 +309,7 @@ void report_window()
     gui_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
+    first_person::report_window();
     occlusion_queries::report_window();
     build_census::report_window();
     s2c::report_window();

@@ -148,10 +148,12 @@ const Named kCameraClasses[] = {
     {0x00bd2110, "script"},  {0x00bd2160, "tank"},     {0x00bd21b8, "turret"},
 };
 constexpr uint32_t kCamHumanVtbl = 0x00bd20b8;
+// Player mode vtables, named as in Ghidra (PlayerMode*_vtbl; 0x00bce598 / the
+// 0x00bce7a8 / 0x00bce800 pair have no role name yet).
 const Named kModeClasses[] = {
-    {0x00bce858, "null"},    {0x00bce648, "pda"},      {0x00bce6f8, "binoculars"}, {0x00bce6a0, "script"},
-    {0x00bce750, "onfoot"},  {0x00bce7a8, "vehicleA"}, {0x00bce800, "vehicleB"},   {0x00bce598, "mode598"},
-    {0x00bce5f0, "pda-menu"},  // seen live around opening the PDA (2026-11-11)
+    {0x00bce858, "Null"},     {0x00bce648, "Pda"},      {0x00bce6f8, "Binoculars"}, {0x00bce6a0, "Script"},
+    {0x00bce750, "OnFoot"},   {0x00bce5f0, "PdaMenu"},  {0x00bce598, "00bce598"},   {0x00bce7a8, "00bce7a8"},
+    {0x00bce800, "00bce800"},
 };
 
 template <size_t N>

@@ -1,12 +1,14 @@
 # Occluder boxes (VR smearing fix, 2026-10-09)
 
-Symptom (fixed 2026-10-09 by turning occlusion culling off; per-eye queries since 2026-11-10, live check pending): while turning in the HMD, regions at fixed in-world seams stayed undrawn (stale colour pixels — the game never clears colour); never in mono, not where the user looked directly.
+Symptom (fixed 2026-10-09 by turning occlusion culling off; per-eye queries since 2026-11-10): while turning in the HMD, regions at fixed in-world seams stayed undrawn (stale colour pixels — the game never clears colour); never in mono, not where the user looked directly.
 
 Ruled out: terrain frustum (`debug_terrain_cull_probe`: slot 1 gets the widened 62.0°/59.7° corners and side planes 56° apart); Z pre-pass / ZFUNC (`debug_zstate_probe`: the game never sets ZFUNC; only a small depth-only pass); our own occlusion queries (the only `CreateQuery` is the per-frame GPU sync).
 
 ## Cause: the engine's per-object occluder box pass
 
 `OcclusionBox_EmitPrimRecord` (`0x0046edf0`) emits an `OcclusionMaterial` / `PgOcclusionVP` unit-box record per flagged object (flag `(obj+0x12>>2)&1`, plus a list at ctx+0x1430), called from `ViewObjects_DrawAndEmitOcclusionBoxes` (`0x00468ea0`) at `0x00468eed` / `0x00468f12`.
+
+Box geometry: the unit box is `[-1,1]³`. Its instance matrix is scale (half extents of the object's local AABB `obj+0x94…+0xa8`, padded) × translate (its centre) × the object's world matrix (`obj+0x40`), stored row-major in `g_PerViewInstanceMatrices`. Its index is the record's `envIdx`, so at the draw the record's env entry (`g_EnvTable40`, set to the published buffer's matrices in `PgPrimitive_PublishFrame_body`) is the box's world matrix; `objIdx` is the query ring id (disassembly-checked, plate on `OcclusionBox_EmitPrimRecord`).
 
 What the boxes are (hardware occlusion queries): the emitter frustum-tests the object's padded AABB, appends its matrix to the per-view instance-matrix array, allocates a 10-bit query ring id (`g_OcclusionQueryRingCounter` `0x011697c4`), stores it in the object's 4-deep history (`obj+0x1c4..`), and submits the box prim (type byte 4, sort bucket 3). The VM packet interpreter wraps the draw in the query. `ObjectOcclusionQueries_PollAndMarkVisible` (`0x00468c10`; same pattern at `0x004a67c4`) polls `g_OcclusionQueryArray[id]->GetData(&px, 4, FLUSH)` for the oldest outstanding query: not-ready or px != 0 ⇒ `lastVisibleFrame = frame`; S_OK with 0 pixels keeps the old stamp. The object is drawn only while `frame − lastVisibleFrame <= 3` (then `flags |= 8`). No query id (0xffff) counts as visible.
 
@@ -24,7 +26,7 @@ Design: at the start of every `SubmitToGPU`, each ring entry the engine (re)crea
 
 Regression checks (HMD, gameplay), per 10 s `occlusion: window:`:
 - `wrapped=1024` once after boot / a render-size switch, then 0; `createFailed=0`.
-- `issuedL == issuedR`; `boxesNoVcd=0`.
+- `pairDrift` (cumulative `issuedL` − `issuedR`) at 0; `boxesNoVcd=0`. Per window `issuedL`/`issuedR` can differ when a frame straddles the report (the counters are reset by the report thread); such differences cancel over the next window, so only a lasting `pairDrift` is a desync.
 - `polls hidden > 0` (culling works; `hidden=0` with `visible > 0` = boxes always pass, e.g. drawn without depth); `leftOnly` = objects the single query would have culled wrongly.
 - In the HMD: no stale-colour regions while turning near seams (the old smearing). If they return, `debug_occlusion_off=on` tells whether the pairs are at fault.
 - Perf: compare `pace:` / `debug_gpu_census` against `debug_occlusion_off=on` in the same spot.
@@ -39,21 +41,15 @@ Cause: the emitter issues a box for every object in the **cull** frustum, then t
 
 Verdict: no margin (`cull_fov_margin` removed). The two eye frustums' union (left −57°…+46.5°, right −46.5°…+57°, same vertical) is nearly exactly the cull frustum then. Live 2026-11-10: no smearing, no edge pop-in, hidden polls 7–73% by location. `leftOnly` reached 433k polls in one 10 s window: objects only the left eye saw, which a single query would have culled. A margin could only come back if the pairs reported boxes off-screen in both eyes as not ready (= visible), which needs a per-eye on-screen test per box (the box→record matrix link is not reversed).
 
-Report caveat: the window counters are plain render-thread counters reset by the report thread, so `issuedL`/`issuedR` can differ by a few hundred within one window (a reset between the two passes); they agree summed over windows.
+## OPEN: objects pop in and out with occlusion culling on
 
-## OPEN: scenery flicker in the tank (2026-11-11)
+Observed (2026-11-11, HMD, occlusion culling on):
+- In one area, whole objects pop in and out or leave stale-colour smears, near ones included, in first person and third person (on foot and in a car). Scenery in the tank driver seat flickers too.
+- With `debug_occlusion_off=on`, both are gone.
+- The same build as the 2026-11-10 check above (`ebd3eab`, same conf) shows it in that area, so it predates the carrier changes made after that check. The 2026-11-10 check's location wasn't recorded.
+- In that area the report showed ~560 boxes issued per eye per frame (vs ~55 elsewhere in the same runs), `pairDrift` 0, `boxesNoVcd` 0, `pending` 0.
 
-User-observed: scenery items flicker at times while driving the tank, especially in the gunner seat (camera classes `tank` / `turret`, [reverse_engineering/camera_classes.md](reverse_engineering/camera_classes.md)). Log evidence from that run:
-- **`issuedL != issuedR`** in exactly the three windows of the seat switching (11:36:13–11:36:33: 267,518/267,205, 253,708/253,815, 222,080/222,286). It's the only place the pair invariant broke all run.
-- `leftOnly` was high in the tank windows (up to 246k), but also in the car (142k), so it tracks the scene, not the tank.
-- The frustum widening was unchanged (`cullfov` 57.0°/54.7°, camera clearance restored every frame).
-
-A/B run (2026-11-11, `debug_occlusion_off=on`):
-- **The driver-seat flicker is gone**, so it came from the occlusion query pairs, presumably the seat-switch pair mismatch above.
-- **The gunner seat still flickers**, so that has a second cause. The camera injection and culling counters were clean in that segment (no pose misses, the widened frustum unchanged). A long-standing flicker of the sky and very distant terrain may be the same thing (OPEN, [culling.md](culling.md)).
-
-Next:
-- for the pairs: why a seat switch desyncs `issuedL`/`issuedR`;
-- for the gunner: what the flicker looks like (whole objects popping, depth shimmer, or one eye only), which separates culling/LOD from depth precision.
-
-The original plan was: If the flicker goes, it's the pairs or the visibility hysteresis. Then check how a vehicle camera changes the box pass, e.g. view type 4 issued from a second view, or a per-eye miss in the gunner camera.
+Tested and not the cause:
+- Per-eye pair desync: `pairDrift` stays 0.
+- The eye inside or within 0.6 m of a box (a guard that skipped those queries never triggered in that area).
+- The tank gunner-seat flicker persists with occlusion off, so it's a different issue ([culling.md](culling.md#open-sky-and-far-terrain-flicker)).

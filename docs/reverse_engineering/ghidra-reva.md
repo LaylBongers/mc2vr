@@ -14,7 +14,7 @@ How to work with the Ghidra project safely. Locating/identifying code: [re_metho
 
 ## Editing
 
-- Precise or bulk edits: `run-script` with its own transaction (`prog.startTransaction(msg)` … `prog.endTransaction(tx, ok)`; `ok=False` rolls back).
+- Precise or bulk edits: `run-script`. It already runs each script inside a transaction of its own (`getCurrentTransactionInfo()` shows the script provider's), so plain edits commit when the script ends. A nested `prog.startTransaction(msg)` … `prog.endTransaction(tx, ok)` is still useful for an all-or-nothing rollback (`ok=False`); edits made before an exception are committed anyway.
 - Rename a function without touching its signature: `run-script` → `f.setName(name, SourceType.USER_DEFINED)`. (`create-label` + `setAsPrimary` can leave the label secondary on an already-named function; `set-function-prototype` rewrites the prototype, mangling register-arg `unaff_` decompiles, and rejects `__thiscall`.)
 - `set-comment` replaces the whole comment of that type — read it first, resend the full text.
 - `parse-c-structure` on an existing name replaces the struct in place; dependents keep working.

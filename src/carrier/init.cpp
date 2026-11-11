@@ -7,6 +7,7 @@
 #include "vr/msaa.hpp"
 #include "vr/world_markers.hpp"
 #include "vr/cull_frustum.hpp"
+#include "vr/first_person.hpp"
 #include "hooks/frame_tick.hpp"
 #include "hooks/install.hpp"
 #include "vr/device_params.hpp"
@@ -202,6 +203,22 @@ static void load_conf()
             // Occlusion culling off, for A/B (debug/occlusion_off.hpp).
             if (!occlusion_off::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_occlusion_off=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "first_person") == 0) {
+            if (!first_person::set_enabled(value)) {
+                MC2VR_LOG("conf: first_person=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "first_person_hide_head") == 0) {
+            if (!first_person::set_hide_head(value)) {
+                MC2VR_LOG("conf: first_person_hide_head=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "first_person_eye_height") == 0) {
+            if (!first_person::set_eye_height(value)) {
+                MC2VR_LOG("conf: first_person_eye_height=%s not recognized (metres, 0.5..2.5)", value);
+            }
+        } else if (strcmp(key, "first_person_eye_forward") == 0) {
+            if (!first_person::set_eye_forward(value)) {
+                MC2VR_LOG("conf: first_person_eye_forward=%s not recognized (metres, -0.5..1.0)", value);
             }
         } else if (strcmp(key, "debug_gameplay_census") == 0) {
             // First-person runtime facts: frame phases, bone-controller callers,

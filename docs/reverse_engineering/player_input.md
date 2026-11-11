@@ -39,12 +39,14 @@ The look stick (`0xf/0x10`, `0xe/0xd`) goes through the **VM-virtualized** thunk
 
 **The aim reads `g_CameraTable`.** `[g_pCameraManager]` is set to `g_CameraManager` (`0x014A2EC0`) in `GameState3_Update`, and `+0x20` is the table. So the stock aim already follows the HMD-injected camera, from the previous frame's fill ([../camera.md](../camera.md)).
 
-## Fire site (live-verified 2026-11-11, `debug_watch=player:13c+player:124`)
+## Fire site
+
+Live-verified (2026-11-11) with `debug_watch=player:13c+player:124` (the gameplay census supplies the player object):
 
 - **`Weapon_ComputeShotTarget`** reads the shooter's **aim point** (`+0x124`), only in firing windows. Its caller `FUN_00531964` spawns the shot.
   - With weapon flag `0x1000` it also reads the aim origin and the weapon's world pose, and places the target **along the weapon's own forward axis at the muzzle-to-aim-point distance**. So the barrel sets the direction and the aim point the range.
 - Other readers of the aim point, while aiming or firing:
-  - `FUN_0051ffb0` / `FUN_00697700` (animation range; probably the upper-body aim pose);
+  - `FUN_0051ffb0`, called from `FUN_00697700` (a 3.4 KB function in the animation module) and `FUN_0056a9d0`; roles not read;
   - `CamHuman`'s pivot logic `FUN_0071c7b0` (the aim-mode camera).
 - The aim direction (`+0x13c`) is read every frame by the target collection and the aim code, but not by the shot itself.
 

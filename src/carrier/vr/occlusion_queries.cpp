@@ -180,14 +180,19 @@ void on_box_draw(uint32_t vcd_regs)
 void report_window()
 {
     // Oracles: wrapped = 1024 once after each SetupRenderTargets (0 per window
-    // after that); issuedL == issuedR (every box is drawn in both passes);
+    // after that); every box is drawn in both passes, so issued left == right —
+    // checked as pairDrift (left − right since start): per window the two can
+    // differ by one frame that straddles the report, so only a lasting
+    // pairDrift != 0 is a real desync;
     // boxesNoVcd = 0 (else those boxes are drawn with the mono camera); polls
     // hidden > 0 (occlusion actually culls; 0 with polls visible > 0 = the
     // boxes always pass, e.g. drawn without depth); leftOnly = objects the
     // single-query version would have culled wrongly.
-    MC2VR_LOG("occlusion: window: wrapped=%u createFailed=%u issuedL=%u issuedR=%u boxes=%u "
+    static int64_t s_drift = 0;
+    s_drift += (int64_t)g_issued[0] - (int64_t)g_issued[1];
+    MC2VR_LOG("occlusion: window: wrapped=%u createFailed=%u issuedL=%u issuedR=%u pairDrift=%lld boxes=%u "
               "boxesNoVcd=%u | polls visible=%u hidden=%u pending=%u leftOnly=%u",
-              g_wrapped, g_create_failed, g_issued[0], g_issued[1], g_boxes, g_boxes_no_vcd,
+              g_wrapped, g_create_failed, g_issued[0], g_issued[1], (long long)s_drift, g_boxes, g_boxes_no_vcd,
               g_poll_visible.exchange(0), g_poll_hidden.exchange(0), g_poll_pending.exchange(0),
               g_poll_left_only.exchange(0));
     g_wrapped = g_create_failed = 0;

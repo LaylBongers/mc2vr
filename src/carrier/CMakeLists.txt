@@ -13,6 +13,7 @@ add_library(mc2vr_carrier SHARED
     hooks/camera_table.cpp
     hooks/cull_frustum.cpp
     hooks/device.cpp
+    hooks/first_person.cpp
     hooks/frame_tick.cpp
     hooks/hud.cpp
     hooks/install.cpp
@@ -31,6 +32,8 @@ add_library(mc2vr_carrier SHARED
     vr/adaptation.cpp
     vr/camera_table.cpp
     vr/cull_frustum.cpp
+    vr/first_person.cpp
+    vr/head_hide.cpp
     vr/device_params.cpp
     vr/eye_replay.cpp
     vr/eye_share.cpp

@@ -46,6 +46,7 @@ Code: one file per group in `src/carrier/hooks/`, installed in the order of `hoo
 | HUD step-4 W/H loads | `0x0061007d` (EAX/ECX), `0x00612b91` (XMM5/XMM2), `0x00612c7a` (EDI/EAX; x87 live) | MidHook ×3 (attach) | off-screen indicators on the HUD layer's screen ([hud.md](hud.md)) |
 | `GuiRenderer_BeginDisplay` view-rect copy | `0x004af05a` (EDI = renderer, rect at +0x6c048) | MidHook (attach) | Scaleform's display rect = the HUD layer's screen ([hud.md](hud.md)) |
 | camera-table fill | `0x0070AEF8` | MidHook | union HMD-pose injection ([camera.md](camera.md)) |
+| `CamHuman_Update` final matrix | `0x0071e611` (`mov ecx,[esp+0xd8]`, 7 bytes; EBX = camera, matrix at ESP+0xa0) | MidHook (only with `first_person=on`) | first-person eye position + obstruction off ([first_person.md](first_person.md)); becomes a direct call when `CamHuman_Update` is reimplemented |
 | view-context builder tan site + camera clearance | `0x0085943B` / `0x007107F9` | MidHook ×2 | culling alignment ([culling.md](culling.md)) |
 | engine occlusion-query ring (`g_OcclusionQueryArray`, RenderShell+0x2e8c) | runtime | object substitution (from our `SubmitToGPU`) | each entry wrapped in a per-eye query pair ([occluder_boxes.md](occluder_boxes.md)); `debug_occlusion_off` NOPs the box calls `0x00468eed` / `0x00468f12` instead |
 

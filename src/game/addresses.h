@@ -494,3 +494,12 @@
 #define MC2_PLAYER_AIM_POINT_OFF ((uintptr_t)0x124u)     // vec3 (Player_UpdateAimRay out)
 #define MC2_PLAYER_AIM_DIR_OFF ((uintptr_t)0x13cu)       // vec3, normalized
 #define MC2_CAMTABLE_SLOT_CAMERA_OFF ((uintptr_t)0x1e0u) // camera object* in a g_CameraTable slot
+
+// ---- first person (docs/first_person.md) ----------------------------------------
+// CamHuman_Update: the camera's final world matrix (a 4x4 stack local at
+// ESP+0xa0, rows = axes, translation at +0x30) is complete here — after the
+// aim-mode sway (FUN_0071e710) — and the next instruction reads its
+// translation for the working pose (`mov ecx,[esp+0xd8]`, 7 bytes; also a
+// branch target, which is fine: no branch lands inside it). EBX = the camera.
+#define MC2_CAMHUMAN_FINAL_MATRIX ((uintptr_t)0x0071e611u)
+#define MC2_CAMHUMAN_FINAL_MATRIX_ESP_OFF ((uintptr_t)0xa0u)

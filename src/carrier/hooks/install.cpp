@@ -4,6 +4,7 @@
 
 #include "hooks/adaptation.hpp"
 #include "hooks/camera_table.hpp"
+#include "hooks/first_person.hpp"
 #include "hooks/cull_frustum.hpp"
 #include "hooks/device.hpp"
 #include "hooks/frame_tick.hpp"
@@ -24,6 +25,7 @@ void install_attach()
     install_post_update();    // FrameTick slot-5 site: host-event drain
     install_camera_table();   // HMD pose injection at g_CameraTable
     install_cull_frustum();   // HMD cull frustum
+    install_first_person();   // first-person on-foot camera (first_person=on)
     install_render_outputs(); // carrier-owned outputs: setup wrap + restore
     install_render_size();    // render_size=WxH policy
     install_adaptation();     // exposure continuity across render-size switches

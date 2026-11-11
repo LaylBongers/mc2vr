@@ -38,7 +38,7 @@ Live census (2026-11-11, `debug_gameplay_census`), all in `g_CameraTable` slot 0
 - `nullcam` briefly at load;
 - `ragdoll` when the character was thrown from a car (2 s, then `human`).
 
-- `script` for the fixed cameras of the vehicle-hijack QTE (it hands over straight to the hijacked vehicle's camera, here `tank`) and of an NPC interaction (2026-11-11 run 3).
+- `script` for the fixed cameras of the vehicle-hijack QTE (it hands over straight to the hijacked vehicle's camera, here `tank`) and of an NPC interaction.
 
 The video cutscenes (Bink) use no game camera. Fixed-camera in-engine cutscenes weren't reached; they are presumably `script` too.
 
@@ -49,7 +49,7 @@ The video cutscenes (Bink) use no game camera. Fixed-camera in-engine cutscenes 
 - Mode classes found statically: null, PDA, binoculars, script, on-foot (`0x00bce750`), vehicle (`0x00bce7a8`/`0x00bce800`).
 - **Live (2026-11-11): this stack is an overlay stack, not the gameplay camera's owner.**
   - In gameplay the primary player's stack is **empty**. It stayed empty on foot, in every vehicle and in binoculars. The `null` mode only showed at load, and on the unused co-op slot.
-  - Opening the PDA pushes `0x00bce5f0` (the census calls it `pda-menu`), then `pda` for the map/satellite view.
+  - Opening the PDA pushes `PlayerModePdaMenu_vtbl` (`0x00bce5f0`), then `pda` for the map/satellite view.
   - The on-foot and vehicle modes never appeared here, so who owns the `human`/vehicle cameras is OPEN.
 - The game updates every player slot each frame, including the unused co-op slot, which has no character (`+0x20` = 0).
 - Mode code reads the controller input (`ControllerInput`, `RightAnalogX/Y` in `FUN_006ab250`) and posts UI events (`BinocularsEnter/Update/Exit`, `nZoomLevel`).
@@ -58,7 +58,7 @@ The video cutscenes (Bink) use no game camera. Fixed-camera in-engine cutscenes 
 
 ## CamHuman (on-foot)
 
-- Target character: via the `+0x1c` handle.
+- Target character: via the `+0x20` handle (the pose-store and `PhysicsActor` key; the pivot code also reads `+0x1c`).
 - Orbit yaw: `+0x618`. Normalized pitch: `+0x61c`, in [0, 1].
 - Rotation: `RotationX(−pitch)·RotationY(yaw+π)`.
 - Pivot and offset, then collision (`FUN_0071e710`). It writes the working pose, then calls `Cam_Update`, which may run the obstruction pull-in and `CamCtrl_NearPlaneClearance` ([view_frustum.md](view_frustum.md)).

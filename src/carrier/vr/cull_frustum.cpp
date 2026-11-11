@@ -27,12 +27,10 @@ float g_out_th = 0.0f, g_out_tv = 0.0f;    // what we wrote
 float g_clear_th = 0.0f, g_clear_tv = 0.0f;  // the camera clearance's reference extents
 uint64_t g_clear_restored = 0, g_clear_stock = 0;
 
-// Views whose camera isn't the union camera (shadow / reflection / aux), per
-// view context, per window: how far their camera is from the HMD camera and
-// what extents the game gives them. A camera-centred one (sky, far terrain,
-// clouds?) would keep the game's narrow frustum. Live (2026-11-11) the one
-// such view moves 0..25 m and 25..75 deg off the HMD camera, likely the water
-// reflection camera (docs/culling.md "OPEN: sky and far-terrain flicker").
+// Views whose camera isn't the union camera (they keep the game's extents),
+// per view context, per window: how far their camera is from the HMD camera,
+// its forward-axis angle to it, and the game's extents (docs/culling.md
+// "Unmatched views").
 struct OtherView {
     uintptr_t vctx;
     uint64_t builds, no_offset;
