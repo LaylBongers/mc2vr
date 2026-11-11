@@ -27,6 +27,49 @@ float g_out_th = 0.0f, g_out_tv = 0.0f;    // what we wrote
 float g_clear_th = 0.0f, g_clear_tv = 0.0f;  // the camera clearance's reference extents
 uint64_t g_clear_restored = 0, g_clear_stock = 0;
 
+// Views whose camera isn't the union camera (shadow / reflection / aux), per
+// view context, per window: how far their camera is from the HMD camera and
+// what extents the game gives them. A camera-centred one (sky, far terrain,
+// clouds?) would keep the game's narrow frustum. Live (2026-11-11) the one
+// such view moves 0..25 m and 25..75 deg off the HMD camera, likely the water
+// reflection camera (docs/culling.md "OPEN: sky and far-terrain flicker").
+struct OtherView {
+    uintptr_t vctx;
+    uint64_t builds, no_offset;
+    float dist_min, dist_max, ang_min, ang_max;
+    float th, tv;  // last game extents (tan)
+};
+constexpr int kMaxOtherViews = 8;
+OtherView g_others[kMaxOtherViews];
+int g_n_others = 0;
+uint64_t g_others_dropped = 0;
+
+OtherView *other_view_of(uintptr_t vctx)
+{
+    for (int i = 0; i < g_n_others; i++) {
+        if (g_others[i].vctx == vctx) return &g_others[i];
+    }
+    if (g_n_others == kMaxOtherViews) {
+        g_others_dropped++;
+        return nullptr;
+    }
+    OtherView &o = g_others[g_n_others++];
+    o = OtherView{};
+    o.vctx = vctx;
+    o.dist_min = o.ang_min = 1e30f;
+    return &o;
+}
+
+// The builder's own signs kept; magnitudes widened, never narrowed. Writes the
+// ctx tans too (render constants + snapshot read them).
+void widen(uintptr_t vctx, float &th, float &tv, float hmd_th, float hmd_tv)
+{
+    th = std::copysign(std::fmax(std::fabs(th), hmd_th), th);
+    tv = std::copysign(std::fmax(std::fabs(tv), hmd_tv), tv);
+    memcpy((void *)(vctx + MC2_VCCAM_CTX_TANH_OFF), &th, 4);
+    memcpy((void *)(vctx + MC2_VCCAM_CTX_TANV_OFF), &tv, 4);
+}
+
 // The last widened view's (clearance reference, written) extent magnitudes,
 // published to the camera thread (on_camera_frustum_copied). Written by the
 // builder (render thread).
@@ -83,9 +126,26 @@ bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
         return false;
     }
     const uintptr_t entry = cam + idx * MC2_VCCAM_ENTRY_STRIDE;
-    if (!camera_table::is_union_camera((const float *)(entry + MC2_VCCAM_ENTRY_ROT_OFF),
-                                   (const float *)(entry + MC2_VCCAM_ENTRY_POS_OFF))) {
+    const float *rows = (const float *)(entry + MC2_VCCAM_ENTRY_ROT_OFF);
+    const float *pos = (const float *)(entry + MC2_VCCAM_ENTRY_POS_OFF);
+    if (!camera_table::is_union_camera(rows, pos)) {
         g_other_view++;
+        OtherView *o = other_view_of(vctx);
+        float dist = 0.0f, ang = 0.0f;
+        const bool have = camera_table::union_offset(rows, pos, &dist, &ang);
+        if (o != nullptr) {
+            o->builds++;
+            o->th = th;
+            o->tv = tv;
+            if (!have) {
+                o->no_offset++;
+            } else {
+                o->dist_min = std::fmin(o->dist_min, dist);
+                o->dist_max = std::fmax(o->dist_max, dist);
+                o->ang_min = std::fmin(o->ang_min, ang);
+                o->ang_max = std::fmax(o->ang_max, ang);
+            }
+        }
         return false;
     }
 
@@ -101,13 +161,9 @@ bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
     const float hmd_th = std::tan(std::fmin(half_h, MAX_HALF));
     const float hmd_tv = std::tan(std::fmin(half_v, MAX_HALF));
 
-    // The builder's own signs kept; magnitudes widened, never narrowed.
     g_game_th = th;
     g_game_tv = tv;
-    th = std::copysign(std::fmax(std::fabs(th), hmd_th), th);
-    tv = std::copysign(std::fmax(std::fabs(tv), hmd_tv), tv);
-    memcpy((void *)(vctx + MC2_VCCAM_CTX_TANH_OFF), &th, 4);
-    memcpy((void *)(vctx + MC2_VCCAM_CTX_TANV_OFF), &tv, 4);
+    widen(vctx, th, tv, hmd_th, hmd_tv);
     g_out_th = th;
     g_out_tv = tv;
     float clear_th, clear_tv;
@@ -199,6 +255,21 @@ void report_window()
               (unsigned long long)g_no_fov, deg(g_game_th), deg(g_game_tv),
               deg(g_out_th), deg(g_out_tv), deg(g_clear_th), deg(g_clear_tv),
               (unsigned long long)g_clear_restored, (unsigned long long)g_clear_stock);
+    for (int i = 0; i < g_n_others; i++) {
+        const OtherView &o = g_others[i];
+        if (o.builds == 0) continue;
+        MC2VR_LOG("cullfov:   other view ctx=%p builds=%llu game %.1f°/%.1f° | from the HMD camera: dist %.2f..%.2f m, "
+                  "forward %.1f..%.1f° (no offset %llu)",
+                  (void *)o.vctx, (unsigned long long)o.builds, deg(o.th), deg(o.tv),
+                  o.dist_min < 1e29f ? o.dist_min : -1.0f, o.dist_max, o.ang_min < 1e29f ? o.ang_min : -1.0f, o.ang_max,
+                  (unsigned long long)o.no_offset);
+    }
+    if (g_others_dropped) {
+        MC2VR_LOG("cullfov:   other views beyond %d not tracked: %llu builds", kMaxOtherViews,
+                  (unsigned long long)g_others_dropped);
+    }
+    g_n_others = 0;
+    g_others_dropped = 0;
     g_builds = g_widened = g_other_view = g_no_cam = g_no_fov = 0;
     g_clear_restored = g_clear_stock = 0;
 }

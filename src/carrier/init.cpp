@@ -17,11 +17,13 @@
 #include "game/addresses.h"
 #include "log.hpp"
 
+#include "crash_log.hpp"
 #include "debug/render_dump.hpp"
 #include "debug/stream_capture.hpp"
 #include "debug/build_census.hpp"
 #include "debug/occlusion_off.hpp"
 #include "debug/camera_census.hpp"
+#include "debug/gameplay_census.hpp"
 #include "debug/watch.hpp"
 #include "vr/view_rewrite.hpp"
 #include "vr/camera_table.hpp"
@@ -201,6 +203,12 @@ static void load_conf()
             if (!occlusion_off::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_occlusion_off=%s not recognized (use on|off)", value);
             }
+        } else if (strcmp(key, "debug_gameplay_census") == 0) {
+            // First-person runtime facts: frame phases, bone-controller callers,
+            // camera classes, player modes, look input (debug/gameplay_census.hpp).
+            if (!gameplay_census::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_gameplay_census=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "debug_camera_census_skip") == 0) {
             camera_census::set_skip(value);
         } else if (strcmp(key, "debug_build_census") == 0) {
@@ -221,9 +229,10 @@ static void load_conf()
         } else if (strcmp(key, "render_size") == 0) {
             // Render size W×H (docs/render_resolution.md): the engine's
             // render chain + the carrier outputs run at W×H; the window and
-            // swapchain stay stock. off = render size = window size.
+            // swapchain stay stock. hmd (default) = the runtime's eye size;
+            // off = render size = window size.
             if (!render_size::set_size(value)) {
-                MC2VR_LOG("conf: render_size=%s not recognized (use WxH, e.g. 2016x2240, or off)",
+                MC2VR_LOG("conf: render_size=%s not recognized (use hmd, WxH, e.g. 2016x2240, or off)",
                           value);
             }
         } else if (strcmp(key, "render_size_follow_hmd") == 0) {
@@ -235,7 +244,7 @@ static void load_conf()
                 MC2VR_LOG("conf: render_aspect=%s not recognized (use true|snap)", value);
             }
         } else if (strcmp(key, "vsync") == 0) {
-            // Vsync pacing: off = force D3DPRESENT_INTERVAL_IMMEDIATE at
+            // Vsync pacing: off (default) = force D3DPRESENT_INTERVAL_IMMEDIATE at
             // CreateDevice/Reset (the frame's two Presents are vsync-locked
             // and cap the game at ~30 Hz).
             if (!device_params::set_vsync(value)) {
@@ -374,6 +383,10 @@ void init()
     log_init();
 
     MC2VR_LOG("=== mc2vr carrier attached (pid=%lu) ===", GetCurrentProcessId());
+
+    // Always on, even when the build lock fails below: crashes are sporadic,
+    // and the report is the only trace they leave (crash_log.hpp).
+    crash_log::install();
 
     // Config (mc2vr.conf next to the DLL) — before any hook so the mode is
     // settled first.

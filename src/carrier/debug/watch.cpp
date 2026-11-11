@@ -50,12 +50,25 @@ struct TargetSpec {
     uint32_t entry_off;  // ViewEntry offset (or offset in the staged 0x30 block
                           // when is_staging); UINT32_MAX = fixed_addr below
     bool is_staging;      // resolve against this+0xc2110+idx*0x30 instead of the entry
+    bool from_base;       // resolve against the provided base (provide_base) + entry_off
     uint32_t fixed_addr;
     uint32_t addr;       // resolved at arm time
     bool valid;           // aligned + committed
 };
 TargetSpec g_specs[TARGET_MAX];
 uint32_t g_spec_count = 0;
+
+// Base for player:<off> targets (provide_base; the gameplay census feeds the
+// player object). Written on the update thread, read by the poller.
+volatile uintptr_t g_base = 0;
+
+bool any_spec(bool from_base)
+{
+    for (uint32_t i = 0; i < g_spec_count; i++) {
+        if (g_specs[i].from_base == from_base) return true;
+    }
+    return false;
+}
 
 // ---- chosen view --------------------------------------------------------------
 // Written by on_view (main thread), consumed by the poller (no DRs set on it,
@@ -408,7 +421,14 @@ void arm_sweep()
     // Resolve addresses first (no threads suspended while doing this).
     for (uint32_t i = 0; i < g_spec_count; i++) {
         TargetSpec &s = g_specs[i];
-        if (s.is_staging) {
+        if (s.from_base) {
+            s.addr = g_base ? (uint32_t)(g_base + s.entry_off) : 0;
+            if (s.addr == 0) {
+                MC2VR_LOG("watch: target %s needs its base — not provided, skipped", s.name);
+                s.valid = false;
+                continue;
+            }
+        } else if (s.is_staging) {
             if (g_frame_ctx == 0) {
                 MC2VR_LOG("watch: target %s needs the frame-ctx pointer — not seen, "
                           "skipped", s.name);
@@ -567,6 +587,21 @@ bool set_targets(const char *value)
                 break;
             }
         }
+        if (!found && strncmp(tok, "player:", 7) == 0) {
+            // Offset into the player object (base provided at runtime by the
+            // gameplay census, debug_gameplay_census=on).
+            const char *hex = tok + 7;
+            char *end = nullptr;
+            const unsigned long off = strtoul(hex, &end, 16);
+            if (end != hex && *end == '\0' && off < 0x10000) {
+                snprintf(s.name, sizeof(s.name), "player+%lX", off);
+                s.entry_off = (uint32_t)off;
+                s.is_staging = false;
+                s.from_base = true;
+                s.fixed_addr = 0;
+                found = true;
+            }
+        }
         if (!found && strncmp(tok, "addr:", 5) == 0) {
             const char *hex = tok + 5;
             char *end = nullptr;
@@ -581,7 +616,7 @@ bool set_targets(const char *value)
         }
         if (!found) {
             MC2VR_LOG("conf: debug_watch target '%s' not recognized (named ViewEntry "
-                      "field or addr:<hex>) — feature disabled", tok);
+                      "field, player:<hex> or addr:<hex>) — feature disabled", tok);
             g_spec_count = 0;
             return false;
         }
@@ -611,6 +646,18 @@ void set_view_index(uint32_t idx)
 void set_detail_hits(uint32_t n)
 {
     g_detail_left = n;
+}
+
+void provide_base(uintptr_t base)
+{
+    if (!g_enabled || !any_spec(true) || base == g_base) return;
+    if (InterlockedCompareExchange(&g_armed, 0, 0) == 1) {
+        MC2VR_LOG("watch: base changed %p -> %p after arming — player:<off> targets still watch the old "
+                  "object", (void *)g_base, (void *)base);
+        return;
+    }
+    g_base = base;
+    MC2VR_LOG("watch: base for player:<off> targets = %p — arming on the next poller tick", (void *)base);
 }
 
 void on_view(uint32_t idx, uint32_t type, const uint8_t *entry, uintptr_t ebx_this)
@@ -680,6 +727,8 @@ void poll()
 {
     if (!g_enabled) return;
     if (InterlockedCompareExchange(&g_armed, 0, 0) != 0) return; // armed or failed
+    if (any_spec(true) && g_base == 0) return;  // player:<off> targets wait for their base
+    const bool need_view = any_spec(false);
 
     // Selection (no pin), in order of confidence:
     //   1. Most-walked t3-live view after a 10s settle (lets walk counts
@@ -687,7 +736,7 @@ void poll()
     //   2. First type-2 with a live quat (loading phases may have no t3=1
     //      views yet; known to be able to pick transient views — logged).
     //   3. First type-2 after 30s (last resort).
-    if (InterlockedCompareExchange(&g_have_view, 0, 0) == 0) {
+    if (need_view && InterlockedCompareExchange(&g_have_view, 0, 0) == 0) {
         bool chose = false;
         if (g_t3_count > 0 && g_first_t3_tick != 0 &&
             GetTickCount() - g_first_t3_tick >= 10000) {

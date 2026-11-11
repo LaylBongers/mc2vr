@@ -3,7 +3,8 @@
 The `viewContextData`/VP production chain, mapped end-to-end — **all PLAINTEXT after the VM's orchestration thunk** (hardware-watch-proven 2026-10-06; plates on the named symbols in Ghidra; record system: [view_context_records.md](view_context_records.md); mod context: [../camera.md](../camera.md)).
 
 ```
-camera entity pose (quat + pos, heap record; values originate in game logic/VM)
+camera entity pose (quat + pos; the camera object's output pose, computed by its own plaintext
+  Update(dt), which CameraTable_FillFromPose calls first — camera_classes.md)
   -> CameraTable_FillFromPose (0x0070ae50, plaintext; called from CameraTable_FillLoop
      CameraTable_FillLoop's 5-slot x 0x620 loop):
        CameraEntity_GetPoseRecord (0x0042ee50) -> D3DXQuaternionNormalize
@@ -43,7 +44,7 @@ camera entity pose (quat + pos, heap record; values originate in game logic/VM)
 ## Camera VALUES enter at the camera object
 
 - **The draw camera is external to the view system.** The plaintext consumer path (the `PgPrimitive` record walk, 0x58 stride) carries only table indices (material/technique/env/view-context/view-scale/screen) and draw params. Patching `ViewEntry` fields, staging slots, the camera ring, frame-ctx blocks or the pose-record store never moved the draw camera in the early patching experiments — re-interpreted 2026-10-06: those patches predate the serial change-gating and staged round-trip knowledge ([camera_data_flow.md](camera_data_flow.md)); **E2 (live-proven 2026-10-06): the ViewEntry pose fields are NOT a draw-camera input** — injecting pos + serial bump into ALL 16 camera-adjacent views never moved the decomposed draw camera (regression slope 0.00 across static windows); the round-trip copy-back re-asserts the VM's pose within one frame (refreshes≈injects). The `pos7c4`/`quat7d4` entry fields are OUTPUT channels.
-- **Camera-object pose writer — RESOLVED (E2b complete, 2026-10-06)**: camera VALUES originate in the camera entity's quat+pos (heap record, game logic / VM-side), flow through PLAINTEXT `CameraTable_FillFromPose` (`0x0070ae50`, D3DX quat→rotation) into the STATIC `g_CameraTable` (`0x014A2EE0`), which feeds the VP builder AND the culling/fov consumers (`0x0048067E`). The single injection point is g_CameraTable post-fill — IMPLEMENTED (2026-10-07): carrier MidHook at `0x0070AEF8`, the instruction after the fill's `Matrix_Copy3x4` call; the E2-disproven ViewEntry entry-injection protocol is retired. Verdicts + implementation notes: [../camera.md](../camera.md).
+- **Camera-object pose writer — RESOLVED (E2b complete, 2026-10-06)**: camera VALUES originate in the camera entity's quat+pos (the camera object's output pose, computed by its plaintext class update — [camera_classes.md](camera_classes.md)), flow through PLAINTEXT `CameraTable_FillFromPose` (`0x0070ae50`, D3DX quat→rotation) into the STATIC `g_CameraTable` (`0x014A2EE0`), which feeds the VP builder AND the culling/fov consumers (`0x0048067E`). The single injection point is g_CameraTable post-fill — IMPLEMENTED (2026-10-07): carrier MidHook at `0x0070AEF8`, the instruction after the fill's `Matrix_Copy3x4` call; the E2-disproven ViewEntry entry-injection protocol is retired. Verdicts + implementation notes: [../camera.md](../camera.md).
 - There is NO fixed-function projection — `SetTransform` is never called. The projection is folded into the `viewContextData` VP rows. The game's projection is always the screen aspect's.
 
 ## Matrix & handedness conventions (probe-proven 2026-10-07)

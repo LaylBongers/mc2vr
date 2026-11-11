@@ -53,6 +53,12 @@ bool set_probe_enabled(const char *value);
 // not armed or the HMD wasn't tracked this frame.
 bool get_union(math::Quat *rot, math::Vec3 *pos);
 
+// Distance (m) and forward-axis angle (deg) of a camera entry (rows at 4-float
+// stride, as in is_union_camera) from the newest rewritten (union) entry of
+// the last few frames. False when nothing was rewritten recently. Diagnostics
+// for views that don't match (cull_frustum's other-view report).
+bool union_offset(const float *rows, const float *pos, float *dist_m, float *fwd_angle_deg);
+
 // True + fills *rot/*pos with the union pose that was composed into the
 // rewritten entry whose rendered basis (R, U, F — a decomposed VP camera)
 // matches, searching the last few frames' rewrites. This is the union the VP

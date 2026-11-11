@@ -15,7 +15,7 @@ How the source is organized, and the reasoning behind the split. It describes th
 
 ## `src/carrier/`
 
-- **(root):** infrastructure: `dllmain`, `init` (conf parsing, install order), `log`, `build_lock`.
+- **(root):** infrastructure: `dllmain`, `init` (conf parsing, install order), `log`, `crash_log` (the always-on crash report, [debugging.md](debugging.md#crash-reports)), `build_lock`.
 - **`hooks/`:** the attachments to game code: hook objects, the callbacks that decode registers and stack, code patches, and the D3D9 vtable hooks.
   - `install.cpp` lists them in install order.
   - `site.hpp` creates hooks and refuses sites inside replaced originals, where a hook would silently never fire.

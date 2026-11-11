@@ -27,7 +27,7 @@ namespace {
 // size only while the HMD is in use, else stock — so with the HMD on standby
 // the game renders exactly as unmodded (mouse mapping included).
 uint32_t g_cfg_w = 0, g_cfg_h = 0;
-bool g_cfg_hmd = false; // render_size=hmd: g_cfg_* come from the OpenXR session
+bool g_cfg_hmd = true;  // render_size=hmd (the default): g_cfg_* come from the OpenXR session
 uint32_t g_w = 0, g_h = 0;
 bool g_true_aspect = true;
 bool g_follow_hmd = true;

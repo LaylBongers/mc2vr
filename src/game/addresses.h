@@ -473,3 +473,24 @@
 #define MC2_GUI_BEGIN_DISPLAY ((uintptr_t)0x004aefd0u)
 #define MC2_GUI_RENDERER_CODE_LO ((uintptr_t)0x004ae2d0u)
 #define MC2_GUI_RENDERER_CODE_HI ((uintptr_t)0x004b051cu)
+
+// ---- gameplay census (debug_gameplay_census; docs/first_person.md, ----------
+// ---- docs/reverse_engineering/{camera_classes,character_pose,player_input}.md)
+// Function entries (MidHooks; every entry starts with >= 5 bytes of whole
+// instructions, checked 2026-11-11). Frame order in InGameShellState_FramePipeline:
+// player update 0x004c9811 -> command drain 0x004c982b -> physics 0x004c984c ->
+// animation 0x004c990c -> camera table 0x004c993a.
+#define MC2_PLAYER_FRAME_UPDATE ((uintptr_t)0x006a0710u)     // Player_FrameUpdate, EAX = player
+#define MC2_HUMAN_PHYSICS_FRAME_STEP ((uintptr_t)0x00429be0u) // HumanPhysics_FrameStep
+#define MC2_ANIM_FRAME_UPDATE ((uintptr_t)0x00695a00u)       // AnimSystem_FrameUpdate
+#define MC2_ANIM_POST_UPDATE ((uintptr_t)0x00694f10u)        // AnimSystem_PostUpdate (after the 3 task queues)
+#define MC2_CAMTABLE_FILL_LOOP ((uintptr_t)0x0070f430u)      // CameraTable_FillLoop
+#define MC2_BODYBONES_ON_POSE ((uintptr_t)0x006916b0u)       // BodyBoneTracker_OnPose (slot 5; ECX = ctrl)
+#define MC2_BODYBONES_SLOT2 ((uintptr_t)0x00691310u)         // BodyBoneTracker slot 2 (per-frame update?)
+// Player object fields (player = EAX at Player_FrameUpdate).
+#define MC2_PLAYER_MODE_COUNT_OFF ((uintptr_t)0x1bcu)    // int
+#define MC2_PLAYER_MODES_OFF ((uintptr_t)0x1c0u)         // mode*[8]
+#define MC2_PLAYER_MODE_MASK_OFF ((uintptr_t)0x1e0u)     // u8 active bits
+#define MC2_PLAYER_AIM_POINT_OFF ((uintptr_t)0x124u)     // vec3 (Player_UpdateAimRay out)
+#define MC2_PLAYER_AIM_DIR_OFF ((uintptr_t)0x13cu)       // vec3, normalized
+#define MC2_CAMTABLE_SLOT_CAMERA_OFF ((uintptr_t)0x1e0u) // camera object* in a g_CameraTable slot

@@ -56,3 +56,15 @@ HMD tracked, gameplay.
 Misreadings worth not repeating: `[0x00BEAB5C]` is the base fov in radians, 4:3-normalized (0.95975) — not a cosine, not "300 engine units" (`[0x00BAD260]` = 300.0 is a separate constant). `Fov_TanIndexHelper` is camera-controller boom math, not the projection's fov reader. `PgClouds_EmitViewRecords` (reads the slot-ctx tans) builds render constants (fog/atmosphere terms), not a per-object cull. `ViewCtx_BuildSnapshot`'s snapshot is a stack temporary used only for a viewport rect.
 
 Lesson: **replace a derived value where it is DERIVED, not at one consumer's copy** (the builder recomputes every frame and consumers read sibling products); then exempt consumers that must stay stock at their own private copy. Method gotchas (raw byte decode, watchpoints): [debugging.md](debugging.md). VR smearing: [occluder_boxes.md](occluder_boxes.md).
+
+## OPEN: sky and far-terrain flicker
+
+User-reported, long-standing (2026-11-11): the sky and very distant terrain flicker at times. It's not yet tied to a cause or a place. It may share a cause with the tank gunner-seat flicker, which persists with occlusion culling off ([occluder_boxes.md](occluder_boxes.md#open-scenery-flicker-in-the-tank-2026-11-11)). Candidates:
+- far-plane depth precision with the widened per-eye projection;
+- far-terrain LOD / low-res terrain selection from the HMD-injected camera;
+- a per-eye mismatch in the camera-derived sky / atmosphere constants (mono `matViewMat`, [reverse_engineering/view_context_records.md](reverse_engineering/view_context_records.md)).
+
+User-observed (2026-11-11): **whole objects pop in and out**, e.g. a section of clouds or an entire distant mountain. That's culling or LOD, not depth precision.
+
+- **Ruled out: the one unmatched builder view.** One build per frame never matches the union camera and keeps the game's extents. Its camera (live 2026-11-11, `cullfov:   other view` lines) is 0–25 m from the HMD camera and 25–75° off its forward axis, at times coinciding with it. That fits a planar water-reflection camera (mirrored across the water: distance = 2× camera height, angle = 2× pitch; unconfirmed). An A/B that widened it whenever it was within 1 m made the popping much worse, also on near objects, because it toggled that view's frustum frame to frame. The switch was removed; the per-view report stays.
+- **Next lead: the per-view culling box has its own fov.** `ViewEntry_DeriveCullTask` builds the culling bounds and per-slot LOD from the ViewEntry fov fields (+0x2ec, from the camera data +0x17c/+0x180; [reverse_engineering/view_frustum.md](reverse_engineering/view_frustum.md), [reverse_engineering/camera_data_flow.md](reverse_engineering/camera_data_flow.md)), not from the projection we widen. Its rotation follows the head (via `g_CameraTable`), but its extent would stay the game's. Check what that fov is live and whether far terrain / clouds / LOD go through it.

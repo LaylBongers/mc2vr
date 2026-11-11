@@ -54,4 +54,5 @@ void on_camera_frustum_copied(float *frustum);
 // 10s window report; resets counters.
 void report_window();
 
+
 } // namespace mc2vr::cull_frustum

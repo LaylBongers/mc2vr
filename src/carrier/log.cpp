@@ -65,7 +65,12 @@ void describe_code_address(void *addr, char *out, size_t out_size)
     out[out_size - 1] = '\0';
 }
 
-void log_write(const char *fmt, ...)
+namespace {
+
+// One formatted, timestamped line. try_only: never wait for the lock (crash
+// path: another thread may hold it forever, or this thread is the faulting
+// one mid-write); the line is written either way.
+void write_line(bool try_only, const char *fmt, va_list ap)
 {
     if (g_log_file == INVALID_HANDLE_VALUE) {
         return; // not initialized (or file creation failed) — nothing to do
@@ -80,11 +85,7 @@ void log_write(const char *fmt, ...)
     if (n < 0) {
         return;
     }
-
-    va_list ap;
-    va_start(ap, fmt);
     vsnprintf(line + n, sizeof(line) - (size_t)n, fmt, ap);
-    va_end(ap);
 
     size_t len = strlen(line);
     if (len + 1 >= sizeof(line)) {
@@ -93,7 +94,12 @@ void log_write(const char *fmt, ...)
     line[len] = '\n';
     line[len + 1] = '\0';
 
-    EnterCriticalSection(&g_log_lock);
+    bool locked = true;
+    if (try_only) {
+        locked = TryEnterCriticalSection(&g_log_lock) != 0;
+    } else {
+        EnterCriticalSection(&g_log_lock);
+    }
 
     DWORD written = 0;
     SetFilePointer(g_log_file, 0, nullptr, FILE_END);
@@ -102,7 +108,27 @@ void log_write(const char *fmt, ...)
     // cache, so lines survive a game crash.
     WriteFile(g_log_file, line, (DWORD)len + 1, &written, nullptr);
 
-    LeaveCriticalSection(&g_log_lock);
+    if (locked) {
+        LeaveCriticalSection(&g_log_lock);
+    }
+}
+
+} // namespace
+
+void log_write(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    write_line(false, fmt, ap);
+    va_end(ap);
+}
+
+void log_write_crash(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    write_line(true, fmt, ap);
+    va_end(ap);
 }
 
 } // namespace mc2vr

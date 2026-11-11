@@ -24,7 +24,9 @@
 #include "vr/view_rewrite.hpp"
 #include "vr/camera_table.hpp"
 #include "watch.hpp"
+#include "crash_log.hpp"
 #include "debug/camera_census.hpp"
+#include "debug/gameplay_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/gui_census.hpp"
 #include "debug/occlusion_off.hpp"
@@ -229,6 +231,9 @@ void endofframe_midhook(safetyhook::Context &)
 
 void report_window()
 {
+    // Keep the crash logger on top of any filter the game installed since.
+    crash_log::reassert();
+
     // Views line.
     MC2VR_LOG("views: submits=%llu frames-with-views=%llu views/frame min=%u max=%u "
               "listHead=%u distinct=%u",
@@ -311,6 +316,7 @@ void report_window()
     render_size::report_window();
     watch::report_window();
     camera_census::report_window();
+    gameplay_census::report_window();
 }
 
 
@@ -326,6 +332,7 @@ DWORD WINAPI poller_thread(LPVOID)
 
     while (InterlockedCompareExchange(&g_poller_run, 1, 1)) {
         Sleep(POLL_MS);
+        crash_log::watchdog_tick();  // HANG: reports (crash_log.hpp)
 
         // Culling-watch: one-time DR0-3 arm once a target view exists
         // (per-thread DRs cannot be set from the watching thread itself).
@@ -418,6 +425,8 @@ void install_early()
     build_census::install();
     // Optional occlusion culling off (mc2vr.conf debug_occlusion_off=on).
     occlusion_off::install();
+    // Optional gameplay census (mc2vr.conf debug_gameplay_census=on).
+    gameplay_census::install();
 }
 
 void install_late()

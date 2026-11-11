@@ -32,7 +32,12 @@
 //       fields of the chosen view, or STAGING targets (stagingpos
 //       stagingquat stagingserial — the VM consumer's staged camera block,
 //       the direct culling-consumer probe), or raw addresses "addr:0x01ABC"
-//       to watch any VA. View selection: among type-2 views whose companion
+//       to watch any VA, or "player:<hex offset>" — a field of the player
+//       object, whose address the gameplay census provides at runtime
+//       (needs debug_gameplay_census=on; e.g. player:13c = the aim
+//       direction, player:124 = the aim point). A watch of only player:
+//       targets arms as soon as the base is known, with no view selection.
+//       View selection: among type-2 views whose companion
 //       liveness byte is 01 (the live-camera marker), the most-walked one
 //       after a 10s settle — loading templates (t3=00) and rarely-walked
 //       special views lose; debug_watch_view pins an index instead.
@@ -82,6 +87,10 @@ void set_detail_hits(uint32_t n);
 // the frame-ctx object (kept in EBX through the walk) — needed for the
 // staging-block targets (this+0xc2110+idx*0x30).
 void on_view(uint32_t idx, uint32_t type, const uint8_t *entry, uintptr_t ebx_this);
+
+// The base address for player:<off> targets (gameplay census, update thread).
+// Ignored once armed (logged): the watch stays on the first object.
+void provide_base(uintptr_t base);
 
 // 250ms poller tick (render_dump poller thread): performs the one-time
 // suspend-sweep arm once a target view exists.

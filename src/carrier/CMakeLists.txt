@@ -3,6 +3,7 @@
 # motion-control track).
 add_library(mc2vr_carrier SHARED
     # Infrastructure: attach, conf, log, build lock.
+    crash_log.cpp
     dllmain.cpp
     init.cpp
     log.cpp
@@ -51,6 +52,7 @@ add_library(mc2vr_carrier SHARED
     debug/build_census.cpp
     debug/camera_census.cpp
     debug/census_hooks.cpp
+    debug/gameplay_census.cpp
     debug/gpu_census.cpp
     debug/gui_census.cpp
     debug/occlusion_off.cpp

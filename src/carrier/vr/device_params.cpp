@@ -14,7 +14,7 @@ namespace {
 // a 60 Hz vsync slot -> ~30 Hz game (live-log-proven). vsync=off forces
 // D3DPRESENT_INTERVAL_IMMEDIATE so the game renders as fast as the passes
 // actually cost; the OpenXR host/runtime paces the HMD.
-bool g_present_immediate = false;
+bool g_present_immediate = true;  // vsync=off is the default
 
 } // namespace
 

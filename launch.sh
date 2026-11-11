@@ -53,5 +53,15 @@ if [ -n "$MC2VR_VK_VALIDATION" ]; then
     echo "Vulkan validation on: $VK_LAYER_LOG_FILENAME"
 fi
 
+# MC2VR_PROTON_LOG=1: Proton's own log (Wine's crash and loader messages,
+# what the carrier's crash report can't see) in <deploy dir>/steam-<id>.log.
+# Uses Proton's default WINEDEBUG channels unless WINEDEBUG is set; +seh logs
+# every first-chance exception, so the file grows fast with debug_watch on.
+if [ -n "$MC2VR_PROTON_LOG" ]; then
+    export PROTON_LOG=1
+    export PROTON_LOG_DIR="$DEPLOY_DIR"
+    echo "Proton log on: $DEPLOY_DIR/steam-*.log"
+fi
+
 cd "$GAME_DIR"
 exec "$PROTON_PATH/proton" run "$DEPLOY_DIR/mc2vr_launcher.exe" "$@"

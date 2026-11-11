@@ -568,6 +568,39 @@ bool is_union_camera(const float *rows, const float *pos)
     return false;
 }
 
+bool union_offset(const float *rows, const float *pos, float *dist_m, float *fwd_angle_deg)
+{
+    const uint64_t now = hooks::frame_count();
+    const Rewritten *best = nullptr;
+    float r[9], p[3];
+    for (const Rewritten &h : g_history) {
+        const uint32_t s0 = h.seq.load(std::memory_order_acquire);
+        if (s0 == 0 || (s0 & 1u) != 0 || now - h.frame > 3 || (best && h.frame <= best->frame)) {
+            continue;
+        }
+        float rr[9], pp[3];
+        memcpy(rr, h.rows, sizeof(rr));
+        memcpy(pp, h.pos, sizeof(pp));
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (h.seq.load(std::memory_order_relaxed) != s0) {
+            continue;
+        }
+        best = &h;
+        memcpy(r, rr, sizeof(r));
+        memcpy(p, pp, sizeof(p));
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    const float dx = pos[0] - p[0], dy = pos[1] - p[1], dz = pos[2] - p[2];
+    *dist_m = std::sqrt(dx * dx + dy * dy + dz * dz);
+    // Row 2 = the rendered forward axis (docs/camera.md); entry rows are 4 floats apart.
+    float dot = rows[8] * r[6] + rows[9] * r[7] + rows[10] * r[8];
+    dot = std::fmax(-1.0f, std::fmin(1.0f, dot));
+    *fwd_angle_deg = std::acos(dot) * 57.29578f;
+    return true;
+}
+
 bool set_probe_enabled(const char *value)
 {
     bool on;

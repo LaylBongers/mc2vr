@@ -40,3 +40,20 @@ Cause: the emitter issues a box for every object in the **cull** frustum, then t
 Verdict: no margin (`cull_fov_margin` removed). The two eye frustums' union (left −57°…+46.5°, right −46.5°…+57°, same vertical) is nearly exactly the cull frustum then. Live 2026-11-10: no smearing, no edge pop-in, hidden polls 7–73% by location. `leftOnly` reached 433k polls in one 10 s window: objects only the left eye saw, which a single query would have culled. A margin could only come back if the pairs reported boxes off-screen in both eyes as not ready (= visible), which needs a per-eye on-screen test per box (the box→record matrix link is not reversed).
 
 Report caveat: the window counters are plain render-thread counters reset by the report thread, so `issuedL`/`issuedR` can differ by a few hundred within one window (a reset between the two passes); they agree summed over windows.
+
+## OPEN: scenery flicker in the tank (2026-11-11)
+
+User-observed: scenery items flicker at times while driving the tank, especially in the gunner seat (camera classes `tank` / `turret`, [reverse_engineering/camera_classes.md](reverse_engineering/camera_classes.md)). Log evidence from that run:
+- **`issuedL != issuedR`** in exactly the three windows of the seat switching (11:36:13–11:36:33: 267,518/267,205, 253,708/253,815, 222,080/222,286). It's the only place the pair invariant broke all run.
+- `leftOnly` was high in the tank windows (up to 246k), but also in the car (142k), so it tracks the scene, not the tank.
+- The frustum widening was unchanged (`cullfov` 57.0°/54.7°, camera clearance restored every frame).
+
+A/B run (2026-11-11, `debug_occlusion_off=on`):
+- **The driver-seat flicker is gone**, so it came from the occlusion query pairs, presumably the seat-switch pair mismatch above.
+- **The gunner seat still flickers**, so that has a second cause. The camera injection and culling counters were clean in that segment (no pose misses, the widened frustum unchanged). A long-standing flicker of the sky and very distant terrain may be the same thing (OPEN, [culling.md](culling.md)).
+
+Next:
+- for the pairs: why a seat switch desyncs `issuedL`/`issuedR`;
+- for the gunner: what the flicker looks like (whole objects popping, depth shimmer, or one eye only), which separates culling/LOD from depth precision.
+
+The original plan was: If the flicker goes, it's the pairs or the visibility hysteresis. Then check how a vehicle camera changes the box pass, e.g. view type 4 issued from a second view, or a per-eye miss in the gunner camera.

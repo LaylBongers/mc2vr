@@ -19,7 +19,7 @@ The carrier's own surfaces are created from the render fields. The view-rewrite 
 
 ## Following the HMD
 
-- **Size source.** `render_size=hmd` takes the OpenXR recommended image rect from the session ([xr_session.md](xr_session.md)), and always follows the HMD. An explicit `render_size=WxH` follows by default (`render_size_follow_hmd`).
+- **Size source.** `render_size=hmd` (the default since 2026-11-11; `off` = window resolution) takes the OpenXR recommended image rect from the session ([xr_session.md](xr_session.md)), and always follows the HMD. An explicit `render_size=WxH` follows by default (`render_size_follow_hmd`).
 - **"In use"** means the session is VISIBLE/FOCUSED. That is the runtime's lifecycle signal, already debounced by the runtime (proximity sensor/standby), so the carrier adds no debounce. The per-frame tracked flag is deliberately excluded: a tracking drop only gives camera pass-through, never a device reset.
 - **Switching** uses the engine's own device-lost recovery. On a state change the device hook answers `RenderSystem_CheckDevice`'s per-frame `TestCooperativeLevel` once with `D3DERR_DEVICENOTRESET` (only for calls from CheckDevice's range). The engine then releases, Resets, runs `OnScreenResize` (the entry hook applies the new target) and restores, and the carrier retakes its outputs. Each switch costs a short hitch.
 - **Exposure continuity** (`adaptation.cpp`; RE: [reverse_engineering/hdr_adaptation.md](reverse_engineering/hdr_adaptation.md)):

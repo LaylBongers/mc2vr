@@ -14,6 +14,11 @@ void log_init();
 // NULL-safe before log_init (output is dropped) so early failures log.
 void log_write(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
+// log_write for the crash handler (crash_log.cpp): never waits for the log
+// lock — the faulting thread may hold it, or another thread may never release
+// it — and writes the line regardless.
+void log_write_crash(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
 // Describe a code/data address as "<module>+0x<offset>" (or "unknown:%p")
 // into out. Used by hooks to attribute call sites to the game's plaintext
 // .text, the SecuROM region (>= 0x01a48000 of Mercenaries2.exe), or a
