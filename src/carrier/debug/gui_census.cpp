@@ -28,7 +28,7 @@ constexpr uint32_t kMaxNamed = 12;
 
 bool g_enabled = false;
 // debug_gui_census=clouds: instead of the GUI range, the records emitted by
-// the clouds/fog pass (PgClouds_EmitViewRecords, FUN_0047e8c0), in both eye
+// the clouds/fog pass (PgClouds_EmitViewRecords, PgClouds_EmitFogLayer), in both eye
 // passes of kCloudFrames consecutive frames (docs/view_rewrite.md
 // "Camera-relative matrices").
 bool g_clouds = false;

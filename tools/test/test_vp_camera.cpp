@@ -145,6 +145,57 @@ int main()
         CHECK(off < 1e-4f, "VP * VP^-1 differs from identity by %g", off);
     }
 
+    // 8. Analytic clip delta (clip_delta): D * clip_mono(p) = clip_eye(p) for
+    //    any point, without inverting a VP; an identity eye gives D = I exactly,
+    //    even with the camera far from the origin.
+    {
+        EyePose eye = id;
+        eye.pos = {0.032f, -0.01f, 0.004f};
+        const float yh = -0.05f, ph = 0.03f;  // a small turn and nod
+        const Quat qy{0, std::sin(yh), 0, std::cos(yh)}, qx{std::sin(ph), 0, 0, std::cos(ph)};
+        eye.rot = qy * qx;
+        eye.fov_left = -0.95f; eye.fov_right = 0.80f; eye.fov_up = 0.85f; eye.fov_down = -0.92f;
+        const Camera cam = apply_eye(game, eye, 1.0f);
+        double D[16];
+        clip_delta(game, cam, eye_offset(game, eye, 1.0f), D);
+        float vp_mono[16], vp_eye[16];
+        rebuild(game, vp_mono);
+        rebuild(cam, vp_eye);
+        const Vec3 pts[3] = {game.C + game.F * 10.0f + game.R * 2.0f, game.C + game.F * 300.0f - game.U * 40.0f,
+                             game.C + game.F * 1.5f + game.R * -0.4f + game.U * 0.3f};
+        float worst = 0;
+        for (const Vec3 &p : pts) {
+            double cm[4], ce[4];
+            for (int r = 0; r < 4; r++) {
+                cm[r] = (double)vp_mono[r * 4] * p.x + (double)vp_mono[r * 4 + 1] * p.y +
+                        (double)vp_mono[r * 4 + 2] * p.z + vp_mono[r * 4 + 3];
+                ce[r] = (double)vp_eye[r * 4] * p.x + (double)vp_eye[r * 4 + 1] * p.y +
+                        (double)vp_eye[r * 4 + 2] * p.z + vp_eye[r * 4 + 3];
+            }
+            for (int r = 0; r < 4; r++) {
+                const double d = D[r * 4] * cm[0] + D[r * 4 + 1] * cm[1] + D[r * 4 + 2] * cm[2] + D[r * 4 + 3] * cm[3];
+                worst = std::fmax(worst, (float)(std::fabs(d - ce[r]) / (1.0 + std::fabs(ce[r]))));
+            }
+        }
+        CHECK(worst < 1e-4f, "clip_delta: D * clip_mono differs from clip_eye by %g (relative)", worst);
+
+        // Identity eye: D = I up to the float axes' own rounding (~1e-8), the
+        // same near the origin and ~3 km away (the inverse-VP route degrades
+        // with the camera's distance: its translations are that large).
+        auto identity_error = [&](Vec3 c) {
+            Camera g2 = game;
+            g2.C = c;
+            double I[16];
+            clip_delta(g2, apply_eye(g2, id, 1.0f), eye_offset(g2, id, 1.0f), I);
+            double off = 0;
+            for (int i = 0; i < 16; i++) off = std::fmax(off, std::fabs(I[i] - (i % 5 == 0 ? 1.0 : 0.0)));
+            return off;
+        };
+        const double near_err = identity_error({1.f, 2.f, 3.f}), far_err = identity_error({1500.f, 80.f, -2650.f});
+        CHECK(near_err < 1e-6 && far_err < 1e-6 && far_err <= near_err * 1.01 + 1e-12,
+              "clip_delta identity error near %g far %g (must not grow with distance)", near_err, far_err);
+    }
+
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL PASS\n", g_fail);
     return g_fail ? 1 : 0;
 }

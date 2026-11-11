@@ -65,13 +65,70 @@ void rebuild(const Camera &cam, float *out)
     out[11] += cam.B;
 }
 
+// XR LOCAL (x right, y up, −z forward) → the game camera's basis.
+static Vec3 to_game(const Camera &game, Vec3 v)
+{
+    return game.R * v.x + game.U * v.y + game.F * -v.z;
+}
+
+Vec3 eye_offset(const Camera &game, const EyePose &eye, float units_per_metre)
+{
+    return to_game(game, eye.pos) * units_per_metre;
+}
+
+void clip_delta(const Camera &mono, const Camera &eye, const Vec3 &offset, double out[16])
+{
+    const Vec3 me[3] = {eye.R, eye.U, eye.F}, mm[3] = {mono.R, mono.U, mono.F};
+    // T: mono view space -> eye view space.
+    double t[16] = {};
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            t[i * 4 + j] = (double)me[i].x * mm[j].x + (double)me[i].y * mm[j].y + (double)me[i].z * mm[j].z;
+        }
+        t[i * 4 + 3] = -((double)me[i].x * offset.x + (double)me[i].y * offset.y + (double)me[i].z * offset.z);
+    }
+    t[15] = 1.0;
+    // P_eye (row form: clip = P * view).
+    double pe[16] = {};
+    pe[0] = eye.a;
+    pe[2] = eye.c;
+    pe[5] = eye.b;
+    pe[6] = eye.d;
+    pe[10] = eye.A;
+    pe[11] = eye.B;
+    pe[14] = 1.0;
+    // P_mono^-1: x_v = (x - c*w)/a, y_v = (y - d*w)/b, z_v = w, 1 = (z - A*w)/B.
+    double pm[16] = {};
+    pm[0] = 1.0 / mono.a;
+    pm[3] = -(double)mono.c / mono.a;
+    pm[5] = 1.0 / mono.b;
+    pm[7] = -(double)mono.d / mono.b;
+    pm[11] = 1.0;
+    pm[14] = 1.0 / mono.B;
+    pm[15] = -(double)mono.A / mono.B;
+    double pt[16];
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            double s = 0.0;
+            for (int k = 0; k < 4; k++) s += pe[r * 4 + k] * t[k * 4 + c];
+            pt[r * 4 + c] = s;
+        }
+    }
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            double s = 0.0;
+            for (int k = 0; k < 4; k++) s += pt[r * 4 + k] * pm[k * 4 + c];
+            out[r * 4 + c] = s;
+        }
+    }
+}
+
 Camera apply_eye(const Camera &game, const EyePose &eye, float units_per_metre)
 {
-    // XR LOCAL (x right, y up, −z forward) → the game camera's basis.
-    auto to_game = [&](Vec3 v) { return game.R * v.x + game.U * v.y + game.F * -v.z; };
+    auto to_game = [&](Vec3 v) { return vp_camera::to_game(game, v); };
 
     Camera out;
-    out.C = game.C + to_game(eye.pos) * units_per_metre;
+    out.C = game.C + eye_offset(game, eye, units_per_metre);
     out.R = to_game(rotate(eye.rot, {1, 0, 0}));
     out.U = to_game(rotate(eye.rot, {0, 1, 0}));
     out.F = to_game(rotate(eye.rot, {0, 0, -1}));

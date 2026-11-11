@@ -38,38 +38,25 @@
 
 namespace mc2vr::camera_table {
 
-// True + fills *rot/*pos with the union pose the table rewrite used for the
-// CURRENT game frame (main thread — the fill and the render passes share
-// it). view_rewrite's hmd_delta mode uses it as the per-eye delta's
-// reference so pose and delta always come from the same sample. False when
-// not armed or the HMD wasn't tracked this frame.
-bool get_union(math::Quat *rot, math::Vec3 *pos);
-
-// Distance (m) and forward-axis angle (deg) of a camera entry (rows at 4-float
-// stride, as in is_union_camera) from the newest rewritten (union) entry of
-// the last few frames. False when nothing was rewritten recently. Diagnostics
-// for views that don't match (cull_frustum's other-view report).
-bool union_offset(const float *rows, const float *pos, float *dist_m, float *fwd_angle_deg);
-
-// True + fills *rot/*pos with the union pose that was composed into the
-// rewritten entry whose rendered basis (R, U, F — a decomposed VP camera)
-// matches, searching the last few frames' rewrites. This is the union the VP
-// ACTUALLY carries, so a per-eye delta taken against it is exact even if the
-// game builds a frame's VP from an earlier frame's table fill. Main thread.
-bool union_for_camera(const math::Vec3 &R, const math::Vec3 &U, const math::Vec3 &F,
-                      math::Quat *rot, math::Vec3 *pos);
+// Which HMD sample a rewritten entry's union pose came from.
+struct UnionSample {
+    uint32_t pose_id = 0;      // xr_session ViewState::pose_id at the table fill
+    int64_t display_time = 0;  // its predicted display time, ns
+};
 
 // True + fills *half_h/*half_v with the HMD FOV-union half-angles (radians,
 // outermost bound over BOTH eyes) from a pose sampled within the
 // last second. Input of the cull frustum (cull_frustum.hpp).
 bool get_fov_union(float *half_h, float *half_v);
 
-// True when a camera entry (rows = entry+0x10, the 3 rotation rows at a 4-float
-// stride; pos = entry+0x40) equals one this module rewrote in the last few
-// frames — i.e. the entry is an HMD-driven view (the builder works on copies
-// of the table entries). Reflection/shadow/aux cameras never match. Callable
-// from any thread.
-bool is_union_camera(const float *rows, const float *pos);
+// True when the camera entry whose rows are at `rows` (entry+0x10, an address
+// inside g_CameraTable) was rewritten with the HMD pose in the last few
+// frames; *sample (optional) = which HMD sample. An exact address test: the
+// view builder resolves its camera object to the g_CameraTable entry it comes
+// from (vr/cull_frustum.cpp). Callable from any thread.
+// *rot/*pos (optional) = the union pose composed into it.
+bool rewritten_entry(uintptr_t rows, UnionSample *sample = nullptr, math::Quat *rot = nullptr,
+                     math::Vec3 *pos = nullptr);
 
 // The fill site (hooks/camera_table.cpp), once per filled slot: rot = the
 // just-filled entry+0x10 (3x3 rotation rows + position at +0x30, rewritten in

@@ -13,9 +13,11 @@
 // HMD-driven views, so the whole culling volume is the HMD frustum by
 // construction — no per-consumer chasing.
 //
-// Only views whose camera entry is a union-rewritten g_CameraTable copy are
-// touched (camera_table::is_union_camera) — shadow/reflection/aux views keep the
-// game's frustum. Never narrows: each extent is max(game, HMD).
+// Only views whose camera is a union-rewritten g_CameraTable entry are touched:
+// the camera object either points into the table (the shell's views) or is
+// FUN_00480640's copy of such a camera (on_view_camera_copied), and
+// camera_table::rewritten_entry tests the entry's address. Shadow/reflection/
+// aux views keep the game's frustum. Never narrows: each extent is max(game, HMD).
 //
 // One consumer must NOT see the HMD frustum: the third-person camera sizes its
 // obstacle clearance from the main view's near-plane quad (CamCtrl_NearPlaneClearance copies
@@ -37,14 +39,32 @@
 
 #include <cstdint>
 
+#include "vec_math.hpp"
+#include "vr/camera_table.hpp"
+
+namespace mc2vr::game {
+struct ViewContext;
+}
+
 namespace mc2vr::cull_frustum {
 
 
 // The view builder's frustum extents are ready (called by the reimplemented
 // ViewContext_BuildCameraConstants, reimpl/render/build_camera_constants.cpp):
-// vctx = the view render-ctx, th/tv = tanH/tanV (in/out). For HMD-driven
+// ctx = the view render-ctx, th/tv = tanH/tanV (in/out). For HMD-driven
 // views widens both (also stored to the ctx tans); true = write them back.
-bool on_tans_ready(uintptr_t vctx, float &th, float &tv);
+// *view (optional) = the HMD sample and union pose of the camera-table entry
+// an HMD-driven view's camera comes from (valid when true is returned).
+struct HmdView {
+    camera_table::UnionSample sample;
+    math::Quat rot;
+    math::Vec3 pos;
+};
+bool on_tans_ready(game::ViewContext *ctx, float &th, float &tv, HmdView *view = nullptr);
+
+// FUN_00480640 copied the camera object `src` into the stack camera `dest`
+// for the view it builds next (hooks/cull_frustum.cpp; same thread).
+void on_view_camera_copied(const uint32_t *dest, const uint32_t *src);
 
 // Third-person camera clearance (camera thread): `frustum` = the camera's
 // private stack copy of the main view's frustum struct; rescales its near

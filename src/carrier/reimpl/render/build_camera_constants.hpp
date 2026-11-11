@@ -19,9 +19,9 @@
 // Frustum_Build x2, ViewContext_BuildCascadeFrusta x2, FUN_00859ad0,
 // thunk_FUN_02537cb0 (VM), PgPrimitiveScratchRecord_Submit.
 // Writes directly: the ctx (ViewContext fields), the g_ViewContextTable record,
-// DAT_019c579c, DAT_00ed9d42, the scratch record (viewContextIdx,
+// g_CascadeSplitSum, g_ViewContextRecordNext, the scratch record (viewContextIdx,
 // techniqueIdx, vertexShader, envIdx, viewId, cmdStream), the scratch command
-// buffer (one viewport command) and DAT_00ff36d4.
+// buffer (one viewport command) and g_ScratchCmdNext.
 //
 // VR behavior inside it, as a direct call:
 //   - vr/cull_frustum widens the frustum half-extents for HMD views to the

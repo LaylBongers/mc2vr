@@ -26,6 +26,7 @@
 #include "watch.hpp"
 #include "crash_log.hpp"
 #include "debug/camera_census.hpp"
+#include "debug/cull_probe.hpp"
 #include "debug/gameplay_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/gui_census.hpp"
@@ -235,6 +236,7 @@ void report_window()
     gui_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
+    cull_probe::report_window();
     first_person::report_window();
     occlusion_queries::report_window();
     build_census::report_window();
@@ -324,6 +326,8 @@ void install_early()
     build_census::install();
     // Optional occlusion culling off (mc2vr.conf debug_occlusion_off=on).
     occlusion_off::install();
+    // Optional frustum-plane rejection probe (mc2vr.conf debug_cull_probe=on).
+    cull_probe::install();
     // Optional gameplay census (mc2vr.conf debug_gameplay_census=on).
     gameplay_census::install();
 }

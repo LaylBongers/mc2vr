@@ -6,6 +6,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -92,7 +93,7 @@ int g_pass_eye = 0;  // Per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 n
 // gives D = VP_eye * VP_mono^-1; D * VP_mono * World = VP_eye * World.
 uint32_t g_l2p_reg = REG_INVALID;  // the current record's shader (on_record_shader)
 uint32_t g_vpm_reg = REG_INVALID;
-double g_delta[16];  // double: see math::invert4
+double g_delta[16];  // this pass's clip delta (vp_camera::clip_delta), double
 bool g_delta_valid = false;  // for this pass
 // This pass's eye camera with the camera at the origin (rotation + per-eye
 // projection, depth terms of the main view): the target for camera-relative
@@ -241,8 +242,102 @@ uint64_t g_game_cam_ms = 0;
 uint64_t g_hmd_blocks = 0, g_hmd_split = 0, g_hmd_decomp_fail = 0, g_hmd_cam_only = 0;
 float g_hmd_resid_max = 0.0f;  // max |rebuilt - raw| over the window (identity self-check)
 uint32_t g_hmd_split_logged = 0, g_hmd_fail_logged = 0;
-uint64_t g_delta_no_union = 0;  // hmd_delta uploads skipped: no table union this frame
-uint32_t g_delta_warn_logged = 0;
+
+// HMD view stamps (on_hmd_view_built): the last few HMD views' VPs with the
+// HMD sample and union pose their camera was rewritten with. Written by the
+// builder (scene build), read by the upload path (render thread), seqlocked.
+struct Stamp {
+    std::atomic<uint32_t> seq{0};
+    float vp[16];  // the builder's VP transposed: the upload's layout
+    camera_table::UnionSample sample;
+    math::Quat rot;
+    math::Vec3 pos;
+};
+constexpr uint32_t kStamps = 8;  // 2 HMD views per frame, a few frames back
+Stamp g_stamps[kStamps];
+std::atomic<uint32_t> g_stamp_next{0};
+uint64_t g_stamp_hits = 0, g_stamp_misses = 0;
+
+bool find_stamp(const float *vp, math::Quat *rot, math::Vec3 *pos, camera_table::UnionSample *sample)
+{
+    for (Stamp &st : g_stamps) {
+        const uint32_t s0 = st.seq.load(std::memory_order_acquire);
+        if (s0 == 0 || (s0 & 1u) != 0) continue;
+        float v[16];
+        memcpy(v, st.vp, sizeof v);
+        const math::Quat q = st.rot;
+        const math::Vec3 p = st.pos;
+        const camera_table::UnionSample smp = st.sample;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (st.seq.load(std::memory_order_relaxed) != s0) continue;
+        if (memcmp(v, vp, sizeof v) == 0) {
+            *rot = q;
+            *pos = p;
+            *sample = smp;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Pose age: the HMD sample the frame was built with (the camera-table union a
+// record carries: view, culling, every record) vs the one its eye passes
+// render with (this frame's OpenXR views). Measured once per frame at pass 1's
+// first matched upload. The rotation between the two is what the per-pass eye
+// delta corrects; a design that bakes the eyes in at build time would show it.
+bool g_age_measured = false;  // this pass
+uint64_t g_age_n = 0, g_age_frames_sum = 0, g_age_frames_max = 0, g_age_unknown = 0;
+double g_age_ms_sum = 0.0, g_age_ms_max = 0.0, g_age_deg_sum = 0.0, g_age_deg_max = 0.0;
+constexpr int kAgeHist = 4;  // age in OpenXR frames: 0, 1, 2, 3+
+uint64_t g_age_hist[kAgeHist] = {};
+
+// The main view camera's pitch (cull_probe's bins): pass 1's first main-view
+// upload, world +y up.
+std::atomic<float> g_last_pitch{1000.0f};  // main_camera_pitch; 1000 = none yet
+bool g_pitch_seen = false;  // this pass
+
+void note_pitch(const vp_camera::Camera &game)
+{
+    if (g_pass_eye >= 0 || g_pitch_seen) {
+        return;
+    }
+    g_pitch_seen = true;
+    const float fy = game.F.y < -1.0f ? -1.0f : game.F.y > 1.0f ? 1.0f : game.F.y;
+    g_last_pitch.store(std::asin(fy) * 57.29578f, std::memory_order_relaxed);
+}
+
+void measure_pose_age(const math::Quat &u_rot, const camera_table::UnionSample &smp)
+{
+    if (g_age_measured || g_pass_eye >= 0) {
+        return;  // once per frame, pass 1 (LEFT, sign -1)
+    }
+    g_age_measured = true;
+    if (smp.pose_id == 0 || g_hmd.id < smp.pose_id) {
+        g_age_unknown++;
+        return;
+    }
+    const uint64_t frames = g_hmd.id - smp.pose_id;
+    const double ms = (double)(g_hmd.views.display_time - smp.display_time) * 1e-6;
+    // Rotation between the build-time union and this frame's mid-eye pose.
+    math::Quat a = g_hmd.eye[0].rot, b = g_hmd.eye[1].rot;
+    if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0.0f) b = {-b.x, -b.y, -b.z, -b.w};
+    math::Quat mid{a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w};
+    const float n = std::sqrt(math::norm_sq(mid));
+    double deg = 0.0;
+    if (n > 1e-6f) {
+        mid = {mid.x / n, mid.y / n, mid.z / n, mid.w / n};
+        const double d = std::fabs((double)(u_rot.x * mid.x + u_rot.y * mid.y + u_rot.z * mid.z + u_rot.w * mid.w));
+        deg = 2.0 * std::acos(d > 1.0 ? 1.0 : d) * 57.29577951;
+    }
+    g_age_n++;
+    g_age_frames_sum += frames;
+    if (frames > g_age_frames_max) g_age_frames_max = frames;
+    g_age_hist[frames < (uint64_t)kAgeHist ? frames : kAgeHist - 1]++;
+    g_age_ms_sum += ms;
+    if (ms > g_age_ms_max) g_age_ms_max = ms;
+    g_age_deg_sum += deg;
+    if (deg > g_age_deg_max) g_age_deg_max = deg;
+}
 
 // Published eye (OpenXR view) -> pure-math eye.
 vp_camera::EyePose to_eye_pose(const xr_session::EyePose &e)
@@ -306,6 +401,7 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
     }
     const float *raw = data + (base - start_register) * 4;
     vp_camera::Camera game, cam;
+    math::Vec3 eye_off{0.0f, 0.0f, 0.0f};  // cam.C - game.C, from the eye pose itself
     if (!vp_camera::decompose(raw, &game)) {
         g_hmd_decomp_fail++;
         if (g_hmd_fail_logged++ < 8) {
@@ -337,15 +433,17 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         // table fill), else the same-frame union.
         math::Quat u_rot;
         math::Vec3 u_pos;
-        if (!camera_table::union_for_camera(game.R, game.U, game.F, &u_rot, &u_pos) &&
-            !camera_table::get_union(&u_rot, &u_pos)) {
-            g_delta_no_union++;
-            if (g_delta_warn_logged++ < 8) {
-                MC2VR_LOG("view/hmd: delta upload passed through — no camtable union "
-                          "this frame (HMD tracked?)");
-            }
+        camera_table::UnionSample smp;
+        // The HMD view this VP was built for, exactly: the builder's stamp
+        // (on_hmd_view_built) carries the union pose the VP was built with
+        // and its HMD sample. No stamp = not an HMD view: passed through.
+        if (!find_stamp(raw, &u_rot, &u_pos, &smp)) {
+            g_stamp_misses++;
             return data;
         }
+        g_stamp_hits++;
+        measure_pose_age(u_rot, smp);
+        note_pitch(game);
         const vp_camera::EyePose &pose = g_hmd.eye[eye];
         vp_camera::EyePose delta;
         // apply_eye maps the delta through the game camera's R/U/F, which
@@ -367,6 +465,7 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         // pseudoscopic parallax, invisible at distance but uncomfortable for
         // near objects. Live-verified fixed 2026-10-09.)
         cam = vp_camera::apply_eye(game, delta, g_world_scale);
+        eye_off = vp_camera::eye_offset(game, delta, g_world_scale);
     } else {
         return data;  // unreachable: Off/On/Pulse/Stereo never reach hmd_rewrite
     }
@@ -377,11 +476,11 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         vp_camera::rebuild(rel, g_eye_rel);
         g_eye_rel_valid = true;
     }
-    double mono_inv[16];
-    if (math::invert4(raw, mono_inv)) {
-        math::mul4(scratch + (base - start_register) * 4, mono_inv, g_delta);
-        g_delta_valid = true;
-    }
+    // D for this pass's explicit camera matrices (matrix_rewrite), from the
+    // two cameras' parameters: no inverse of the world-space VP, whose ~1e3
+    // translations would round into every corrected matrix.
+    vp_camera::clip_delta(game, cam, eye_off, g_delta);
+    g_delta_valid = true;
     if (camrow) {
         math::store3(camrow, cam.C);
     }
@@ -408,6 +507,33 @@ bool set_identity_oracle(const char *value)
               g_mode == RewriteMode::HmdIdentity
                   ? "rebuild with the game's own camera — output must equal input"
                   : "per-eye HMD rewrite");
+    return true;
+}
+
+void on_hmd_view_built(const float *vp, const camera_table::UnionSample &sample, const math::Quat &rot,
+                       const math::Vec3 &pos)
+{
+    Stamp &st = g_stamps[g_stamp_next.fetch_add(1, std::memory_order_relaxed) % kStamps];
+    const uint32_t s = st.seq.load(std::memory_order_relaxed);
+    st.seq.store(s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    // The builder's VP is a D3DX row-vector matrix (p * M, translation in
+    // row 3); viewContextData uploads its transpose (clip_i = row_i . p).
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) st.vp[r * 4 + c] = vp[c * 4 + r];
+    }
+    st.sample = sample;
+    st.rot = rot;
+    st.pos = pos;
+    std::atomic_thread_fence(std::memory_order_release);
+    st.seq.store(s + 2, std::memory_order_relaxed);
+}
+
+bool main_camera_pitch(float *degrees)
+{
+    const float p = g_last_pitch.load(std::memory_order_relaxed);
+    if (p > 999.0f) return false;
+    *degrees = p;
     return true;
 }
 
@@ -462,11 +588,10 @@ namespace {
 
 // A camera-relative VP (the sky/fog matrices of the clouds pass: rows 0, 1 and
 // 3 have w = 0, i.e. the camera sits at the origin of its input space; its depth
-// row is its own, z = A'·z_v + B'). D·m is exact in theory, but D comes from the
-// world-space viewContextData, whose translations are ~1e3 units: the float32
-// rounding there lands in m's depth row (A' 1.0000019 becomes ~1.00025), so
-// distant fog crosses the far plane and is clipped or not from frame to
-// frame: a sky/fog flicker (docs/view_rewrite.md). Instead build m
+// row is its own, z = A'·z_v + B'). D maps the MONO VIEW's clip space: D·m
+// reinterprets m's depth with the main view's depth terms, so the result gets
+// the main view's slope A (~1.0004 instead of 1.0000019) and distant fog
+// lands past the far plane, clipped (docs/view_rewrite.md). Instead build m
 // directly: this pass's eye rotation and projection at the origin, m's own
 // depth terms. False (m untouched) when m isn't camera-relative or not of the
 // assumed form.
@@ -584,12 +709,6 @@ void report_window()
                   std::atan(1.0 / (double)g_game_cam.b) * 180.0 / 3.14159265);
     }
     {
-        if (g_mode == RewriteMode::HmdDelta && g_delta_no_union > 0) {
-            MC2VR_LOG("view/hmd: deltaNoUnion=%llu (uploads passed through — the "
-                      "camtable union was missing for that frame)",
-                      (unsigned long long)g_delta_no_union);
-            g_delta_no_union = 0;
-        }
         MC2VR_LOG("view/hmd: blocks=%llu camOnly=%llu split=%llu decompFail=%llu "
                   "identityResidMax=%.3g poseId=%u valid=%d",
                   (unsigned long long)g_hmd_blocks, (unsigned long long)g_hmd_cam_only,
@@ -600,6 +719,23 @@ void report_window()
                   (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_rel_rows,
                   (unsigned long long)g_mtx_split, (unsigned long long)g_mtx_no_delta);
         g_mtx_rows = g_mtx_split = g_mtx_no_delta = g_mtx_rel_rows = 0;
+        MC2VR_LOG("view/hmd: HMD views hit=%llu notHmd=%llu (main-pass camera uploads with / without an HMD "
+                  "view stamp; notHmd ones pass through)",
+                  (unsigned long long)g_stamp_hits, (unsigned long long)g_stamp_misses);
+        g_stamp_hits = g_stamp_misses = 0;
+        if (g_age_n != 0 || g_age_unknown != 0) {
+            const double n = g_age_n ? (double)g_age_n : 1.0;
+            MC2VR_LOG("view/hmd: poseAge frames=%llu | OpenXR frames avg %.2f max %llu [0:%llu 1:%llu 2:%llu 3+:%llu] | "
+                      "display time avg %.1f max %.1f ms | head rotation avg %.2f max %.2f deg | unknown=%llu",
+                      (unsigned long long)g_age_n, (double)g_age_frames_sum / n,
+                      (unsigned long long)g_age_frames_max, (unsigned long long)g_age_hist[0],
+                      (unsigned long long)g_age_hist[1], (unsigned long long)g_age_hist[2],
+                      (unsigned long long)g_age_hist[3], g_age_ms_sum / n, g_age_ms_max, g_age_deg_sum / n,
+                      g_age_deg_max, (unsigned long long)g_age_unknown);
+        }
+        g_age_n = g_age_frames_sum = g_age_frames_max = g_age_unknown = 0;
+        g_age_ms_sum = g_age_ms_max = g_age_deg_sum = g_age_deg_max = 0.0;
+        for (uint64_t &h : g_age_hist) h = 0;
         g_hmd_blocks = g_hmd_cam_only = g_hmd_split = g_hmd_decomp_fail = 0;
         g_hmd_resid_max = 0.0f;
     }
@@ -698,8 +834,10 @@ const xr_session::ViewState *begin_frame(const xr_session::ViewState *views)
 void set_pass_eye(int sign)
 {
     if (sign != g_pass_eye) {
+        g_pitch_seen = false;
         g_pw_valid = false;     // per-pass camPos cache
         g_delta_valid = false;  // per-pass camera delta
+        g_age_measured = false;
         g_eye_rel_valid = false;
     }
     g_pass_eye = sign;

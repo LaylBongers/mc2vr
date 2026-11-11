@@ -12,6 +12,7 @@
 #include "game/render_shell.hpp"
 #include "game/view_context.hpp"
 #include "vr/cull_frustum.hpp"
+#include "vr/view_rewrite.hpp"
 
 namespace mc2vr::reimpl {
 
@@ -75,7 +76,7 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
         std::memcpy(&fov, e + game::kCamEntryFov, 4);
         float t = fov * kFovScale;
         t = t * fov_aspect;
-        const float steps = kSineSteps / game::DAT_00d2ea5c::get();
+        const float steps = kSineSteps / game::g_TwoPi::get();
         t = t * steps;
         t = t + kOne;
         t = t * kHalf;
@@ -109,7 +110,8 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
     ctx->tanV = tv;
     // VR: HMD views cull with the eyes' union frustum; every product below
     // derives from th/tv (docs/culling.md).
-    cull_frustum::on_tans_ready(reinterpret_cast<uintptr_t>(ctx), th, tv);
+    cull_frustum::HmdView hmd;
+    const bool hmd_view = cull_frustum::on_tans_ready(ctx, th, tv, &hmd);
 
     // ---- corner directions and projection 0x85943b-0x859562 ----
     const float c0[3] = {kNegZero - th, tv, kOne};            // [esp+0x10]
@@ -128,6 +130,11 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
     float vp[16];
     game::D3DXMatrixMultiply(vp, ctx->view, ctx->proj);
     copy16(ctx->viewProj, vp);
+    if (hmd_view) {
+        // VR: the records copied from this VP carry this HMD sample and union
+        // pose; the per-eye rewrite looks them up by the VP (vr/view_rewrite.hpp).
+        view_rewrite::on_hmd_view_built(ctx->viewProj, hmd.sample, hmd.rot, hmd.pos);
+    }
 
     // ---- cascade splits: base * 3^i 0x859562-0x8595e7 ----
     float sum = 0.0f;
@@ -148,7 +155,7 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
         acc = ctx->cascadeSplits[1] + acc;
         acc = ctx->cascadeSplits[2] + acc;
         acc = ctx->cascadeSplits[3] + acc;
-        game::DAT_019c579c::set(acc);
+        game::g_CascadeSplitSum::set(acc);
     }
 
     // ---- frusta 0x8595e9-0x85973e ----
@@ -158,7 +165,7 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
     ctx->frustumShadow.farZ = ctx->frustum.nearZ + sum;
     game::Frustum_Build(&ctx->frustumShadow, ctx->cameraWorld, c0, c1, c2, c3);
     ctx->r950 = 0;
-    game::ViewContext_BuildCascadeFrusta(game::DAT_019c579c::ptr(), ctx, &ctx->frustum, ctx->whole, ctx->wholeB,
+    game::ViewContext_BuildCascadeFrusta(game::g_CascadeSplitSum::ptr(), ctx, &ctx->frustum, ctx->whole, ctx->wholeB,
                                          ctx->wholeC, 1, c0, c1, c2, c3);
     ctx->r468 = 0;
     game::ViewContext_BuildCascadeFrusta(ctx->cascadeSplits, ctx, &ctx->frustumShadow, ctx->cascades,
@@ -168,8 +175,8 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
 
     // ---- this frame's g_ViewContextTable record 0x85973e-0x859882 ----
     game::PgPrimitive &scratch = *game::g_ScratchPrimitive::ptr();
-    const uint8_t idx = game::DAT_00ed9d42::get();
-    game::DAT_00ed9d42::set((uint8_t)(idx + 1));
+    const uint8_t idx = game::g_ViewContextRecordNext::get();
+    game::g_ViewContextRecordNext::set((uint8_t)(idx + 1));
     const uint32_t buf = game::g_PrimBufferIndex::get();
     game::ViewContextRecord &rec = game::g_ViewContextRecords::at(buf * 32 + idx);
     copy16(rec.viewProj, ctx->viewProj);
@@ -179,13 +186,13 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
     scratch.envIdx = 0;
     std::memcpy(rec.cameraPos, ctx->cameraWorld + 12, 3 * sizeof(float));
     rec.cameraPos[3] = kOne;
-    rec.atmosphereData = reinterpret_cast<const uint8_t *>(game::kAtmosphereDataBase + buf * 0x700);
-    rec.globalLightData = reinterpret_cast<const void *>(game::kGlobalLightDataBase + buf * 0x1b00);
+    rec.atmosphereData = reinterpret_cast<const uint8_t *>(game::g_AtmosphereDataBuffers + buf * 0x700);
+    rec.globalLightData = reinterpret_cast<const void *>(game::g_GlobalLightDataBuffers + buf * 0x1b00);
 
     // ---- scratch viewport record 0x859887-0x859918 ----
     scratch.viewId = (uint16_t)(scratch.viewId + 1);
-    uint32_t *const cmds = game::DAT_00ff36c0::get();
-    const uint32_t n = game::DAT_00ff36d4::get();
+    uint32_t *const cmds = game::g_ScratchCmdBase::get();
+    const uint32_t n = game::g_ScratchCmdNext::get();
     uint32_t *const cmd = cmds + n;
     cmd[0] = 8;  // viewport
     cmd[1] = (uint32_t)vx;
@@ -196,7 +203,7 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
     std::memcpy(&cmd[5], &min_z, 4);
     std::memcpy(&cmd[6], &max_z, 4);
     cmd[7] = 0;  // end of stream
-    game::DAT_00ff36d4::set(n + 8);
+    game::g_ScratchCmdNext::set(n + 8);
     scratch.cmdStream = cmd;
     uint8_t *const shell_a = reinterpret_cast<uint8_t *>(game::g_RenderShellPtr::get());
     game::thunk_FUN_02537cb0(shell_a, shell_field<uint32_t>(shell_a, game::kShellVmStepArg), cmd);

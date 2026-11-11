@@ -192,7 +192,7 @@ using g_ScreenEffectsEnabled = Global<uint8_t, 0x00dfb345u>;
 // OcclusionQuery_GetPixelCount (S_OK ? pixels : 0xffffffff; its callers want
 // >= 64 / != 0). None of them waits for a result. Each object keeps its ids in
 // a 3-slot history (obj+0x1c4, write index obj+0x1c2, read index obj+0x1c0,
-// both advanced mod 3 per frame at 0x0046e5a0, read = write + 1): its poll
+// both advanced mod 3 per frame in RenderObject_BeginFrame, read = write + 1): its poll
 // reads the id issued two frames earlier. mc2vr points g_OcclusionQueryArray at
 // its own larger ring (vr/occlusion_queries.hpp).
 using g_OcclusionQueryArray = Global<IDirect3DQuery9 **, 0x01163768u>;

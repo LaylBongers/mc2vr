@@ -38,6 +38,19 @@ void rebuild(const Camera &cam, float *out);
 // Projection comes from the eye FOV; depth terms are kept from `game`.
 Camera apply_eye(const Camera &game, const EyePose &eye, float units_per_metre);
 
+// The world-space offset apply_eye adds to game.C for `eye` (computed from the
+// eye's own position, not as a difference of two large world positions).
+Vec3 eye_offset(const Camera &game, const EyePose &eye, float units_per_metre);
+
+// The clip-space delta D with clip_eye = D * clip_mono for every point (row
+// form: D * VP_mono = VP_eye), analytically: D = P_eye * T * P_mono^-1, T =
+// the eye camera's view of the mono camera's view space (rotation
+// M_eye * M_mono^T, translation -M_eye * offset), P^-1 in closed form from
+// the projection terms. offset = eye_offset(mono, ...). Neither camera's world
+// position enters, so no large numbers do: an identity eye gives D = I
+// exactly. Double precision.
+void clip_delta(const Camera &mono, const Camera &eye, const Vec3 &offset, double out[16]);
+
 // Largest relative |rebuild(decompose(rows)) − rows| entry (identity self-check).
 float rebuild_residual(const float *rows, const Camera &decomposed);
 

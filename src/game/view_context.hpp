@@ -27,10 +27,20 @@ struct Frustum {
 };
 static_assert(sizeof(Frustum) == 0x218);
 
-// A camera object (ctx+0x28): self-indexed, active entry = cam + [cam] * 0x70.
-// Offsets are from that entry.
+// A camera object (ctx+0x28; also each g_CameraTable slot): self-indexed,
+// active entry = cam + [cam] * 0x70. Offsets are from that entry. In gameplay
+// the builder's camera objects are stack copies of g_CameraTable entries.
+//   +0x10 4x4 rows: rotation rows +0x10/+0x20/+0x30, position +0x40 (w = 1).
+//         The rendered camera's axes are the ROWS: R = -row0, U = row1,
+//         F = row2; the builder inverts the entry into the view, so writing
+//         E' = E*M renders axes' = M^-1 * axes (docs/camera.md for the
+//         measured row signs and the closed form the carrier writes).
+//   +0x50 near, +0x54 far, +0x58 fov (radians, 4:3-normalized; the builder
+//         takes halfH = fov * 0.375 * aspect), +0x60.. LOD-ish params.
+// Left-handed pipeline: clip.w = +z_view.
 constexpr uintptr_t kCamEntryStride = 0x70;
 constexpr uintptr_t kCamEntryWorld = 0x10;  // 4x4 rows (rotation + position, w = 1)
+constexpr uintptr_t kCamEntryPos = 0x40;    // = kCamEntryWorld + 0x30
 constexpr uintptr_t kCamEntryNear = 0x50;
 constexpr uintptr_t kCamEntryFar = 0x54;
 constexpr uintptr_t kCamEntryFov = 0x58;    // radians, 4:3-normalized
@@ -87,20 +97,20 @@ constexpr uintptr_t kShellVmStepArg = 0x3e8c;     // g_RenderShellPtr: ECX for t
 
 // ---- globals ----------------------------------------------------------------------
 using g_SineTable = GlobalArray<float, 0x00cf1900u, 0x2000>;  // sin over one turn, filled at boot
-using DAT_00d2ea5c = Global<float, 0x00d2ea5cu>;              // 2*pi (writable data)
-using DAT_019c579c = Global<float, 0x019c579cu>;              // the sum of the cascade splits
-using DAT_00ed9d42 = Global<uint8_t, 0x00ed9d42u>;            // next g_ViewContextTable record this frame
+using g_TwoPi = Global<float, 0x00d2ea5cu>;                   // 2*pi (writable data)
+using g_CascadeSplitSum = Global<float, 0x019c579cu>;         // the sum of the cascade splits
+using g_ViewContextRecordNext = Global<uint8_t, 0x00ed9d42u>; // next g_ViewContextRecords entry this frame
 // Write side of g_ViewContextTable: record (bufIdx * 32 + idx); the read side
 // is the g_ViewContextTable pointer.
 using g_ViewContextRecords = GlobalArray<ViewContextRecord, 0x018c45e0u, 64>;
-constexpr uintptr_t kAtmosphereDataBase = 0x017e41e0u;  // + bufIdx * 0x700 -> record +0x60
-constexpr uintptr_t kGlobalLightDataBase = 0x018c0fe0u; // + bufIdx * 0x1b00 -> record +0x64
+constexpr uintptr_t g_AtmosphereDataBuffers = 0x017e41e0u;   // + bufIdx * 0x700 -> record +0x60
+constexpr uintptr_t g_GlobalLightDataBuffers = 0x018c0fe0u;  // + bufIdx * 0x1b00 -> record +0x64
 // The scratch draw record PgPrimitiveScratchRecord_Submit copies into the
 // queue (PgPrimitive layout; the primitive parameters are Submit's args).
 using g_ScratchPrimitive = Global<PgPrimitive, 0x01163708u>;
 // The scratch command buffer: base pointer and next free dword.
-using DAT_00ff36c0 = Global<uint32_t *, 0x00ff36c0u>;
-using DAT_00ff36d4 = Global<uint32_t, 0x00ff36d4u>;
+using g_ScratchCmdBase = Global<uint32_t *, 0x00ff36c0u>;
+using g_ScratchCmdNext = Global<uint32_t, 0x00ff36d4u>;
 
 // ---- callees ------------------------------------------------------------------------
 // ViewCtx_GetViewport(ctx, &x, &y, &w (EDX), &h (ECX)), stdcall.
@@ -137,7 +147,8 @@ inline constexpr Function<void(uint32_t count, uint32_t first, uint32_t p1, uint
                                     {EAX, EDX, STK, STK, STK, STK, STK, STK}};
 
 // The builder itself: its real entry is the plaintext prologue 0x008591a0
-// (push ebp; mov ebp,esp; and esp,-16), which jumps through the call gate
+// (Ghidra: ViewContext_BuildCameraConstants_Gate; push ebp; mov ebp,esp;
+// and esp,-16), which jumps through the call gate
 // [0x024cd494] -> 0x00506a26 (sub esp,0xa4) -> the body 0x008591ac; stdcall.
 // Reimplemented (reimpl/render/build_camera_constants.hpp); this declares its entry.
 inline constexpr Function<void(ViewContext *ctx)> ViewContext_BuildCameraConstants{

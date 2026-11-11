@@ -176,55 +176,12 @@
 
 
 
-// ViewContext_BuildCameraConstants (E1b watch-proven 2026-10-06, plate there):
-// the plaintext draw-camera VP builder, called ONLY from the VM via thunk
-// 0x00506a26 (VMThunk_ViewContext_BuildCameraConstants). Entered with the
-// CALLER'S EBP live (mutated convention — `mov ebx,[ebp+8]` is the first arg
-// access, no prologue first): first arg = [ebp+8] = the view render-ctx
-// struct. [arg+0x28] = the CAMERA OBJECT: a self-indexed 0x70-stride array
-// base — active entry = base + *(u32*)base * 0x70; entry+0x50/0x54/0x58 =
-// near/far/fov floats, +0x74 another param (self-indexed dword access
-// obj[obj[0]*0x1c + 0x14/15/16/1d] in the decompiler). The view matrix is
-// read from the camera object via Matrix_Copy3x4 inside; the built VP lands
-// in scratch 0x017D04E0 -> the g_ViewContextTable records. E2b probe hooks
-// this plaintext entry (neighbor, allowed) to log/dump the camera object —
-// the remaining upstream injection candidate.
-#define MC2_VCCAM_CTX_CAMARRAY_OFF ((uintptr_t)0x28u) // camera object slot
-#define MC2_VCCAM_ENTRY_STRIDE ((uintptr_t)0x70u)
-// Camera object entry layout (E2b live-dumped 2026-10-06; convention
-// PROBE-PROVEN 2026-10-07 — camprobe transfer run, see the plate on
-// CameraTable_FillFromPose):
-//   +0x00 status dword (1.0 = populated slot, 0 = empty)
-//   +0x10..0x3c 3x3 rotation, row-major — the RENDERED camera's axes are
-//                its ROWS: R = -row0, U = row1, F = row2. TRANSFER LAW for
-//                rewrites: E' = E*M renders axes' = M^-1 * axes (the
-//                builder's 4x4 inverse, Matrix_Inverse4x4, sits between the
-//                entry and the view). The carrier therefore writes the
-//                closed form E' = S_r*L^-1*S_r*E (LEFT multiply, S_r =
-//                diag(measured row signs) = diag(-1,1,1); composite quat
-//                (qx,-qy,+qz,qw) for the desired local rotation
-//                L = (-qx,-qy,+qz,qw)).
-//   +0x40 position (x,y,z) + w=1.0 — world position, positive
-//   +0x50 near, +0x54 far (2400), +0x58 fov (0.9597 stock: the builder
-//                takes halfH = fov * 0.375 * aspect (radians, 4:3-normalized)
-//                and tanV = tanH / aspect — LEFT-HANDED pipeline, clip.w =
-//                +z_view; per-eye OpenXR FOV is applied at the record level,
-//                view_rewrite hmd_delta)
-//   +0x60.. LOD-ish params (0.1, 100, 300, 0.3)
-// The array base is a self-index (active idx = *(u32*)base). GAMEPLAY
-// instances are STACK-LOCAL (arr ~0x072e9xxx/0x072eadd0, ctx 0x072e9d20/
-// 0x072eafb0, built fresh per builder call in the VM's frames); the menu
-// used the STATIC global g_CameraTable (0x014a2ee0, ctx 0x017cf980 — the
-// same global frame-ctx seen in the E1b watch hits).
-#define MC2_VCCAM_ENTRY_ROT_OFF ((uintptr_t)0x10u)
-#define MC2_VCCAM_ENTRY_POS_OFF ((uintptr_t)0x40u)
-#define MC2_VCCAM_ENTRY_NEAR_OFF ((uintptr_t)0x50u)
-#define MC2_VCCAM_ENTRY_FAR_OFF ((uintptr_t)0x54u)
-#define MC2_VCCAM_ENTRY_FOVCOS_OFF ((uintptr_t)0x58u)
-
-// The view ctx frustum half-extents (game/view_context.hpp ViewContext::tanH/tanV).
-#define MC2_VCCAM_CTX_TANH_OFF ((uintptr_t)0x30u)
-#define MC2_VCCAM_CTX_TANV_OFF ((uintptr_t)0x34u)
+// The view builder and its camera-entry layout: game/view_context.hpp.
+// FUN_00480640 (a builder caller) copies its source view's camera object
+// ([ESI+0x28], ESI = the source view ctx) into a stack camera object (EDI):
+// near/far/fov, then the entry rows (Matrix_Copy3x4 at 0x004806cc). Here,
+// right after: `mov eax,edi; call CamPose_FillEntryFov`.
+#define MC2_VIEW_CAMERA_COPIED ((uintptr_t)0x004806d1u)
 
 // The occlusion-query ring (docs/occluder_boxes.md, vr/occlusion_queries.hpp):
 // RenderShell_InitDrawRecordTables' tail right after it points
@@ -242,7 +199,7 @@
 
 // The clouds/fog pass (docs/view_rewrite.md "Camera-relative matrices"): the two emitters'
 // extent [begin, end): PgClouds_EmitViewRecords
-// 0x0047ded0..0x0047e8b0, FUN_0047e8c0 ..0x0047f088.
+// 0x0047ded0..0x0047e8b0, PgClouds_EmitFogLayer ..0x0047f088.
 #define MC2_CLOUDS_EMIT_BEGIN ((uint32_t)0x0047ded0u)
 #define MC2_CLOUDS_EMIT_END ((uint32_t)0x0047f088u)
 
@@ -292,8 +249,8 @@
 // (CameraTable_FillLoop, tail do-while at 0x0070f62c, from InGameShellState_FramePipeline)
 // fills every slot whose +0x1e0 camera object exists (~1.7/frame live) from the
 // camera entity's quat+pos. Each slot is a self-indexed 0x70-stride camera
-// entry array (active entry = slot + [slot+4]*0x70) with the MC2_VCCAM_ENTRY_*
-// layout; the fill's Matrix_Copy3x4 (call 0x0070aef3 -> 0x00836120, dest
+// entry array (active entry = slot + [slot+4]*0x70) with the camera-entry
+// layout of game/view_context.hpp; the fill's Matrix_Copy3x4 (call 0x0070aef3 -> 0x00836120, dest
 // `lea eax,[ecx+esi*1+0x10]` at 0x0070aee5) writes entry+0x10..0x4c: rotation
 // rows +0x10/+0x20/+0x30, position +0x40.
 #define MC2_G_CAMTABLE ((uintptr_t)0x014a2ee0u)

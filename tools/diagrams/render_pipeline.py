@@ -108,7 +108,6 @@ UPDATE = [
     (1, 'InGameShellState_FramePipeline  0x004c96f0', '~114 subsystem updates; no D3D', 1, '', ''),
     (2, 'RenderQueue_SubmitWorldPackets  0x0048e620', 'active views → 96-byte packets → g_RenderQueue', 1, '', ''),
     (2, 'ViewManager_UpdateViewPose  0x0048f5c0', 'staged pose → ViewEntry (output only)', 1, '', ''),
-    (2, 'ViewEntry_DeriveCullTask  0x00876a90', 'cull bounds + LOD per view (task)', 1, '', '?'),
     (2, 'CameraTable_FillLoop → CameraTable_FillFromPose', 'camera entity → g_CameraTable', 1,
      'entry := HMD union pose (camera, culling, LOD)', '?'),
     (2, 'GuiMgr_Update  0x00609580', 'widget updates, re-layout, minimap border', 0, 'GUI sees a 16:9 1920×1080 screen', ''),

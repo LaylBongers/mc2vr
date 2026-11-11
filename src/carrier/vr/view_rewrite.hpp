@@ -19,6 +19,7 @@
 
 #include <cstdint>
 
+#include "vr/camera_table.hpp"
 #include "vr/vp_camera.hpp"
 
 namespace mc2vr::view_rewrite {
@@ -45,8 +46,19 @@ void on_set_render_target(uint32_t w, uint32_t h);
 // main scene / per-eye chain size).
 bool is_main_size(uint32_t w, uint32_t h);
 
+// The view builder finished an HMD-driven view (reimpl/render/
+// build_camera_constants.cpp): vp = its VP (16 floats, D3DX layout; every
+// record of the view copies it, and the upload carries its transpose), with the HMD sample and union pose its camera was
+// rewritten with. The per-eye rewrite looks uploads up by exact VP equality.
+void on_hmd_view_built(const float *vp, const camera_table::UnionSample &sample, const math::Quat &rot,
+                       const math::Vec3 &pos);
+
 // True while RT0 has the main scene size: the passes the rewrite applies to.
 bool main_pass_active();
+
+// The main view camera's pitch in degrees (world +y up) as last seen by the
+// rewrite (pass 1), and whether it has been seen. Diagnostics.
+bool main_camera_pitch(float *degrees);
 
 // The vertex shader the next record draws with (the PgPrimitive_SubmitToGPU
 // reimplementation, before the record's command stream runs): its explicit

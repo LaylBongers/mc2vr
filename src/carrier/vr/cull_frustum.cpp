@@ -8,9 +8,11 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 #include "game/addresses.h"
+#include "game/view_context.hpp"
 #include "log.hpp"
 #include "vr/camera_table.hpp"
 
@@ -27,46 +29,40 @@ float g_out_th = 0.0f, g_out_tv = 0.0f;    // what we wrote
 float g_clear_th = 0.0f, g_clear_tv = 0.0f;  // the camera clearance's reference extents
 uint64_t g_clear_restored = 0, g_clear_stock = 0;
 
-// Views whose camera isn't the union camera (they keep the game's extents),
-// per view context, per window: how far their camera is from the HMD camera,
-// its forward-axis angle to it, and the game's extents (docs/culling.md
-// "Unmatched views").
-struct OtherView {
-    uintptr_t vctx;
-    uint64_t builds, no_offset;
-    float dist_min, dist_max, ang_min, ang_max;
-    float th, tv;  // last game extents (tan)
+// Every view the builder builds, per (view ctx, camera object) and window:
+// how often it was widened / unmatched, and where its camera object lives
+// (inside g_CameraTable = slot/sub-entry known exactly; else a copy). Groundwork
+// for identifying HMD views by their camera's source instead of by matching
+// rows (docs/culling.md "View discrimination").
+struct ViewSeen {
+    const game::ViewContext *ctx;
+    const uint32_t *cam;
+    uint64_t widened, other, no_cam;
 };
-constexpr int kMaxOtherViews = 8;
-OtherView g_others[kMaxOtherViews];
-int g_n_others = 0;
-uint64_t g_others_dropped = 0;
+constexpr int kMaxViewsSeen = 16;
+ViewSeen g_views_seen[kMaxViewsSeen];
+int g_n_views_seen = 0;
 
-OtherView *other_view_of(uintptr_t vctx)
+ViewSeen *view_seen(const game::ViewContext *ctx, const uint32_t *cam)
 {
-    for (int i = 0; i < g_n_others; i++) {
-        if (g_others[i].vctx == vctx) return &g_others[i];
+    for (int i = 0; i < g_n_views_seen; i++) {
+        if (g_views_seen[i].ctx == ctx && g_views_seen[i].cam == cam) return &g_views_seen[i];
     }
-    if (g_n_others == kMaxOtherViews) {
-        g_others_dropped++;
-        return nullptr;
-    }
-    OtherView &o = g_others[g_n_others++];
-    o = OtherView{};
-    o.vctx = vctx;
-    o.dist_min = o.ang_min = 1e30f;
-    return &o;
+    if (g_n_views_seen == kMaxViewsSeen) return nullptr;
+    ViewSeen &v = g_views_seen[g_n_views_seen++];
+    v = ViewSeen{ctx, cam, 0, 0, 0};
+    return &v;
 }
 
 // The builder's own signs kept; magnitudes widened, never narrowed. Writes the
 // ctx tans too: the clouds/fog pass maps the screen to view directions with
 // them, and the game's own place the fog wrong under head pitch (docs/culling.md).
-void widen(uintptr_t vctx, float &th, float &tv, float hmd_th, float hmd_tv)
+void widen(game::ViewContext *ctx, float &th, float &tv, float hmd_th, float hmd_tv)
 {
     th = std::copysign(std::fmax(std::fabs(th), hmd_th), th);
     tv = std::copysign(std::fmax(std::fabs(tv), hmd_tv), tv);
-    memcpy((void *)(vctx + MC2_VCCAM_CTX_TANH_OFF), &th, 4);
-    memcpy((void *)(vctx + MC2_VCCAM_CTX_TANV_OFF), &tv, 4);
+    ctx->tanH = th;
+    ctx->tanV = tv;
 }
 
 // The last widened view's (clearance reference, written) extent magnitudes,
@@ -107,44 +103,50 @@ bool clearance_extents(float game_th, float game_tv, float *th, float *tv)
 
 } // namespace
 
-bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
+namespace {
+
+// FUN_00480640's last camera copy on this thread: a stack camera object and
+// the camera object it was copied from (hooks/cull_frustum.cpp). The builder
+// call that follows runs on the same thread.
+thread_local const uint32_t *t_copy_dest = nullptr;
+thread_local const uint32_t *t_copy_src = nullptr;
+
+} // namespace
+
+void on_view_camera_copied(const uint32_t *dest, const uint32_t *src)
+{
+    t_copy_dest = dest;
+    t_copy_src = src;
+}
+
+bool on_tans_ready(game::ViewContext *ctx, float &th, float &tv, HmdView *view)
 {
     g_builds++;
 
-    // [vctx+0x28] = camera object, a self-indexed 0x70-stride entry array
-    // (active entry = cam + [cam]*0x70; rotation rows at +0x10, position at
-    // +0x40). NULL = the builder's identity default.
-    const uintptr_t cam = *(const uint32_t *)(vctx + MC2_VCCAM_CTX_CAMARRAY_OFF);
-    if (cam == 0) {
+    // The camera object (null = the builder's identity default): the active
+    // entry's rotation rows and position (game/view_context.hpp).
+    const uint32_t *const cam = ctx->camera;
+    ViewSeen *const seen = view_seen(ctx, cam);
+    if (cam == nullptr) {
+        g_no_cam++;
+        if (seen) seen->no_cam++;
+        return false;
+    }
+    const uint32_t idx = cam[0];
+    if (idx >= MC2_CAMTABLE_SLOT_STRIDE / game::kCamEntryStride) {
         g_no_cam++;
         return false;
     }
-    const uint32_t idx = *(const uint32_t *)cam;
-    if (idx >= MC2_CAMTABLE_SLOT_STRIDE / MC2_VCCAM_ENTRY_STRIDE) {
-        g_no_cam++;
-        return false;
-    }
-    const uintptr_t entry = cam + idx * MC2_VCCAM_ENTRY_STRIDE;
-    const float *rows = (const float *)(entry + MC2_VCCAM_ENTRY_ROT_OFF);
-    const float *pos = (const float *)(entry + MC2_VCCAM_ENTRY_POS_OFF);
-    if (!camera_table::is_union_camera(rows, pos)) {
+    // The g_CameraTable entry this camera is: the camera object itself (the
+    // shell's views point into the table), or the one FUN_00480640 copied it
+    // from. HMD-driven iff the camera table rewrote that entry.
+    const uint32_t *source = cam == t_copy_dest && t_copy_src != nullptr ? t_copy_src : cam;
+    const uintptr_t source_rows = reinterpret_cast<uintptr_t>(source) + source[0] * game::kCamEntryStride +
+                                  game::kCamEntryWorld;
+    HmdView hv;
+    if (!camera_table::rewritten_entry(source_rows, &hv.sample, &hv.rot, &hv.pos)) {
         g_other_view++;
-        OtherView *o = other_view_of(vctx);
-        float dist = 0.0f, ang = 0.0f;
-        const bool have = camera_table::union_offset(rows, pos, &dist, &ang);
-        if (o != nullptr) {
-            o->builds++;
-            o->th = th;
-            o->tv = tv;
-            if (!have) {
-                o->no_offset++;
-            } else {
-                o->dist_min = std::fmin(o->dist_min, dist);
-                o->dist_max = std::fmax(o->dist_max, dist);
-                o->ang_min = std::fmin(o->ang_min, ang);
-                o->ang_max = std::fmax(o->ang_max, ang);
-            }
-        }
+        if (seen) seen->other++;
         return false;
     }
 
@@ -162,7 +164,7 @@ bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
 
     g_game_th = th;
     g_game_tv = tv;
-    widen(vctx, th, tv, hmd_th, hmd_tv);
+    widen(ctx, th, tv, hmd_th, hmd_tv);
     g_out_th = th;
     g_out_tv = tv;
     float clear_th, clear_tv;
@@ -177,6 +179,8 @@ bool on_tans_ready(uintptr_t vctx, float &th, float &tv)
     g_pub_out_th.store(std::fabs(th), std::memory_order_relaxed);
     g_pub_out_tv.store(std::fabs(tv), std::memory_order_relaxed);
     g_widened++;
+    if (seen) seen->widened++;
+    if (view != nullptr) *view = hv;
     return true;
 }
 
@@ -254,21 +258,22 @@ void report_window()
               (unsigned long long)g_no_fov, deg(g_game_th), deg(g_game_tv),
               deg(g_out_th), deg(g_out_tv), deg(g_clear_th), deg(g_clear_tv),
               (unsigned long long)g_clear_restored, (unsigned long long)g_clear_stock);
-    for (int i = 0; i < g_n_others; i++) {
-        const OtherView &o = g_others[i];
-        if (o.builds == 0) continue;
-        MC2VR_LOG("cullfov:   other view ctx=%p builds=%llu game %.1f°/%.1f° | from the HMD camera: dist %.2f..%.2f m, "
-                  "forward %.1f..%.1f° (no offset %llu)",
-                  (void *)o.vctx, (unsigned long long)o.builds, deg(o.th), deg(o.tv),
-                  o.dist_min < 1e29f ? o.dist_min : -1.0f, o.dist_max, o.ang_min < 1e29f ? o.ang_min : -1.0f, o.ang_max,
-                  (unsigned long long)o.no_offset);
+    for (int i = 0; i < g_n_views_seen; i++) {
+        const ViewSeen &v = g_views_seen[i];
+        const uintptr_t c = reinterpret_cast<uintptr_t>(v.cam);
+        char where[64];
+        if (c >= MC2_G_CAMTABLE && c < MC2_G_CAMTABLE + MC2_CAMTABLE_SLOT_STRIDE * MC2_CAMTABLE_SLOTS) {
+            std::snprintf(where, sizeof where, "g_CameraTable slot %u +0x%03x",
+                          (unsigned)((c - MC2_G_CAMTABLE) / MC2_CAMTABLE_SLOT_STRIDE),
+                          (unsigned)((c - MC2_G_CAMTABLE) % MC2_CAMTABLE_SLOT_STRIDE));
+        } else {
+            std::snprintf(where, sizeof where, "%s", c == 0 ? "none" : "a copy");
+        }
+        MC2VR_LOG("cullfov:   view ctx=%p camera=%p (%s): widened=%llu other=%llu noCam=%llu", (const void *)v.ctx,
+                  (const void *)v.cam, where, (unsigned long long)v.widened, (unsigned long long)v.other,
+                  (unsigned long long)v.no_cam);
     }
-    if (g_others_dropped) {
-        MC2VR_LOG("cullfov:   other views beyond %d not tracked: %llu builds", kMaxOtherViews,
-                  (unsigned long long)g_others_dropped);
-    }
-    g_n_others = 0;
-    g_others_dropped = 0;
+    g_n_views_seen = 0;
     g_builds = g_widened = g_other_view = g_no_cam = g_no_fov = 0;
     g_clear_restored = g_clear_stock = 0;
 }

@@ -22,6 +22,7 @@
 #include "debug/render_dump.hpp"
 #include "debug/build_census.hpp"
 #include "debug/occlusion_off.hpp"
+#include "debug/cull_probe.hpp"
 #include "debug/camera_census.hpp"
 #include "debug/gameplay_census.hpp"
 #include "debug/watch.hpp"
@@ -183,6 +184,11 @@ static void load_conf()
             // Occlusion culling off, for A/B (debug/occlusion_off.hpp).
             if (!occlusion_off::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_occlusion_off=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_cull_probe") == 0) {
+            // Which frustum plane culls what, by camera pitch (debug/cull_probe.hpp).
+            if (!cull_probe::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_cull_probe=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "first_person") == 0) {
             if (!first_person::set_enabled(value)) {
