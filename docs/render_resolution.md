@@ -9,7 +9,7 @@ The engine has separate display (`g_RenderCfg`) and render (`+0x2b98/+0x2b9c`) s
 | Site | What the carrier does |
 |---|---|
 | `LtiRenderer_OnScreenResize` entry `0x007492f0` | W (`[esp+4]`) / H (EAX) → render size. The engine then writes the fields, float copies, viewports, UI half-dims and Bink rects consistently. |
-| its epilogue `0x007494d5` | aspect `+0x2bc8/+0x2bcc` = true W/H (`render_aspect=snap` keeps the engine's snap); mouse scale × render/cfg |
+| its epilogue `0x007494d5` | aspect `+0x2bc8/+0x2bcc` = true W/H; mouse scale × render/cfg |
 | `SetupRenderTargets` field store `0x00749500` | ECX/EAX (cfg W/H) → render size |
 | setup-chain desc `0x0074a2c1` | the front's GetDesc W/H → render size; it sizes main RT, depth copy, scene depth and downsample. Also covers device restore, which re-enters the same tail. |
 | after setup (render_outputs' wrap) | re-apply aspect (the mutated stretch re-snaps it) |
@@ -19,7 +19,7 @@ The carrier's own surfaces are created from the render fields. The view-rewrite 
 
 ## Following the HMD
 
-- **Size source.** `render_size=hmd` (the default since 2026-11-11; `off` = window resolution) takes the OpenXR recommended image rect from the session ([xr_session.md](xr_session.md)), and always follows the HMD. An explicit `render_size=WxH` follows by default (`render_size_follow_hmd`).
+- **Size source.** `render_size=hmd` (the default; `off` = window resolution) takes the OpenXR recommended image rect from the session ([xr_session.md](xr_session.md)); `render_size=WxH` sets it explicitly. Either applies only while the HMD is in use; otherwise the game renders at window size, as unmodded.
 - **"In use"** means the session is VISIBLE/FOCUSED. That is the runtime's lifecycle signal, already debounced by the runtime (proximity sensor/standby), so the carrier adds no debounce. The per-frame tracked flag is deliberately excluded: a tracking drop only gives camera pass-through, never a device reset.
 - **Switching** uses the engine's own device-lost recovery. On a state change the device hook answers `RenderSystem_CheckDevice`'s per-frame `TestCooperativeLevel` once with `D3DERR_DEVICENOTRESET` (only for calls from CheckDevice's range). The engine then releases, Resets, runs `OnScreenResize` (the entry hook applies the new target) and restores, and the carrier retakes its outputs. Each switch costs a short hitch.
 - **Exposure continuity** (`adaptation.cpp`; RE: [reverse_engineering/hdr_adaptation.md](reverse_engineering/hdr_adaptation.md)):
@@ -29,7 +29,7 @@ The carrier's own surfaces are created from the render fields. The view-rewrite 
 
 ## Known limitations
 
-- With `render_size_follow_hmd=off` the menu mouse is off at native size. The monitor shows the render image pillarboxed, while `g_MouseScaleX/Y` maps the full window. Fixing it means mapping through the fit rect (offset + uniform scale) in the `WM_MOUSEMOVE` path (`g_WindowOriginX/Y`, near `0x006310e6`). In the default follow mode the mouse is stock whenever it matters.
+- While the HMD is in use the monitor shows the render image pillarboxed, and the menu mouse (`g_MouseScaleX/Y` maps the full window) is off. Fixing it would mean mapping through the fit rect (offset + uniform scale) in the `WM_MOUSEMOVE` path (`g_WindowOriginX/Y`, near `0x006310e6`); with the HMD on standby the mouse is stock.
 - About +22% pixels per pass at 2016×2240 vs 2560×1440. Gameplay frame time was ~14–15 ms vs ~11–13 ms.
 - The HUD is laid out by the engine at the per-eye aspect (0.9); it renders correctly ([hud.md](hud.md) for the remaining stereo HUD issues).
 - Scene MSAA: [msaa.md](msaa.md).

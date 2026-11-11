@@ -8,7 +8,7 @@ Each draw record's `cmdStream` (`PgPrimitive+0x2c`) is a dword stream: an opcode
 - **Callees:** 24, all plaintext except op 23, which is real VM bytecode (`thunk_FUN_0256af90`, `push marker; call` into `Stext`; the slot isn't patched at runtime). A reimplementation calls the original thunk with the same registers.
 - **Register conventions:** most callees take arguments in registers set by the handler (EAX/ECX/EDX/EDI/ESI, XMM0 for op 8). Leftover registers from earlier handlers only reach failure-logging paths.
 - **Op 4 / op 24:** op 4 binds at sampler `D3DVERTEXTEXTURESAMPLER0 + slot`. Op 24 unbinds sampler `stage + 0xff` and sets render state 154 (`D3DRS_POINTSIZE`) to `0x71ff0050 | stage`. That value pattern looks like ATI's R2VB (render-to-vertex-buffer) sampler mapping; unverified.
-- **Op 22:** device `StretchRect` (vtable `+0x88`), not "SetStreamSource" as earlier notes and `stream_capture` labeled it. Op 18 ignores its own payload.
+- **Op 22:** device `StretchRect` (vtable `+0x88`), not "SetStreamSource". Op 18 ignores its own payload.
 - **Bad opcode:** an opcode > 26 makes the original spin forever. The reimplementation stops and reports it.
 
 ## Verified

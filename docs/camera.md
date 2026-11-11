@@ -7,7 +7,7 @@ The implemented camera system, live-verified 2026-10-07. Two parts:
 
 ## Entry convention (probe-derived — static analysis could NOT settle this)
 
-Measured by the `debug_camtable_probe` transfer-function instrument (fixed +10° local-axis injections at the fill site, entry + rendered response logged):
+Measured with a transfer-function probe (fixed +10° local-axis injections at the fill site, entry + rendered response logged; the probe is in git history):
 
 - The rendered camera's axes are the entry's **ROWS**: rendered basis = (−row0, row1, row2) of the 3×3 at entry+0x10. Every earlier "columns" reading was an axis-aligned coincidence (rows ≈ columns near identity).
 - Writing `E' = E·M` renders axes' = `M⁻¹·axes` — WORLD-side application of the INVERSE. The builder's 4×4 matrix inverse (`Matrix_Inverse4x4`, called at `0x008593db` between the entry and the view·proj multiply) inverts whatever rotation is composed into the entry. This one fact produced an entire misleading history of "shifting sign conventions" and pitch/roll coupling on yawed cameras.

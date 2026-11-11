@@ -7,46 +7,21 @@
 
 namespace mc2vr::device_params {
 
-namespace {
-
-// ---- Pacing: vsync=off (CreateDevice/Reset interval patch) ----------
-// The frame's two Presents (present-prev at each BeginSubmit) each block on
-// a 60 Hz vsync slot -> ~30 Hz game (live-log-proven). vsync=off forces
-// D3DPRESENT_INTERVAL_IMMEDIATE so the game renders as fast as the passes
-// actually cost; the OpenXR host/runtime paces the HMD.
-bool g_present_immediate = true;  // vsync=off is the default
-
-} // namespace
-
-bool set_vsync(const char *value)
-{
-    if (strcmp(value, "on") == 0) {
-        g_present_immediate = false;
-    } else if (strcmp(value, "off") == 0) {
-        g_present_immediate = true;
-    } else {
-        return false;
-    }
-    MC2VR_LOG("vsync: vsync=%s (%s)", value,
-              g_present_immediate
-                  ? "CreateDevice/Reset force D3DPRESENT_INTERVAL_IMMEDIATE"
-                  : "game's own present params untouched");
-    return true;
-}
-
 // ---- Device-parameter policy ----------------------------------------------------
 // Applied to a COPY of the engine's D3DPRESENT_PARAMETERS: the engine keeps
 // its stored copy exactly as it asked (RenderSystem_ApplySettings compares
 // that stored copy field by field — MultiSampleType @+0x10, interval @+0x34 —
 // against its settings, so in-place patches read as "settings changed").
-//   - vsync=off: PresentationInterval = IMMEDIATE.
+//   - PresentationInterval = IMMEDIATE, always: the OpenXR runtime paces the
+//     HMD, and a vsync-locked Present would stall it (the monitor window may
+//     tear; without a headset the frame rate is uncapped).
 //   - The swapchain is only the carrier's monitor mirror, so it runs without
 //     MSAA; the engine-requested MSAA moves to the carrier's front/depth
 //     surfaces (render_outputs).
 D3DPRESENT_PARAMETERS apply_param_policy(const D3DPRESENT_PARAMETERS &engine, const char *what)
 {
     D3DPRESENT_PARAMETERS p = engine;
-    if (g_present_immediate && p.PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
+    if (p.PresentationInterval != D3DPRESENT_INTERVAL_IMMEDIATE) {
         MC2VR_LOG("vsync: %s params: %ux%u windowed=%u swapeffect=%u refresh=%u "
                   "interval=0x%08x -> forcing IMMEDIATE",
                   what, p.BackBufferWidth, p.BackBufferHeight, p.Windowed, p.SwapEffect,

@@ -22,15 +22,12 @@ namespace mc2vr::render_size {
 namespace {
 
 // Configured size (render_size=WxH; 0 = off) and the CURRENT target the
-// hooks apply (0 = stock: render size = window size). With
-// render_size_follow_hmd=on (default) the current target is the configured
-// size only while the HMD is in use, else stock — so with the HMD on standby
-// the game renders exactly as unmodded (mouse mapping included).
+// hooks apply (0 = stock: render size = window size). The current target is
+// the configured size only while the HMD is in use, else stock — so with the
+// HMD on standby the game renders exactly as unmodded (mouse mapping included).
 uint32_t g_cfg_w = 0, g_cfg_h = 0;
 bool g_cfg_hmd = true;  // render_size=hmd (the default): g_cfg_* come from the OpenXR session
 uint32_t g_w = 0, g_h = 0;
-bool g_true_aspect = true;
-bool g_follow_hmd = true;
 
 // Switch state (main thread): a pending target, applied when the engine's
 // CheckDevice consumes the forced device-lost signal.
@@ -71,7 +68,7 @@ bool enabled()
 
 void apply_aspect(const char *reason, bool quiet = false)
 {
-    if (!enabled() || !g_true_aspect) {
+    if (!enabled()) {
         return;
     }
     const float a = (float)g_w / (float)g_h;
@@ -113,26 +110,8 @@ bool set_size(const char *value)
     g_cfg_hmd = false;
     g_cfg_w = w;
     g_cfg_h = h;
-    g_w = g_follow_hmd ? 0 : w; // follow mode starts stock; the HMD switches it
-    g_h = g_follow_hmd ? 0 : h;
+    g_w = g_h = 0;  // starts stock; the HMD switches it
     MC2VR_LOG("rsize: render_size=%ux%u (aspect %.4f)", w, h, (double)w / (double)h);
-    return true;
-}
-
-bool set_follow_hmd(const char *value)
-{
-    if (strcmp(value, "on") == 0) {
-        g_follow_hmd = true;
-    } else if (strcmp(value, "off") == 0) {
-        g_follow_hmd = false;
-    } else {
-        return false;
-    }
-    g_w = g_follow_hmd ? 0 : g_cfg_w;
-    g_h = g_follow_hmd ? 0 : g_cfg_h;
-    MC2VR_LOG("rsize: render_size_follow_hmd=%s (%s)", value,
-              g_follow_hmd ? "render_size only while the HMD is in use, window size otherwise"
-                           : "render_size always");
     return true;
 }
 
@@ -171,19 +150,6 @@ bool consume_forced_reset(void *ret)
     g_switches++;
     MC2VR_LOG("rsize: switch -> %s (CheckDevice device-lost recovery, frame %llu)",
               g_w ? "render size" : "window size", (unsigned long long)hooks::frame_count());
-    return true;
-}
-
-bool set_aspect(const char *value)
-{
-    if (strcmp(value, "true") == 0) {
-        g_true_aspect = true;
-    } else if (strcmp(value, "snap") == 0) {
-        g_true_aspect = false;
-    } else {
-        return false;
-    }
-    MC2VR_LOG("rsize: render_aspect=%s", value);
     return true;
 }
 
@@ -268,8 +234,7 @@ namespace {
 
 void evaluate_follow()
 {
-    // render_size=hmd always follows (it has no size without the HMD).
-    if ((!g_follow_hmd && !g_cfg_hmd) || g_cfg_w == 0 || g_switch_armed ||
+    if (g_cfg_w == 0 || g_switch_armed ||
         !render_outputs::active()) {
         return;
     }
@@ -307,7 +272,7 @@ void on_present()
         MC2VR_LOG("rsize: WARNING render fields %ux%u != render_size %ux%u (frame %llu)", w, h,
                   g_w, g_h, (unsigned long long)hooks::frame_count());
     }
-    if (g_true_aspect && g_target_aspect != 0.0f &&
+    if (g_target_aspect != 0.0f &&
         (field<float>(MC2_RS_ASPECT_X_OFF) != g_target_aspect ||
          field<float>(MC2_RS_ASPECT_Y_OFF) != g_target_aspect)) {
         g_aspect_reapplies++;

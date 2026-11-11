@@ -11,20 +11,7 @@ namespace mc2vr::hooks {
 
 namespace {
 
-SafetyHookMid g_mid, g_clear_mid;
-
-// ViewContext_BuildCameraConstants, right after the tans were stored to
-// ctx+0x30/+0x34: EBX = the view render-ctx, XMM2 = tanH, XMM0 = tanV —
-// every later frustum product of the build derives from these two registers.
-void tans_midhook(safetyhook::Context &ctx)
-{
-    float th = ctx.xmm2.f32[0];
-    float tv = ctx.xmm0.f32[0];
-    if (cull_frustum::on_tans_ready(ctx.ebx, th, tv)) {
-        ctx.xmm2.f32[0] = th;
-        ctx.xmm0.f32[0] = tv;
-    }
-}
+SafetyHookMid g_clear_mid;
 
 // Third-person camera clearance (CamCtrl_NearPlaneClearance, camera thread): runs right after
 // the camera copied the main view's frustum struct onto its stack, at
@@ -38,12 +25,8 @@ void camclear_midhook(safetyhook::Context &ctx)
 
 void install_cull_frustum()
 {
-    if (!create_mid(g_mid, MC2_VCCAM_TANS_READY, tans_midhook, "cullfov builder MidHook")) {
-        MC2VR_LOG("cullfov: builder MidHook missing — culling keeps the game frustum");
-        return;
-    }
-    MC2VR_LOG("cullfov: installed builder MidHook @ %p", (void *)MC2_VCCAM_TANS_READY);
-
+    // The frustum widening itself is a direct call in the reimplemented
+    // ViewContext_BuildCameraConstants (reimpl/render/build_camera_constants.hpp).
     if (!create_mid(g_clear_mid, MC2_CAMCLEAR_FRUSTUM_COPIED, camclear_midhook,
                     "cullfov camera-clearance MidHook")) {
         MC2VR_LOG("cullfov: camera-clearance MidHook missing — the camera sees the HMD near "

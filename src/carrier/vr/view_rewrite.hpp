@@ -58,8 +58,8 @@ void on_record_shader(IDirect3DVertexShader9 *vs);
 // per-eye position delta, the pose already in the records from the camera
 // table union (camera_table.cpp). Without a tracked HMD it passes through.
 // mc2vr.conf debug_view_identity=on: rebuild every main-pass VP with the
-// game's OWN camera (output must equal input — the decomposition self-check;
-// also the clean pass-through channel for debug_camtable_probe). Default off
+// game's OWN camera (output must equal input — the decomposition self-check).
+// Default off
 // = the per-eye HMD rewrite (hmd_delta).
 bool set_identity_oracle(const char *value);
 

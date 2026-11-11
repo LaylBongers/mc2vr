@@ -43,7 +43,7 @@ HMD pose (play-space) → **character placement** → **body pose** → **camera
    - the facing comes from the body-yaw rule.
 
    The room-scale displacement is the one part that bypasses commands, because it's measured motion, not a request.
-2. **Body pose.** After animation, our bone controller ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)) bends spine/neck/head so `Bone_Head` lands at the HMD, and lowers the pelvis with bent legs for crouching and leaning. Havok Behavior foot/hand/look-at IK classes are in the binary (`hkbFootIkModifier`, `hkbHandIkModifier`, `hkbLookAtModifier`); whether they're used and callable is OPEN. The same controller hides the head (implemented, below).
+2. **Body pose.** After animation, our bone controller ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)) bends spine/neck/head so `Bone_Head` lands at the HMD, and lowers the pelvis with bent legs for crouching and leaning. Havok Behavior foot/hand/look-at IK classes are in the binary (`hkbFootIkModifier`, `hkbHandIkModifier`, `hkbLookAtModifier`); whether they're used and callable is OPEN. The same controller could hide the head (see Head hiding below).
 3. **Height and calibration** (per the practice above).
    - Standing (floor origin): real height is calibrated against the character's eye height.
    - Seated (eye origin): a fixed offset lifts the head to the character's standing eye height, and head motion stays relative.
@@ -71,13 +71,7 @@ HMD pose (play-space) → **character placement** → **body pose** → **camera
 - Vehicle, QTE (`script`), NPC-interaction (`script`) and ragdoll cameras keep their own classes, and switching to and from them works.
 - Report: `fp: window` (frames, character and eye positions, the stock boom length).
 
-**Head hiding** (`first_person_hide_head`, default off): **doesn't work.** The controller attaches and edits the pose every frame (live: `head hidden` = every frame, `Bone_Head` = bone 26), but the published pose drops scale ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)), so the head stays. Live-verified: the controller part (attach, `OnPose` every frame on the right character, the `Bone_Head` lookup); it's the base for the body pose. Hiding needs another way (OPEN).
-- Our own engine bone controller (`vr/head_hide.{hpp,cpp}`): the engine's controller layout ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)), a hand-built vtable with `thiscall` slot bodies and the game's no-op bodies for unused slots, priority 1000 (after the stock controllers).
-- It's attached to the character once from the first-person hook (`BoneControllerRuntime_AddController`). When the character changes, the stale one reports `IsDone` and the engine deletes it.
-- In `OnPose`, while the first-person camera is live on that character: look up `Bone_Head` in the name map (`HashTable_FindSlot`), set its local scale to 0.001, mark its subtree model-dirty and clear `modelInSync`. `syncModelSpace` right after rebuilds the subtree, but the publish then drops the scale.
-- The edit is gated to first person on the controller's own character (vehicles, cutscenes and third person are untouched).
-- Report: `fp:   head: controllers attached=… OnPose=… head hidden=… (bone N)`. The first attach attempts can fail while the character's runtime isn't ready; it retries and attaches within a few seconds.
-- While the character has no controller runtime yet, the add takes its create path, which calls VM code (`0x00538ec0`), from our call. Live, that returned "not added" without a crash (unlike the `Hud_DrawQuad` case in [hud.md](hud.md)) until the character was ready.
+**Head hiding:** not implemented. A bone controller that scaled the head down in `OnPose` attached and ran every frame, but the published pose drops scale ([character_pose.md](reverse_engineering/character_pose.md#bone-controllers)), so the head stayed; that controller (our own engine bone controller with a hand-built vtable, attached through `BoneControllerRuntime_AddController`) is in git history as the starting point for the body pose. Hiding needs another way (OPEN).
 
 **Why a hook, not a reimplementation of `CamHuman_Update` (yet):** it computes the position inline (536 instructions; 28 calls to private helpers with custom register conventions; mixed SSE/x87, including x87 float returns the call shim doesn't support), so no small function owns that decision. A faithful reimplementation is the next stage for the camera, once its internals need to change (head-driven yaw, body coupling); the hook then becomes a direct call inside it. Rejected: a new camera class swapped into the on-foot mode (mode creation partly runs from VM/runtime code), and overriding at `g_CameraTable` (render-only, so gameplay stays third-person).
 
@@ -100,4 +94,3 @@ HMD pose (play-space) → **character placement** → **body pose** → **camera
   - The shot takes the player's aim point; for flag-`0x1000` weapons the direction is the weapon's own forward axis at that range ([player_input.md](reverse_engineering/player_input.md#fire-site)). Not read: the no-flag branch, `MaxAimAngle`, aim assist.
 - **Mode coverage:** vehicles, turrets, binoculars and script shots keep their own classes; decide which get first-person variants, and how seated/standing work in a vehicle seat.
 - Near-camera fade/hide logic for the player model, if any.
-- With occlusion culling on, objects pop in one area in first and third person alike ([occluder_boxes.md](occluder_boxes.md#open-objects-pop-in-and-out-with-occlusion-culling-on)).

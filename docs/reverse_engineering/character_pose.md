@@ -32,7 +32,7 @@ How C++ can reach a character's parts and its animated pose. Mapped statically 2
 
   **The publish keeps translation and rotation only:** each bone becomes a 0x20-byte `{position, serial, rotation}` record, so **bone scale never reaches rendering**. Confirmed live: a `Bone_Head` local scale of 0.001 set in `OnPose` every frame had no visible effect.
 
-  So a controller edits the final pose, and translation/rotation edits reach skinning the same frame (scale doesn't, see above). The mod's first user is the first-person head hider ([../first_person.md](../first_person.md), `vr/head_hide`). Separately, `BoneControllerRuntime_Update` calls slot 2 `Update(dt, object handle)` and then slot 6 `IsDone()`: true deletes the controller.
+  So a controller edits the final pose, and translation/rotation edits reach skinning the same frame (scale doesn't, see above). A mod controller was tried for first-person head hiding ([../first_person.md](../first_person.md)). Separately, `BoneControllerRuntime_Update` calls slot 2 `Update(dt, object handle)` and then slot 6 `IsDone()`: true deletes the controller.
 - **Contract** (base vtable `BoneController_vtbl`; the slot layout is on its plate):
   - pure slots: 2 (`Update(dt, object handle)`), **5 `OnPose(name map, pose)`**, and 8 (type hash, for `FindByType`); slot 6 `IsDone()` defaults to false (keep), and slot 4 is a pre-pose hook (default no-op);
   - slot 7 is the priority (default 10). The runtime keeps its controllers in a list sorted by it (`PrioList_InsertSorted`), so a later controller sees the earlier ones' edits. `BodyBoneTracker` (type `0x64bef946`) uses 25.

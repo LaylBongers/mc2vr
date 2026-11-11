@@ -20,7 +20,6 @@
 #include "hooks/frame_tick.hpp"
 #include "log.hpp"
 #include "build_census.hpp"
-#include "stream_capture.hpp"
 #include "vr/pacing.hpp"
 #include "vr/view_rewrite.hpp"
 #include "vr/camera_table.hpp"
@@ -43,12 +42,8 @@ namespace {
 
 constexpr uint32_t OPCODE_COUNT = 27; // cmp eax,0x1a
 constexpr uint32_t VIEW_AGG_MAX = 96; // indices observed up to 82+ at runtime
-constexpr uint32_t ENTRY_DUMP_MAX = 12;
-constexpr uint32_t VIEW_STRIDE = 0x810;
 constexpr uint32_t POLL_MS = 250;
 constexpr uint32_t REPORT_POLLS = 10 * 1000 / POLL_MS;
-constexpr uint32_t REFRESH_EVERY_WINDOWS = 3;  // re-dump one entry every ~30s
-constexpr uint32_t REFRESH_MAX = 12;            // steady-state re-dumps per run
 
 // Leaked by design (same teardown reasoning as the device hooks).
 SafetyHookMid g_view_mid;
@@ -60,7 +55,7 @@ volatile LONG g_poller_run = 0;
 uint64_t g_cmd_hist[OPCODE_COUNT] = {};
 uint64_t g_cmd_total = 0;
 
-// View aggregation (window + one-shot dumps).
+// View aggregation (window).
 struct ViewAgg {
     uint32_t idx;
     uint32_t type;
@@ -75,16 +70,6 @@ uint32_t g_vpf_cur = 0;
 uint32_t g_vpf_min = 0;
 uint32_t g_vpf_max = 0;
 uint32_t g_view_list_head = 0;    // DAT_00d29e60 = ACTIVE-VIEW LIST HEAD INDEX (not a count; link = ViewEntry+0x4, negative = end)
-uint32_t g_dumps_done = 0;
-uint32_t g_dumped_idx[ENTRY_DUMP_MAX] = {};
-
-// Steady-state re-dumps: first-wave dumps fire on view activation (loading
-// phase — entries pre-populated). The poller requests one re-dump per minute
-// (rotating through observed indices); the MidHook performs it so the entry
-// read happens mid-loop on the main thread.
-volatile LONG g_refresh_target = -1;
-bool g_view_dumps = false;  // debug_view_dumps=on
-uint32_t g_refresh_done = 0;
 
 // g_RenderShell slot 4/5 claim test.
 uint64_t g_slot4_calls = 0;
@@ -100,45 +85,8 @@ uint32_t g_prod_a_last = 0, g_prod_a_min = 0xffffffff, g_prod_a_max = 0;
 uint32_t g_prod_b_last = 0;
 uint64_t g_queue_changed_polls = 0;
 
-// ---- one-shot entry dumps (main thread, mid-loop: entry is stable) ------
-
-void dump_bytes(const char *tag, uint32_t base_off, const uint8_t *bytes, uint32_t len)
-{
-    char line[96];
-    for (uint32_t off = 0; off < len; off += 32) {
-        uint32_t n = len - off < 32 ? len - off : 32;
-        char *p = line;
-        for (uint32_t i = 0; i < n; i++) {
-            *p++ = "0123456789abcdef"[bytes[off + i] >> 4];
-            *p++ = "0123456789abcdef"[bytes[off + i] & 0xf];
-        }
-        *p = '\0';
-        MC2VR_LOG("%s +0x%03x: %s", tag, base_off + off, line);
-    }
-}
-
-void dump_view_entry(uint32_t idx, uint32_t type, const uint8_t *entry, bool track)
-{
-    // Per-view object pointer at entry+0x7e4 (verified in disassembly).
-    const uint32_t obj_ptr = *(const uint32_t *)(entry + MC2_VIEW_OBJ_PTR_OFF);
-    const uint8_t t3 = *(const uint8_t *)(MC2_VIEW_TABLE3 + idx * 0x20 + 0x18);
-
-    MC2VR_LOG("ViewDump%s idx=%u type=%u entry=%p obj=%p t3=%02x (%s)",
-              track ? "" : " (refresh)", idx, type, entry, (const void *)(uintptr_t)obj_ptr,
-              t3, track ? "first" : "steady-state");
-    dump_bytes("entry", 0, entry, VIEW_STRIDE);
-    if (obj_ptr) {
-        dump_bytes("obj", 0, (const uint8_t *)(uintptr_t)obj_ptr, 0x40);
-    }
-    if (track) {
-        g_dumped_idx[g_dumps_done++] = idx;
-    }
-}
-
 // ---- MidHook handlers -----------------------------------------------------
 
-// RenderCmd_ExecuteStream opcode dispatch: EAX = opcode. Also feeds the
-// Stream tap (stream_capture.cpp): EBP/ESP identify the stream.
 // RenderQueue_SubmitWorldPackets per-view loop head: ESI = view index,
 // ECX = view type (WORD), EAX = byte offset. Entry = table + EAX.
 void view_midhook(safetyhook::Context &ctx)
@@ -186,28 +134,6 @@ void view_midhook(safetyhook::Context &ctx)
     }
     if (i == g_view_distinct && g_view_distinct < VIEW_AGG_MAX) {
         g_views[g_view_distinct++] = {idx, type, 1};
-    }
-
-    // One-shot dump per new index.
-    if (g_view_dumps && g_dumps_done < ENTRY_DUMP_MAX) {
-        bool seen = false;
-        for (uint32_t d = 0; d < g_dumps_done; d++) {
-            if (g_dumped_idx[d] == idx) {
-                seen = true;
-                break;
-            }
-        }
-        if (!seen) {
-            dump_view_entry(idx, type, entry, true);
-        }
-    }
-
-    // Steady-state re-dump requested by the poller (runs here so the entry
-    // read stays on the main thread, mid-loop).
-    if (g_view_dumps && g_refresh_target == (LONG)idx && g_refresh_done < REFRESH_MAX) {
-        g_refresh_target = -1;
-        g_refresh_done++;
-        dump_view_entry(idx, type, entry, false);
     }
 }
 
@@ -312,7 +238,6 @@ void report_window()
     first_person::report_window();
     occlusion_queries::report_window();
     build_census::report_window();
-    s2c::report_window();
     eye_replay::report_window();
     render_outputs::report_window();
     render_size::report_window();
@@ -329,8 +254,6 @@ DWORD WINAPI poller_thread(LPVOID)
     g_queue_elem = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x4);
     g_queue_cap = *(const uint32_t *)(MC2_G_RENDERQUEUE + 0x8);
     uint32_t polls = 0;
-    uint32_t windows = 0;
-    uint32_t refresh_rotor = 0;
 
     while (InterlockedCompareExchange(&g_poller_run, 1, 1)) {
         Sleep(POLL_MS);
@@ -356,23 +279,7 @@ DWORD WINAPI poller_thread(LPVOID)
 
         if (++polls >= REPORT_POLLS) {
             polls = 0;
-
-            // Pick the refresh target BEFORE report_window() clears the
-            // aggregation (reading after it always saw distinct=0 — that
-            // ordering bug silently disabled steady-state re-dumps).
-            uint32_t distinct = g_view_distinct; // approximate cross-thread read
-            uint32_t pick = UINT32_MAX;
-            if (distinct > 0) {
-                pick = g_views[refresh_rotor++ % distinct].idx;
-            }
-
             report_window();
-            windows++;
-
-            if (g_view_dumps && windows % REFRESH_EVERY_WINDOWS == 0 && g_refresh_done < REFRESH_MAX &&
-                pick != UINT32_MAX) {
-                InterlockedExchange(&g_refresh_target, (LONG)pick);
-            }
         }
     }
     return 0;
@@ -392,7 +299,7 @@ bool install_mid(SafetyHookMid &storage, uintptr_t target, safetyhook::MidHookFn
 
 } // namespace
 
-void on_render_command(const uint32_t *cmd, const uint32_t *stream, uint32_t arg2, uint32_t arg3)
+void on_render_command(const uint32_t *cmd)
 {
     gui_census::on_command(cmd);
     const uint32_t op = cmd[0];
@@ -400,21 +307,11 @@ void on_render_command(const uint32_t *cmd, const uint32_t *stream, uint32_t arg
         g_cmd_hist[op]++;
     }
     g_cmd_total++;
-    s2c::on_command(cmd, stream, arg2, arg3);
-}
-
-bool set_view_dumps(const char *value)
-{
-    if (strcmp(value, "on") == 0) g_view_dumps = true;
-    else if (strcmp(value, "off") == 0) g_view_dumps = false;
-    else return false;
-    MC2VR_LOG("views: debug_view_dumps=%s", value);
-    return true;
 }
 
 void install_early()
 {
-    // View-table dump.
+    // View aggregation (and the debug_watch view tap).
     install_mid(g_view_mid, MC2_SUBMITVIEW_LOOP_LEA, view_midhook, "SubmitWorldPackets view loop");
 
     // FrameTick's g_RenderShell slot-4 call site: hit counter (the slot-5

@@ -1,8 +1,8 @@
 # Frame pacing
 
-## `vsync=off`
+## No vsync
 
-The engine Presents once per frame (pass 1's present-prev is skipped through its own `g_SuppressPresent`, [render_outputs.md](render_outputs.md)); with vsync on, the desktop refresh would cap the game. `vsync=off` forces `D3DPRESENT_INTERVAL_IMMEDIATE` in the CreateDevice params: attach-time InlineHook of the game's `Direct3DCreate9` IAT thunk (`0x00a4e892`, single caller `RenderSystem_Init` `0x0074c7a0`) + VmtHook on the returned `IDirect3D9` (`CreateDevice` slot 16); the device-level `Reset` hook re-patches on Reset. Done at the D3D boundary because the engine's own CreateDevice call site is VM-gated (`FUN_0074c9b0` → ptr `0x024cd09c`) and the carrier loads before the device exists ([carrier.md](carrier.md)). `vsync=off` is the default (2026-11-11); `vsync=on` leaves the game's present parameters untouched. Without a headset session the game then runs uncapped. An `auto` mode (immediate only while an OpenXR session runs) would need a device reset at session start: not done.
+The engine Presents once per frame (pass 1's present-prev is skipped through its own `g_SuppressPresent`, [render_outputs.md](render_outputs.md)); with vsync on, the desktop refresh would cap the game and stall the HMD, which the OpenXR runtime paces. The carrier always forces `D3DPRESENT_INTERVAL_IMMEDIATE` in the CreateDevice params: attach-time InlineHook of the game's `Direct3DCreate9` IAT thunk (`0x00a4e892`, single caller `RenderSystem_Init` `0x0074c7a0`) + VmtHook on the returned `IDirect3D9` (`CreateDevice` slot 16); the device-level `Reset` hook re-patches on Reset. Done at the D3D boundary because the engine's own CreateDevice call site is VM-gated (`FUN_0074c9b0` → ptr `0x024cd09c`) and the carrier loads before the device exists ([carrier.md](carrier.md)). Without a headset session the game runs uncapped and the monitor window may tear.
 
 ## Lockstep with the OpenXR frame loop
 
@@ -15,7 +15,7 @@ Carrier side, `src/carrier/vr/pacing.cpp`, while the session is VISIBLE/FOCUSED:
 
 Log lines: `pace:` (frames paced / outside the loop, fed dt vs `g_Dt`, governor mode/rate), `submit:` (frames shown, per-call times).
 
-The stereo replay pass skips `LtiRenderer_BeginSubmit`'s per-submit GPU drain (a condition at the drain check in our `LtiRenderer_BeginSubmit`, [reimpl.md](reimpl.md)), so the CPU queues the right eye while the GPU still draws the left; DXVK's own hazard tracking covers buffer reuse. `debug_keep_replay_drain=on` restores the drain.
+The stereo replay pass skips `LtiRenderer_BeginSubmit`'s per-submit GPU drain (a condition at the drain check in our `LtiRenderer_BeginSubmit`, [reimpl.md](reimpl.md)), so the CPU queues the right eye while the GPU still draws the left; DXVK's own hazard tracking covers buffer reuse.
 
 Head-pose consistency of the rendered pair: [camera.md](camera.md).
 
@@ -35,6 +35,6 @@ So at 90 Hz both have room. For 120 Hz (8.33 ms) the render thread is the first 
 
 Reading `debug_gpu_census`: its CPU times are exact since 2026-11-10 (integer ticks, [x87_precision.md](x87_precision.md)). Its GPU figures are spans of the GPU timeline between timestamps, not busy time: DXVK submits in batches, so time the GPU waits for commands lands in whichever segment is open (menu frames with 1–356 draws show a 7.8–9.8 ms pass-2 "main" span), and the spans always add up to the frame period. That also explains the old pass-1-vs-pass-2 GPU difference (pass 1 "1.1 ms slower" in one run, pass 2 ~2 ms "slower" in the next): idle attribution, not first-pass cost. Earlier figures quoted from it ("~7.9 ms of GPU work") were spans.
 
-A ~340 ms stall every 30 s was the carrier itself: periodic view-table hex dumps written from the game thread, through a logger that disk-synced every line (~5 ms each under Wine). The dumps are now opt-in (`debug_view_dumps=on`) and the logger no longer syncs per line. Logging from game threads stays expensive in bulk — keep per-frame paths log-free.
+Logging from game threads is expensive in bulk (bulk dumps from the game thread caused visible stalls): keep per-frame paths log-free. The logger doesn't disk-sync per line.
 
 The game's camera motion blur (`Mercs2.ini MotionBlur`) smears moving objects in VR.

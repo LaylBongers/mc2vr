@@ -141,8 +141,8 @@
 // SecuROM region — never hooked), so the plaintext way to reach device
 // creation params is: InlineHook this thunk, VmtHook the returned IDirect3D9
 // (CreateDevice = slot 16) and patch the D3DPRESENT_PARAMETERS there.
-// Vsync pacing: vsync=off forces PresentationInterval=IMMEDIATE (two
-// vsync-locked Presents per frame cap the game at ~30 Hz).
+// The carrier always forces PresentationInterval=IMMEDIATE (a vsync-locked
+// Present stalls the HMD; docs/pacing.md).
 #define MC2_D3DCREATE9_THUNK ((uintptr_t)0x00a4e892u)
 
 // A technique's resolved constant map (plate on
@@ -189,8 +189,6 @@
 // in scratch 0x017D04E0 -> the g_ViewContextTable records. E2b probe hooks
 // this plaintext entry (neighbor, allowed) to log/dump the camera object —
 // the remaining upstream injection candidate.
-#define MC2_VCCAMERA_BUILDER ((uintptr_t)0x008591acu)
-#define MC2_VCCAM_ARG_EBP_OFF ((uintptr_t)0x8u)      // arg = [ebp+8] at entry
 #define MC2_VCCAM_CTX_CAMARRAY_OFF ((uintptr_t)0x28u) // camera object slot
 #define MC2_VCCAM_ENTRY_STRIDE ((uintptr_t)0x70u)
 // Camera object entry layout (E2b live-dumped 2026-10-06; convention
@@ -224,17 +222,23 @@
 #define MC2_VCCAM_ENTRY_FAR_OFF ((uintptr_t)0x54u)
 #define MC2_VCCAM_ENTRY_FOVCOS_OFF ((uintptr_t)0x58u)
 
-// Frustum extents in ViewContext_BuildCameraConstants (raw-decoded 2026-10-08,
-// docs/culling.md): 0x0085943B = `LEA EAX,[EBX+0xB20]` (6 bytes, no
-// relative operand), right after tanH/tanV are stored to ctx+0x30/+0x34
-// (0x00859425/0x00859436). At this instruction EBX = the view render-ctx,
-// XMM2 = tanH, XMM0 = tanV, XMM1 = 1.0; everything after (projection at
-// ctx+0xb20, the four frustum-corner vectors at [esp+0x10/0x3c/0x48/0x54] fed
-// to Frustum_Build/ViewContext_BuildCascadeFrusta) is derived from XMM2/XMM0 only — the single
-// cull-frustum input. mc2vr rewrites them (cull_frustum.cpp).
-#define MC2_VCCAM_TANS_READY ((uintptr_t)0x0085943bu)
+// The view ctx frustum half-extents (game/view_context.hpp ViewContext::tanH/tanV).
 #define MC2_VCCAM_CTX_TANH_OFF ((uintptr_t)0x30u)
 #define MC2_VCCAM_CTX_TANV_OFF ((uintptr_t)0x34u)
+
+// The occlusion-query ring (docs/occluder_boxes.md, vr/occlusion_queries.hpp):
+// RenderShell_InitDrawRecordTables' tail right after it points
+// g_OcclusionQueryArray at the engine's ring (`mov [0x01163768],edx`; five
+// one-byte pops follow, also the target of the skip branch);
+// LtiRenderer_ReleaseRenderTargets' entry (EAX = the renderer); and the ring
+// id mask in OcclusionBox_EmitPrimRecord (`and eax,0x800003ff`, the imm32's
+// second byte = the id bits above 8).
+#define MC2_RING_POINTER_SET ((uintptr_t)0x0085405fu)
+#define MC2_RELEASE_RENDER_TARGETS ((uintptr_t)0x0074a850u)
+#define MC2_RING_ID_MASK_AND ((uintptr_t)0x0046fa0du)
+// After the id's mask and sign fix-up (also the `jns` target): EAX = the new
+// ring id, about to go into the object's history, the counter and the record.
+#define MC2_RING_ID_READY ((uintptr_t)0x0046fa22u)
 
 // The clouds/fog pass (docs/view_rewrite.md "Camera-relative matrices"): the two emitters'
 // extent [begin, end): PgClouds_EmitViewRecords
@@ -265,7 +269,7 @@
 // Occluder boxes (docs/occluder_boxes.md): ViewObjects_DrawAndEmitOcclusionBoxes
 // (0x00468ea0) calls OcclusionBox_EmitPrimRecord at two sites (`call rel32`,
 // 5 bytes, no stack args) — per flagged object and for the ctx+0x1430 list.
-// mc2vr NOPs both (occlusion culling off).
+// debug_occlusion_off NOPs both (occlusion culling off).
 #define MC2_OCCLUSION_BOX_EMIT ((uintptr_t)0x0046edf0u)
 #define MC2_OCCLUSION_BOX_CALL_A ((uintptr_t)0x00468eedu)
 #define MC2_OCCLUSION_BOX_CALL_B ((uintptr_t)0x00468f12u)

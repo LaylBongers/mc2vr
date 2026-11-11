@@ -5,9 +5,8 @@
 // ViewObjects_DrawAndEmitOcclusionBoxes (MC2_OCCLUSION_BOX_CALL_A/B, `call
 // rel32`, no stack args). Without boxes no object gets a query ring id, and an
 // object without one counts as visible: every object passing the frustum cull
-// is drawn. This was the VR smearing fix before the per-eye query pairs
-// (vr/occlusion_queries.hpp); with it on, the smearing would show whether the
-// pairs are at fault.
+// is drawn. For telling whether a visual issue comes from occlusion culling
+// (vr/occlusion_queries.hpp).
 #pragma once
 
 namespace mc2vr::occlusion_off {

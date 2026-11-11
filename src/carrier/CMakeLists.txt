@@ -17,6 +17,7 @@ add_library(mc2vr_carrier SHARED
     hooks/frame_tick.cpp
     hooks/hud.cpp
     hooks/install.cpp
+    hooks/occlusion_queries.cpp
     hooks/entry.cpp
     hooks/reimpl.cpp
     hooks/render_outputs.cpp
@@ -24,6 +25,7 @@ add_library(mc2vr_carrier SHARED
     hooks/site.cpp
     # reimpl/: reimplemented game systems (docs/reimpl.md).
     reimpl/render/begin_submit.cpp
+    reimpl/render/build_camera_constants.cpp
     reimpl/render/end_sub_view.cpp
     reimpl/render/render_cmd.cpp
     reimpl/render/setup_viewports.cpp
@@ -33,7 +35,6 @@ add_library(mc2vr_carrier SHARED
     vr/camera_table.cpp
     vr/cull_frustum.cpp
     vr/first_person.cpp
-    vr/head_hide.cpp
     vr/device_params.cpp
     vr/eye_replay.cpp
     vr/eye_share.cpp
@@ -61,7 +62,6 @@ add_library(mc2vr_carrier SHARED
     debug/occlusion_off.cpp
     debug/ps_census.cpp
     debug/render_dump.cpp
-    debug/stream_capture.cpp
     debug/vm_dump.cpp
     debug/wait_census.cpp
     debug/watch.cpp

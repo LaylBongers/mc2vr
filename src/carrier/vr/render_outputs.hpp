@@ -57,7 +57,7 @@ void on_reset(bool before, long hr);
 // 0 = pass 2 done). 1->2 refreshes the LEFT monitor mirror.
 void on_pass_boundary(uint32_t next_pass);
 
-// Duplicate-Present retirement (stereo passes only; stream_capture.cpp).
+// Duplicate-Present retirement (stereo passes only).
 // Before pass 1: set the engine's g_SuppressPresent so pass 1's present-prev
 // is skipped — pass 2's Present (after the 1->2 mirror refresh) shows the
 // current LEFT; pass 1's would re-show the previous frame's. The engine

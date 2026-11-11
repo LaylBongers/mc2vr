@@ -497,7 +497,7 @@ void set_dump_frames(uint32_t n)
 void set_dump_delay(float seconds)
 {
     g_dump_delay_s = seconds;
-    MC2VR_LOG("eye: debug_dump_delay=%.1fs (shared with stream dumps)", (double)seconds);
+    MC2VR_LOG("eye: debug_dump_delay=%.1fs", (double)seconds);
 }
 
 } // namespace mc2vr::eye_replay

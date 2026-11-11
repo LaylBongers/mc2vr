@@ -38,14 +38,6 @@
 
 namespace mc2vr::camera_table {
 
-// mc2vr.conf debug_camtable_probe=on|off: transfer-function probe. Replaces
-// the union rewrite with a fixed +10° rotation about one entry-local axis,
-// cycling x→y→z every 2s, logging the pre/post entry and the previous
-// frame's decomposed render result. One standing-still run measures the
-// game's actual rotation convention (no HMD needed). Returns false on
-// unrecognized input.
-bool set_probe_enabled(const char *value);
-
 // True + fills *rot/*pos with the union pose the table rewrite used for the
 // CURRENT game frame (main thread — the fill and the render passes share
 // it). view_rewrite's hmd_delta mode uses it as the per-eye delta's

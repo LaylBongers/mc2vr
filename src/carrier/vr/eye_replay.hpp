@@ -1,6 +1,6 @@
 // Per-eye draw passes (docs/stereo.md).
 //
-// The frame is submitted twice (stream_capture.cpp's replay hook). This
+// The frame is submitted twice (reimpl/render/submit_to_gpu.cpp). This
 // module makes the two passes a stereo pair:
 //   - Pass 1 renders LEFT, pass 2 renders RIGHT (view_rewrite::set_pass_eye).
 //   - Pass boundaries drive the eye captures: the engine's final frame of each
@@ -29,7 +29,7 @@ namespace mc2vr::eye_replay {
 // mc2vr.conf debug_eye_dump_frames=N (0 = never).
 void set_dump_frames(uint32_t n);
 
-// mc2vr.conf debug_dump_delay=S — shared with the stream dump window.
+// mc2vr.conf debug_dump_delay=S: seconds before the eye dump window opens.
 void set_dump_delay(float seconds);
 
 // The stereo frame, called by the PgPrimitive_SubmitToGPU reimplementation

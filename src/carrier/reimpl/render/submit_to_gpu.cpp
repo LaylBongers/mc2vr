@@ -359,9 +359,10 @@ void submit_record(PgPrimitive *rec)
             // Occlusion pass: drawn only inside a query, and not at all when
             // queries are off. (No NULL check on g_LtiRenderer, as in the original.)
             // VR: the ring entry is a per-eye pair; Issue goes to this pass's
-            // eye (vr/occlusion_queries.hpp).
+            // eye. A box without a ring id (0xffff: the carrier ring was full)
+            // is not drawn: it has no query (vr/occlusion_queries.hpp).
             const uint32_t flags = *reinterpret_cast<const uint32_t *>(g_LtiRenderer::get() + kLtiRendererFlags);
-            if ((flags >> 4) & 1) {
+            if (((flags >> 4) & 1) && rec->objIdx < occlusion_queries::kRingSize) {
                 occlusion_queries::on_box_draw(tech->viewContextData.count);  // diagnostic
                 IDirect3DQuery9 *const q = g_OcclusionQueryArray::get()[rec->objIdx];
                 Query_Issue(q, D3DISSUE_BEGIN);
@@ -459,7 +460,7 @@ void submit_pass(uint32_t pass)
 void PgPrimitive_SubmitToGPU()
 {
     adaptation::on_frame_begin();  // exposure restore after a render-size switch
-    occlusion_queries::on_submit_begin();  // per-eye query pairs for the engine's ring
+    occlusion_queries::on_submit_begin();  // the per-eye occlusion-query ring
     const xr_session::Frame xr = xr_session::begin_frame();  // xrWaitFrame, xrBeginFrame, views
     const xr_session::ViewState *rendered = eye_replay::begin_left_pass(xr);
     hud::begin_frame();  // after the frame's pose is set

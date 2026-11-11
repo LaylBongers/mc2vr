@@ -1,5 +1,5 @@
 // Device-creation policy: what the carrier changes in the engine's
-// CreateDevice / Reset requests (vsync=off interval patch, swapchain MSAA drop;
+// CreateDevice / Reset requests (immediate present interval, swapchain MSAA drop;
 // the behavior flags are only logged) and the one-shot
 // present-parameter log. Plain functions; the IDirect3D9::CreateDevice and
 // device Reset/Present hooks (hooks/device.cpp) call them.
@@ -9,13 +9,6 @@
 #include <d3d9.h> // types only
 
 namespace mc2vr::device_params {
-
-// mc2vr.conf vsync=on|off (default on — the game's own PresentationInterval
-// is untouched). off = vsync pacing: force D3DPRESENT_INTERVAL_IMMEDIATE in
-// CreateDevice and on every Reset — each frame has two Presents (one per draw
-// pass) and both block on a 60 Hz vsync slot, capping the game at ~30 Hz
-// (live-log-proven 2026-10-05).
-bool set_vsync(const char *value);
 
 // Policy applied to a COPY of the engine's params (`what` = "CreateDevice" /
 // "Reset", for the log). The engine keeps its stored copy exactly as it asked.

@@ -23,8 +23,7 @@ constexpr double kMaxDeltaSec = 0.1;
 // its input; an exact 1/60 input would step 2/60. Feed it slightly less.
 constexpr float kQuantizeMarginSec = 0.00025f;
 
-bool g_keep_replay_drain = false;
-uint64_t g_drains_skipped = 0, g_drains_kept = 0;
+uint64_t g_drains_skipped = 0;
 
 // ---- render-thread side (pose sample) --------------------------------------
 // Display time of the last rendered pose and the display-period estimate,
@@ -142,26 +141,8 @@ bool on_drain_check_busy()
     if (eye_replay::current_pass() != 2) {
         return false;  // pass 1 / outside the stereo frame
     }
-    if (g_keep_replay_drain) {
-        g_drains_kept++;
-        return false;
-    }
     g_drains_skipped++;
     return true;  // report "done": skip the spin, take the normal exit
-}
-
-bool keep_replay_drain()
-{
-    return g_keep_replay_drain;
-}
-
-bool set_keep_replay_drain(const char *value)
-{
-    if (strcmp(value, "on") == 0) g_keep_replay_drain = true;
-    else if (strcmp(value, "off") == 0) g_keep_replay_drain = false;
-    else return false;
-    MC2VR_LOG("pace: debug_keep_replay_drain=%s", value);
-    return true;
 }
 
 void report_window()
@@ -177,9 +158,8 @@ void report_window()
               g_delta_max_ms, g_dt_fed ? g_body_sum_ms / (double)g_dt_fed : 0.0,
               g_simdt_min_ms, g_simdt_max_ms, governor_mode(),
               (double)*(const volatile float *)MC2_FRAMERATE_RATE);
-    MC2VR_LOG("pace: replay-pass GPU drain skipped=%llu kept=%llu",
-              (unsigned long long)g_drains_skipped, (unsigned long long)g_drains_kept);
-    g_drains_skipped = g_drains_kept = 0;
+    MC2VR_LOG("pace: replay-pass GPU drain skipped=%llu", (unsigned long long)g_drains_skipped);
+    g_drains_skipped = 0;
     g_frames = g_open = 0;
     g_dt_fed = g_dt_skipped = g_step_floored = 0;
     g_delta_sum_ms = g_delta_min_ms = g_delta_max_ms = 0.0;

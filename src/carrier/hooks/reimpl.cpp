@@ -11,7 +11,9 @@
 #include "game/render_shell.hpp"
 #include "hooks/entry.hpp"
 #include "log.hpp"
+#include "game/view_context.hpp"
 #include "reimpl/render/begin_submit.hpp"
+#include "reimpl/render/build_camera_constants.hpp"
 #include "reimpl/render/end_sub_view.hpp"
 #include "reimpl/render/render_cmd.hpp"
 #include "reimpl/render/setup_viewports.hpp"
@@ -36,6 +38,7 @@ const std::array kReplacements = {
     replace<game::LtiRenderer_BeginSubmit, &reimpl::LtiRenderer_BeginSubmit>(0x0074ac2bu),
     replace<game::RenderShell_EndSubView, &reimpl::RenderShell_EndSubView>(0x0062eebfu),
     replace<game::RenderShell_SetupViewports, &reimpl::RenderShell_SetupViewports>(0x0085ab47u),
+    replace<game::ViewContext_BuildCameraConstants, &reimpl::ViewContext_BuildCameraConstants>(0x00859921u),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;

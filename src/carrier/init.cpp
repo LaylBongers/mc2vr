@@ -20,7 +20,6 @@
 
 #include "crash_log.hpp"
 #include "debug/render_dump.hpp"
-#include "debug/stream_capture.hpp"
 #include "debug/build_census.hpp"
 #include "debug/occlusion_off.hpp"
 #include "debug/camera_census.hpp"
@@ -130,25 +129,6 @@ static void load_conf()
             if (!view_rewrite::set_identity_oracle(value)) {
                 MC2VR_LOG("conf: debug_view_identity=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "debug_camtable_probe") == 0) {
-            // Transfer-function probe: injects fixed local-axis test
-            // rotations at the fill site and logs entry + rendered response
-            // — settles the rotation convention numerically (run standing
-            // still in gameplay; no HMD needed).
-            if (!camera_table::set_probe_enabled(value)) {
-                MC2VR_LOG("conf: debug_camtable_probe=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "debug_keep_replay_drain") == 0) {
-            // A/B: keep LtiRenderer_BeginSubmit's GPU drain in the replay pass.
-            if (!pacing::set_keep_replay_drain(value)) {
-                MC2VR_LOG("conf: debug_keep_replay_drain=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "debug_view_dumps") == 0) {
-            // View-table entry hex dumps (log-only; written from the game
-            // thread, each one a visible hitch).
-            if (!render::set_view_dumps(value)) {
-                MC2VR_LOG("conf: debug_view_dumps=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "debug_ps_census") == 0) {
             // Per-pixel-shader GPU time + pixel counts (log-only;
             // debug/ps_census.hpp). Must precede CreateDevice.
@@ -208,10 +188,6 @@ static void load_conf()
             if (!first_person::set_enabled(value)) {
                 MC2VR_LOG("conf: first_person=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "first_person_hide_head") == 0) {
-            if (!first_person::set_hide_head(value)) {
-                MC2VR_LOG("conf: first_person_hide_head=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "first_person_eye_height") == 0) {
             if (!first_person::set_eye_height(value)) {
                 MC2VR_LOG("conf: first_person_eye_height=%s not recognized (metres, 0.5..2.5)", value);
@@ -237,12 +213,6 @@ static void load_conf()
             if (!vmdump::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_vm_dump=%s not recognized (use on|off)", value);
             }
-        } else if (strcmp(key, "debug_stream_capture") == 0) {
-            // Render-command-stream capture + opcode census (read-only;
-            // docs/stereo.md). Requires the opcode MidHook (render_dump.cpp).
-            if (!s2c::set_enabled(value)) {
-                MC2VR_LOG("conf: debug_stream_capture=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "render_size") == 0) {
             // Render size W×H (docs/render_resolution.md): the engine's
             // render chain + the carrier outputs run at W×H; the window and
@@ -252,35 +222,14 @@ static void load_conf()
                 MC2VR_LOG("conf: render_size=%s not recognized (use hmd, WxH, e.g. 2016x2240, or off)",
                           value);
             }
-        } else if (strcmp(key, "render_size_follow_hmd") == 0) {
-            if (!render_size::set_follow_hmd(value)) {
-                MC2VR_LOG("conf: render_size_follow_hmd=%s not recognized (use on|off)", value);
-            }
-        } else if (strcmp(key, "render_aspect") == 0) {
-            if (!render_size::set_aspect(value)) {
-                MC2VR_LOG("conf: render_aspect=%s not recognized (use true|snap)", value);
-            }
-        } else if (strcmp(key, "vsync") == 0) {
-            // Vsync pacing: off (default) = force D3DPRESENT_INTERVAL_IMMEDIATE at
-            // CreateDevice/Reset (the frame's two Presents are vsync-locked
-            // and cap the game at ~30 Hz).
-            if (!device_params::set_vsync(value)) {
-                MC2VR_LOG("conf: vsync=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "debug_eye_dump_frames") == 0) {
             uint32_t n;
             if (parse_count(key, value, &n)) {
                 eye_replay::set_dump_frames(n);
             }
-        } else if (strcmp(key, "debug_stream_dump_frames") == 0) {
-            uint32_t n;
-            if (parse_count(key, value, &n)) {
-                s2c::set_dump_frames(n);
-            }
         } else if (strcmp(key, "debug_dump_delay") == 0) {
             double d;
             if (parse_double(key, value, &d) && d >= 0.0) {
-                s2c::set_dump_delay((float)d);
                 eye_replay::set_dump_delay((float)d);
             }
         } else if (strcmp(key, "view_world_scale") == 0) {

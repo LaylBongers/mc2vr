@@ -464,9 +464,9 @@ namespace {
 // 3 have w = 0, i.e. the camera sits at the origin of its input space; its depth
 // row is its own, z = A'·z_v + B'). D·m is exact in theory, but D comes from the
 // world-space viewContextData, whose translations are ~1e3 units: the float32
-// rounding there lands in m's depth row (A' 1.0000019 became 1.000247, live
-// 2026-11-11), so distant fog crossed the far plane and was clipped or not
-// from frame to frame — the sky/fog flicker (docs/view_rewrite.md). Instead build m
+// rounding there lands in m's depth row (A' 1.0000019 becomes ~1.00025), so
+// distant fog crosses the far plane and is clipped or not from frame to
+// frame: a sky/fog flicker (docs/view_rewrite.md). Instead build m
 // directly: this pass's eye rotation and projection at the origin, m's own
 // depth terms. False (m untouched) when m isn't camera-relative or not of the
 // assumed form.

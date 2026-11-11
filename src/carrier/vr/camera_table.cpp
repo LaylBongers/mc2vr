@@ -214,81 +214,13 @@ void sample_pose()
 // renders with); two consecutive agreeing fills lock the signs. While the
 // head roughly faces where the game camera points, the dots are ~+-1. The
 // rewrite WAITS (counted as frameWaits) until the signs lock — a changed
-// measurement between builds means the convention changed: re-run the
-// debug_camtable_probe before trusting the union pose.
+// measurement between builds means the convention changed: re-measure it
+// before trusting the union pose (docs/camera.md).
 int8_t g_s0 = 0, g_s1 = 0, g_s2 = 0;  // measured ROW signs; 0 = unlocked
 int8_t g_cand0 = 0, g_cand1 = 0, g_cand2 = 0;
 uint32_t g_cand_agree = 0;
 uint64_t g_frame_waits = 0;
 uint64_t g_rewrite_frame = ~0ull;  // frame of the last actual rewrite
-
-// ---- transfer-function probe (debug_camtable_probe) --------------------
-// Injects a fixed +10° rotation about one entry-local axis (cycling x/y/z,
-// 2s each) and logs the pre/post entry plus the previous frame's rendered
-// (decomposed) camera — the instrument that settled the entry convention.
-// Diagnostic only; overrides the union rewrite while armed.
-bool g_probe = false;
-uint64_t g_probe_last_log = 0;
-
-void try_measure_frame(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2);  // below
-
-void probe_step(float *e)
-{
-    // Column extraction on purpose: the probe documents the transfer for a
-    // column-composition E' = E*M(q) — the measured law (rendered = M^-1
-    // world-side) came from exactly this form.
-    const Vec3 c0 = {e[0], e[4], e[8]};
-    const Vec3 c1 = {e[1], e[5], e[9]};
-    const Vec3 c2 = {e[2], e[6], e[10]};
-    const Vec3 r0 = {e[0], e[1], e[2]};
-    const Vec3 r1 = {e[4], e[5], e[6]};
-    const Vec3 r2 = {e[8], e[9], e[10]};
-    try_measure_frame(r0, r1, r2);  // relative-sign facts go to the log too
-    const uint64_t now = GetTickCount64();
-    const uint32_t phase = (uint32_t)((now / 2000) % 3);  // x, y, z
-    const float half = 10.0f * 3.14159265f / 180.0f * 0.5f;
-    const float s = std::sin(half), c = std::cos(half);
-    const Quat q = phase == 0 ? Quat{s, 0, 0, c}
-                  : phase == 1 ? Quat{0, s, 0, c}
-                               : Quat{0, 0, s, c};
-    // Raw camera-LOCAL injection, no frame mapping on purpose: E' = E*M(q).
-    auto to_world = [&](Vec3 v) { return c0 * v.x + c1 * v.y + c2 * v.z; };
-    const Vec3 n0 = to_world(math::rotate(q, {1, 0, 0}));
-    const Vec3 n1 = to_world(math::rotate(q, {0, 1, 0}));
-    const Vec3 n2 = to_world(math::rotate(q, {0, 0, 1}));
-    if (now - g_probe_last_log >= 200) {
-        g_probe_last_log = now;
-        vp_camera::Camera cam;
-        char dec[192];
-        int m = 0;
-        if (view_rewrite::get_game_camera(&cam)) {
-            m = _snprintf(dec, sizeof(dec), "R=(%.3f %.3f %.3f) U=(%.3f %.3f %.3f) "
-                         "F=(%.3f %.3f %.3f) C=(%.1f %.1f %.1f)",
-                         (double)cam.R.x, (double)cam.R.y, (double)cam.R.z,
-                         (double)cam.U.x, (double)cam.U.y, (double)cam.U.z,
-                         (double)cam.F.x, (double)cam.F.y, (double)cam.F.z,
-                         (double)cam.C.x, (double)cam.C.y, (double)cam.C.z);
-        } else {
-            m = _snprintf(dec, sizeof(dec), "none-yet");
-        }
-        dec[m > 0 ? (m < (int)sizeof(dec) - 1 ? m : (int)sizeof(dec) - 1) : 0] = 0;
-        MC2VR_LOG("camprobe: axis=%c q=(%.3f %.3f %.3f %.3f) "
-                  "E_pre=[%.2f %.2f %.2f|%.2f %.2f %.2f|%.2f %.2f %.2f] "
-                  "E_post=[%.2f %.2f %.2f|%.2f %.2f %.2f|%.2f %.2f %.2f] decomp=%s",
-                  'x' + (int)phase, (double)q.x, (double)q.y, (double)q.z, (double)q.w,
-                  (double)c0.x, (double)c0.y, (double)c0.z,
-                  (double)c1.x, (double)c1.y, (double)c1.z,
-                  (double)c2.x, (double)c2.y, (double)c2.z,
-                  (double)n0.x, (double)n0.y, (double)n0.z,
-                  (double)n1.x, (double)n1.y, (double)n1.z,
-                  (double)n2.x, (double)n2.y, (double)n2.z, dec);
-    }
-    e[0] = n0.x; e[4] = n0.y; e[8] = n0.z;
-    e[1] = n1.x; e[5] = n1.y; e[9] = n1.z;
-    e[2] = n2.x; e[6] = n2.y; e[10] = n2.z;
-    g_rewrites++;  // reuse the counters so the window report stays honest
-    g_rewrite_frame = hooks::frame_count();
-}
 
 void try_measure_frame(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2)
 {
@@ -384,13 +316,6 @@ void on_entry_filled(uintptr_t rot, uintptr_t slot)
     if (!unit(r0) || !unit(r1) || !unit(r2)) {
         // Not an orthonormal rotation — a layout surprise, never a half-pose.
         g_bad_rows++;
-        return;
-    }
-
-    // Probe mode: measures the game's transfer function; replaces the union
-    // rewrite entirely while armed.
-    if (g_probe) {
-        probe_step(e);
         return;
     }
 
@@ -598,26 +523,6 @@ bool union_offset(const float *rows, const float *pos, float *dist_m, float *fwd
     float dot = rows[8] * r[6] + rows[9] * r[7] + rows[10] * r[8];
     dot = std::fmax(-1.0f, std::fmin(1.0f, dot));
     *fwd_angle_deg = std::acos(dot) * 57.29578f;
-    return true;
-}
-
-bool set_probe_enabled(const char *value)
-{
-    bool on;
-    if (strcmp(value, "on") == 0) {
-        on = true;
-    } else if (strcmp(value, "off") == 0) {
-        on = false;
-    } else {
-        return false;
-    }
-    if (on == g_probe) {
-        return true;
-    }
-    g_probe = on;
-    MC2VR_LOG("camtable: transfer probe %s (fixed +10° local-axis rotations, "
-              "x/y/z cycling 2s each; overrides the union rewrite)",
-              on ? "ARMED" : "disabled");
     return true;
 }
 

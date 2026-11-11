@@ -29,6 +29,7 @@ Code: one file per group in `src/carrier/hooks/`, installed in the order of `hoo
 | `Direct3DCreate9` IAT thunk + `IDirect3D9` vtable | thunk `0x00a4e892` (jmp `[0x00b05620]`); CreateDevice slot 16 | InlineHook (attach, always) + VmtHook | device VmtHook installed inside CreateDevice ([carrier.md](carrier.md)); [pacing.md](pacing.md) vsync unlock; the engine's own CreateDevice call site is VM-gated (`FUN_0074c9b0` → ptr `0x024cd09c`, never hooked) |
 | `RenderCmd_ExecuteStream` | `0x008569d0` | InlineHook (replacement) | the reimplementation ([reimpl.md](reimpl.md)); its per-command debug tap feeds the opcode histogram and the stream capture |
 | `PgPrimitive_SubmitToGPU` | `0x00855690` | InlineHook (replacement) | the reimplementation: the stereo frame, LEFT then RIGHT pass ([stereo.md](stereo.md)), with the viewContextData upload gate as a direct call |
+| `ViewContext_BuildCameraConstants` | `0x008591a0` | InlineHook (replacement) | the reimplementation; the HMD cull widening as a direct call ([culling.md](culling.md), [reimpl.md](reimpl.md)) |
 | `RenderShell_SetupViewports` | `0x0085a9b0` | InlineHook (replacement) | the reimplementation; the HUD layer's UI scale / aspect mode policy as a direct call ([hud.md](hud.md), [reimpl.md](reimpl.md)) |
 | `LtiRenderer_BeginSubmit` | `0x0074aaa0` | InlineHook (replacement) | the reimplementation, with the replay-pass GPU drain skip as a direct call ([pacing.md](pacing.md)) |
 | `RenderQueue_SubmitWorldPackets` view loop | `0x0048e620`, MidHook at `0x0048e9ea` (ESI=idx, ECX=type; entry+0x7e4 per-view object, 3rd table `0x014095e0` stride 0x20) | MidHook | view aggregation telemetry |
@@ -47,8 +48,8 @@ Code: one file per group in `src/carrier/hooks/`, installed in the order of `hoo
 | `GuiRenderer_BeginDisplay` view-rect copy | `0x004af05a` (EDI = renderer, rect at +0x6c048) | MidHook (attach) | Scaleform's display rect = the HUD layer's screen ([hud.md](hud.md)) |
 | camera-table fill | `0x0070AEF8` | MidHook | union HMD-pose injection ([camera.md](camera.md)) |
 | `CamHuman_Update` final matrix | `0x0071e611` (`mov ecx,[esp+0xd8]`, 7 bytes; EBX = camera, matrix at ESP+0xa0) | MidHook (only with `first_person=on`) | first-person eye position + obstruction off ([first_person.md](first_person.md)); becomes a direct call when `CamHuman_Update` is reimplemented |
-| view-context builder tan site + camera clearance | `0x0085943B` / `0x007107F9` | MidHook ×2 | culling alignment ([culling.md](culling.md)) |
-| engine occlusion-query ring (`g_OcclusionQueryArray`, RenderShell+0x2e8c) | runtime | object substitution (from our `SubmitToGPU`) | each entry wrapped in a per-eye query pair ([occluder_boxes.md](occluder_boxes.md)); `debug_occlusion_off` NOPs the box calls `0x00468eed` / `0x00468f12` instead |
+| camera clearance | `0x007107F9` | MidHook | culling alignment ([culling.md](culling.md)) |
+| occlusion-query ring: `RenderShell_InitDrawRecordTables` pointer set / `LtiRenderer_ReleaseRenderTargets` entry / emitter id mask | `0x0085405F` / `0x0074A850` / `0x0046FA0D` | MidHook ×2 + byte patch (attach) | `g_OcclusionQueryArray` → the carrier's 4096-slot per-eye ring, released with the engine's; ids widened to 12 bits ([occluder_boxes.md](occluder_boxes.md)); `debug_occlusion_off` NOPs the box calls `0x00468eed` / `0x00468f12` instead |
 
 ## Frame-level strategy
 

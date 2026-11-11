@@ -1,162 +1,15 @@
 #!/usr/bin/env python3
-# Parse mc2vr_carrier.log ViewDump blocks and analyze ViewEntry field usage.
-# Usage: analyze_dumps.py [path/to/mc2vr_carrier.log] [stream_dump_file_or_dir]
-#
-# Produces:
-#   - per-dump header summary (idx, type, entry, obj, t3, first/refresh)
-#   - load-vs-steady diff for any idx dumped twice
-#   - nonzero-dword field map per dump (with float interpretation)
-#   - varying-across-dumps region analysis (constant vs per-view fields)
-#
-# Stream-dump support (src/carrier/debug/stream_capture.cpp): with a second
-# argument (a mc2vr_stream_frame<N>.txt file, or a directory containing them,
-# or omitted to auto-discover next to the log) each stream is decoded with the
-# RE'd RenderCmd_ExecuteStream opcode table and a per-frame census printed
-# (per-opcode counts + payload field stats). "stream" log lines are echoed.
-#
-# Written during the field-map derivation. Entry size and dump line format must stay in sync
-# with src/carrier/debug/render_dump.cpp (dump_bytes: 32 bytes/line, "entry
-# +0xOFF: hex", "obj +0xOFF: hex").
+# Measure the shift between the eyes in the carrier's eye image dumps
+# (debug_eye_dump_frames=N: mc2vr_eye_left/right_frame<N>.bmp next to the log).
+# Usage: analyze_dumps.py [dump directory or a file in it]
+# (default: the mc2vr directory of launch.conf's GAME_DIR).
+# Method and pitfalls (global offset, per-eye scale, a true far reference):
+# docs/debugging.md.
 
-import glob
 import os
-import re
 import struct
 import sys
 
-VIEW_STRIDE = 0x810
-OBJ_LEN = 0x40
-ELEM_SIZE = 96
-
-# RenderCmd_ExecuteStream (0x008569d0) command size table: dwords incl. opcode.
-# op 0x00 = halt. op 0x13 = advance-only no-op (shares case 0x0d's tail).
-OP_SIZE = [
-    1,
-    3,
-    4,
-    4,
-    3,
-    3,
-    3,
-    3,
-    7,
-    3,
-    1,
-    1,
-    1,
-    2,
-    2,
-    3,
-    5,
-    5,
-    3,
-    2,
-    3,
-    2,
-    3,
-    4,
-    2,
-    1,
-    1,
-]
-OP_NAME = [
-    "halt",
-    "SetRenderState",
-    "SetVertexShaderConstantF",
-    "SetPixelShaderConstantF",
-    "BindViewTextureFamily(+0x101)",
-    "StreamSourceBind",
-    "SetRenderTarget0+DepthStencil",
-    "SetRenderTarget",
-    "SetScreenConstants",
-    "SetClipPlane",
-    "ReapplyClipPlaneMask",
-    "DisableClipPlanes",
-    "ViewType9StretchBlit",
-    "StretchRectFromGlobal",
-    "SetCullMode",
-    "Thunk_004a05b9",
-    "BeginSurfacePass",
-    "EndSurfacePass",
-    "BindTexture+Samplers",
-    "NOOP",
-    "BindViewTextureFamily",
-    "ClearRTPass_0074af30",
-    "DeviceSetStreamSource",
-    "Thunk_0256af90",
-    "SetTexture0+RS0x9a",
-    "HalfResPassBegin",
-    "HalfResPassEnd",
-]
-# Fields (dword indices after the opcode) worth aggregating per opcode.
-OP_FIELDS = {
-    0x01: ["state", "value"],
-    0x02: ["vsReg", "dataPtr", "vec4"],
-    0x03: ["psReg", "dataPtr", "vec4"],
-    0x08: ["p1", "p2", "p3", "p4", "p5", "p6"],
-    0x09: ["planeBit", "planePtr"],
-    0x10: ["a", "b", "c", "gate"],
-    0x11: ["a", "b", "c", "gate"],
-}
-
-
-def parse(path):
-    dumps, cur = [], None
-    for line in open(path, encoding="utf-8", errors="replace"):
-        m = re.search(
-            r"ViewDump( \(refresh\))? idx=(\d+) type=(\d+) entry=(\w+) "
-            r"obj=(\w+) t3=(\w+) \((\w[\w-]*)\)",
-            line,
-        )
-        if m:
-            cur = {
-                "refresh": bool(m.group(1)),
-                "idx": int(m.group(2)),
-                "type": int(m.group(3)),
-                "obj": int(m.group(5), 16),
-                "t3": int(m.group(6), 16),
-                "state": m.group(7),
-                "data": bytearray(VIEW_STRIDE),
-                "objdata": bytearray(OBJ_LEN),
-            }
-            dumps.append(cur)
-            continue
-        m = re.search(r"entry \+0x([0-9a-f]+): ([0-9a-f]+)", line)
-        if m and cur:
-            off = int(m.group(1), 16)
-            cur["data"][off : off + 32] = bytes.fromhex(m.group(2))
-            continue
-        m = re.search(r"obj \+0x([0-9a-f]+): ([0-9a-f]+)", line)
-        if m and cur:
-            off = int(m.group(1), 16)
-            cur["objdata"][off : off + 32] = bytes.fromhex(m.group(2))
-    return dumps
-
-
-def words(d, key="data"):
-    return [struct.unpack_from("<I", d[key], o)[0] for o in range(0, len(d[key]), 4)]
-
-
-# ---- view-rewrite log echo ---------------------------------------------------
-
-VIEW_ECHO = re.compile(r"\bview:")
-STREAM_ECHO = re.compile(r"\bstream( census| window| walk| replay|:)")
-
-
-def report_view(path):
-    """Echo the view-rewrite and stream-capture log lines."""
-    sections = [("view rewrite", VIEW_ECHO), ("stream capture", STREAM_ECHO)]
-    for title, pat in sections:
-        echoes = []
-        for line in open(path, encoding="utf-8", errors="replace"):
-            if pat.search(line):
-                echoes.append(line.rstrip())
-        if echoes:
-            print(f"\n################ {title} ################")
-            for line in echoes[:80]:
-                print("  " + line)
-            if len(echoes) > 80:
-                print(f"  ... ({len(echoes) - 80} more echoed lines)")
 
 
 # ---- eye dumps (BMP pairs) --------------------------------------------
@@ -328,179 +181,24 @@ def discover_eye_dumps(arg):
     return None
 
 
-# ---- stream dumps ----------------------------------------------------------
-
-
-def parse_stream_dump(path):
-    """Parse one mc2vr_stream_frame<N>.txt into a list of streams of dwords."""
-    streams, cur, header = [], None, {}
-    for line in open(path, encoding="utf-8", errors="replace"):
-        line = line.strip()
-        if line.startswith("#") or not line:
-            continue
-        if line.startswith("streams "):
-            continue
-        m = re.match(
-            r"stream base=(\w+) arg2=(\w+) arg3=(\w+) cmds=(\d+) dwords=(\d+)"
-            r" trunc=(\d)",
-            line,
-        )
-        if m:
-            cur = {
-                "base": int(m.group(1), 16),
-                "arg2": int(m.group(2), 16),
-                "arg3": int(m.group(3), 16),
-                "cmds": int(m.group(4)),
-                "dwords": int(m.group(5)),
-                "trunc": int(m.group(6)),
-                "words": [],
-            }
-            streams.append(cur)
-            continue
-        if line.startswith("d") and cur is not None:
-            cur["words"].extend(int(w, 16) for w in line.split()[1:])
-    return streams
-
-
-def decode_stream(s):
-    """Split a dword list into commands using the opcode size table."""
-    cmds, w, bad = [], 0, s["words"]
-    while w < len(bad):
-        op = bad[w]
-        if op >= 27:
-            cmds.append({"op": op, "raw": bad[w:], "runaway": True})
-            break
-        size = OP_SIZE[op]
-        cmds.append({"op": op, "raw": bad[w : w + size]})
-        if op == 0:
-            break
-        w += size
-    return cmds
-
-
-def report_stream_dumps(paths):
-    for path in paths:
-        print(
-            f"\n################ stream dump: {os.path.basename(path)} ################"
-        )
-        streams = parse_stream_dump(path)
-        print(f"streams: {len(streams)}")
-        op_counts, op_samples, field_stats = {}, {}, {}
-        for s in streams:
-            for c in decode_stream(s):
-                op = c["op"]
-                op_counts[op] = op_counts.get(op, 0) + 1
-                op_samples.setdefault(op, c["raw"])
-                for i, name in enumerate(OP_FIELDS.get(op, [])):
-                    key = (op, name)
-                    if i + 1 < len(c["raw"]):
-                        v = c["raw"][i + 1]
-                        lo, hi, seen = field_stats.get(key, (v, v, set()))
-                        seen.add(v)
-                        field_stats[key] = (min(lo, v), max(hi, v), seen)
-
-        print("\n== per-opcode census ==")
-        for op in sorted(op_counts):
-            name = OP_NAME[op] if op < 27 else "INVALID"
-            sample = " ".join(f"{w:08x}" for w in op_samples[op][:7])
-            print(f"  op {op:02x} x{op_counts[op]:<6} {name:<28} sample: {sample}")
-
-        print("\n== payload field stats (op, field: min..max, distinct) ==")
-        for op, name in sorted(field_stats):
-            lo, hi, seen = field_stats[(op, name)]
-            d = f"distinct={len(seen)}" if len(seen) <= 8 else f"distinct>8"
-            print(f"  op {op:02x}.{name}: {lo:#010x}..{hi:#010x} ({d})")
-
-        print("\n== per-stream command traces (first 12 streams, first 16 cmds) ==")
-        for s in streams[:12]:
-            cmds = decode_stream(s)
-            trace = " ".join(f"{c['op']:02x}" for c in cmds[:16])
-            print(
-                f"  base={s['base']:#010x} cmds={s['cmds']:<5} "
-                f"arg2={s['arg2']:#010x} arg3={s['arg3']:#010x} : {trace}..."
-            )
-
-
-def discover_stream_dumps(log_path, arg):
-    if arg:
-        if os.path.isdir(arg):
-            return sorted(glob.glob(os.path.join(arg, "mc2vr_stream_frame*.txt")))
-        return [arg]
-    d = os.path.dirname(os.path.abspath(log_path))
-    return sorted(glob.glob(os.path.join(d, "mc2vr_stream_frame*.txt")))
+def default_dir():
+    conf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "launch.conf")
+    try:
+        with open(conf) as f:
+            for line in f:
+                if line.startswith("GAME_DIR="):
+                    return os.path.join(line.split("=", 1)[1].strip().strip('"'), "mc2vr")
+    except OSError:
+        pass
+    return "."
 
 
 def main():
-    path = (
-        sys.argv[1]
-        if len(sys.argv) > 1
-        else (
-            "/home/laylb/Games/mercenaries-2/drive_c/Program Files (x86)/EA Games/"
-            "Mercenaries 2 World in Flames/mc2vr/mc2vr_carrier.log"
-        )
-    )
-    if os.path.exists(path):
-        report_view(path)
-
-    stream_paths = discover_stream_dumps(
-        path, sys.argv[2] if len(sys.argv) > 2 else None
-    )
-    if stream_paths:
-        report_stream_dumps(stream_paths)
-
-    eye_dir = discover_eye_dumps(sys.argv[2] if len(sys.argv) > 2 else None) or (
-        os.path.dirname(os.path.abspath(path))
-    )
-    if os.path.isdir(eye_dir):
-        report_eye_dumps(eye_dir)
-
-    if not os.path.exists(path):
-        print(f"(log {path} not found — stream dumps only)")
+    eye_dir = discover_eye_dumps(sys.argv[1] if len(sys.argv) > 1 else None) or default_dir()
+    if not os.path.isdir(eye_dir):
+        print(f"no dump directory {eye_dir}")
         return
-    dumps = parse(path)
-    print(f"parsed {len(dumps)} dumps: {[(d['idx'], d['state']) for d in dumps]}")
-    if not dumps:
-        return
-
-    by_idx = {}
-    for d in dumps:
-        by_idx.setdefault(d["idx"], []).append(d)
-
-    # Load vs steady diff for twice-dumped indices
-    for idx, ds in by_idx.items():
-        if len(ds) >= 2:
-            a, b = ds[0], ds[-1]
-            print(f"\n=== idx {idx}: {a['state']} -> {b['state']} diff ===")
-            wa, wb = words(a), words(b)
-            shown = 0
-            for i in range(VIEW_STRIDE // 4):
-                if wa[i] != wb[i]:
-                    off = i * 4
-                    fa = struct.unpack_from("<f", a["data"], off)[0]
-                    fb = struct.unpack_from("<f", b["data"], off)[0]
-                    print(
-                        f"  +0x{off:03x}: {wa[i]:#010x} -> {wb[i]:#010x} "
-                        f"(f {fa:.6g} -> {fb:.6g})"
-                    )
-                    shown += 1
-                    if shown >= 40:
-                        print("  ... (truncated)")
-                        break
-            if shown == 0:
-                print("  (identical)")
-
-    # Per-dump nonzero map
-    for d in dumps:
-        w = words(d)
-        nz = [(i * 4, w[i]) for i in range(VIEW_STRIDE // 4) if w[i] != 0]
-        print(
-            f"\n=== idx {d['idx']} ({d['state']}, t3={d['t3']}, obj {d['obj']:#x}): "
-            f"{len(nz)} nonzero dwords ==="
-        )
-        for off, v in nz:
-            f = struct.unpack_from("<f", d["data"], off)[0]
-            fl = f" (f={f:.6g})" if -1e9 < f < 1e9 and f == f else ""
-            print(f"  +0x{off:03x}: {v:#010x}{fl}")
+    report_eye_dumps(eye_dir)
 
 
 if __name__ == "__main__":

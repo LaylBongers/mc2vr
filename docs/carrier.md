@@ -21,4 +21,4 @@ Hooking the device from another thread (polling `g_LtiRenderer->dx9State`) races
 
 ## Debug modules
 
-`src/carrier/debug/`, all conf keys prefixed `debug_`, default off (see `conf/mc2vr.conf`): `debug_vm_dump` (live thunk slot census → `vm_thunks.csv`), `debug_watch` (hardware watchpoints), `debug_camtable_probe` (camera transfer-function probe, [camera.md](camera.md)), `debug_eye_dump_frames` (per-eye BMPs). Full list + usage: [debugging.md](debugging.md). The deployed conf is never overwritten by `launch.sh` — add keys to the deployed copy.
+`src/carrier/debug/`, all conf keys prefixed `debug_`, default off (see `conf/mc2vr.conf`): `debug_vm_dump` (live thunk slot census → `vm_thunks.csv`), `debug_watch` (hardware watchpoints), `debug_eye_dump_frames` (per-eye BMPs). Full list + usage: [debugging.md](debugging.md). The deployed conf is never overwritten by `launch.sh` — add keys to the deployed copy.

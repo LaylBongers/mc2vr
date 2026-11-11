@@ -142,8 +142,8 @@ static_assert(offsetof(PgMaterial, vsConsts) == 0x80 && offsetof(PgMaterial, fla
 
 // g_ViewContextTable entries (0x70; layout: docs/reverse_engineering/view_context_records.md).
 struct ViewContextRecord {
-    uint8_t r00[0x40];
-    float cameraPos[4];                  // +0x40
+    float viewProj[16];                  // +0x00 the view's VP (viewContextData rows 0..3)
+    float cameraPos[4];                  // +0x40 xyz + 1
     uint8_t r50[0x60 - 0x50];
     const uint8_t *atmosphereData;       // +0x60 (its +0x60 vec4 -> Technique.atmosphereVec)
     const void *globalLightData;         // +0x64
@@ -190,7 +190,11 @@ using g_ScreenEffectsEnabled = Global<uint8_t, 0x00dfb345u>;
 // only. GetData readers: ObjectOcclusionQueries_PollAndMarkVisible,
 // FUN_004a6730 (both: visible unless S_OK with 0 pixels) and
 // OcclusionQuery_GetPixelCount (S_OK ? pixels : 0xffffffff; its callers want
-// >= 64 / != 0). None of them waits for a result.
+// >= 64 / != 0). None of them waits for a result. Each object keeps its ids in
+// a 3-slot history (obj+0x1c4, write index obj+0x1c2, read index obj+0x1c0,
+// both advanced mod 3 per frame at 0x0046e5a0, read = write + 1): its poll
+// reads the id issued two frames earlier. mc2vr points g_OcclusionQueryArray at
+// its own larger ring (vr/occlusion_queries.hpp).
 using g_OcclusionQueryArray = Global<IDirect3DQuery9 **, 0x01163768u>;
 constexpr uint32_t kOcclusionQueryCount = 0x400;
 

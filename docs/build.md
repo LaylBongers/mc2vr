@@ -24,7 +24,7 @@ The carrier refuses to hook unless the game exe size + SHA-256 on disk match `sr
 - SafetyHook v0.7.0 vendored in `vendor/safetyhook/` (amalgamated + Zydis, BSL-1.0, C++23).
 - OpenXR SDK 1.1.54 vendored; the carrier uses its headers only and has no loader ([xr_session.md](xr_session.md)).
 - Vulkan-Headers 1.4.363 vendored (`vendor/vulkan-headers/`), headers only: the carrier takes Vulkan from the library DXVK loaded.
-- `tools/analyze_dumps.py <log>` — parses carrier view-dump / eye-evidence blocks.
+- `tools/analyze_dumps.py [dir]` — measures eye-pair dumps (`debug_eye_dump_frames=N`).
 - `tools/test/test_vp_camera.cpp` — native g++ unit test for the camera math ([camera.md](camera.md)); build line in its header.
 - `tools/test/test_call_shim.cpp` — the game call shim under Wine ([reimpl.md](reimpl.md#tests)).
 - `tools/test/test_game_entry.cpp` — the entry for replacements under Wine ([reimpl.md](reimpl.md#tests)).

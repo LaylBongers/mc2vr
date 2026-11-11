@@ -13,7 +13,7 @@ The goal is to add full-featured VR support. (Motion controls were cancelled —
 - Before researching anything, check `docs/` (mod implementation) and `docs/reverse_engineering/` (game-side RE) for prior findings — methodology, cross-cutting facts, and open items live in the notes; per-address facts live in the Ghidra project.
 - Milestone status and handover briefs are deliberately NOT tracked in this file (they churn between milestones) — open tracks live in the `docs/` note they concern, closed history in git. Keep this file to stable standing rules; do not edit it as part of routine milestone work.
 - Launcher/carrier (proven): build `cmake -B build/win32 -DCMAKE_TOOLCHAIN_FILE=cmake/i686-w64-mingw32.cmake`; live-run via `./launch.sh`, logs in `<GAME_DIR>/mc2vr/mc2vr_*.log`. Mechanism rules and hook list: `docs/hooks.md`.
-- Iteration loop: the agent implements/logs; the human runs `./launch.sh` (gameplay, not menu, for render instrumentation) and reports; the agent audits the logs. `tools/analyze_dumps.py` parses carrier view-dump blocks, stream dumps and eye-pair evidence.
+- Iteration loop: the agent implements/logs; the human runs `./launch.sh` (gameplay, not menu, for render instrumentation) and reports; the agent audits the logs. `tools/analyze_dumps.py` measures the carrier's eye-pair dumps.
 
 ## Documentation
 

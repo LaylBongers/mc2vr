@@ -4,7 +4,7 @@ Raw-decoded and watch-proven during the culling work ([../culling.md](../culling
 
 - **One source.** `ViewContext_BuildCameraConstants` (`0x008591ac`; EBX = the view render-ctx, `[ctx+0x28]` = camera object, entry = cam + [cam]*0x70) derives every frustum product of a view from two values:
   - `tanH = tan(fov·0.375·aspect)` and `tanV = tanH/aspect`, with fov = entry+0x58 (radians, 4:3-normalized; stock 0.95975 → 36.65°/22.71° at 16:9).
-  - At `0x0085943B` they are in XMM2/XMM0 (just stored to ctx+0x30/+0x34). Everything after is derived from those registers: the projection (ctx+0xb20) → VP (ctx+0xb60) → `g_ViewContextTable` records ([view_context_records.md](view_context_records.md)), the frustum structs, and the shadow cascades.
+  - At `0x0085943B` they are in XMM2/XMM0 (just stored to ctx+0x30/+0x34; mc2vr's reimplementation applies the cull widening there). Everything after is derived from those registers: the projection (ctx+0xb20) → VP (ctx+0xb60) → `g_ViewContextTable` records ([view_context_records.md](view_context_records.md)), the frustum structs, and the shadow cascades.
 - **Products** (main view: slot-1 ctx = `0x017CF980` = `g_RenderShell`+0x10+1·0xe80; slots are `g_RenderShellPtr + idx·0xe80 + 0x10`):
   - ctx+0x38 and ctx+0x250 — frustum structs built by `Frustum_Build`. Layout: `{near, far, 8 world corners at +0x0c (near 0..3 = (+H,+V)(+H,−V)(−H,−V)(−H,+V), then far), side-plane normals at +0x6c, plane D's at +0xb4, ...}`, 0x218 bytes. ctx+0x250 is the same view with far = near + Σ cascade splits.
   - ctx+0x954/0xa70/0xa80 — whole-view output of `ViewContext_BuildCascadeFrusta`.
