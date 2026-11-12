@@ -100,8 +100,9 @@ uint32_t g_l2p_reg = REG_INVALID;  // the current record's shader (on_record_sha
 uint32_t g_vpm_reg = REG_INVALID;
 uint32_t g_l2v_reg = REG_INVALID;
 double g_delta[16];  // this pass's clip delta (vp_camera::clip_delta), double
-// The game's view space (LocalToView) is vp_camera's with x negated:
-// LocalToView_game = S * View_ours * World, S = diag(-1, 1, 1, 1)
+// The game's view frame (LocalToView) has the opposite handedness of
+// vp_camera's: its x points to screen-left, ours (D3D left-handed) to
+// screen-right. LocalToView_game = S * View_ours * World, S = diag(-1, 1, 1, 1)
 // (P_mono * S * LocalToView = LocalToProj on every record; checked per record,
 // check_view_convention). T is applied in that frame: S * T * S.
 constexpr double kGameViewSigns[4] = {-1.0, 1.0, 1.0, 1.0};
