@@ -22,7 +22,7 @@ Session ([xr_session.md](xr_session.md#live-results)): `xr: session created on D
 
 - `view: record` census: menu = idx 2/3 (immediate after attach), load-in = idx 9/10 (~+13 s), gameplay = idx 4,5,6,7,8,12,13 (~+20 s) — the world-scale set (4/5/6) appearing at all is the "truly in-world" signal.
 - The menu/loading vista camera parks at ~(-1730,-33,2064) with slow rotation — a decomposed `camC` frozen there across a run means the world pass never engaged, regardless of what was on screen.
-- `view/hmd: blocks=0` + `poseId=0` for whole windows = the HMD was never tracked (everything downstream of the hmd rewrite's decompose — matching, `get_game_camera` — is blind without it).
+- `view/hmd: view records produced eye=0` + `poseId=0` for whole windows = the HMD was never tracked (everything downstream of the view record's decompose — matching, `get_game_camera` — is blind without it).
 - `camtable: camera frame MEASURED` = the row-sign calibration locked (expected row0.R=−1, row1.U=+1, row2.F=+1; a different result means the convention changed — re-run the probe before trusting the union pose: [camera.md](camera.md)).
 - When a run "does nothing", first check that the conf took effect in the log (the round-8 `bool` vs `float` no-op).
 

@@ -9,13 +9,13 @@ shader3*.bin are {entry} directories of raw bytecode; Precache/*.precache are
 for "CTAB" FOURCCs (constant tables in D3D9 comment sections) and parse each
 one relative to the FOURCC.
 
-CTAB layout in this build (empirical, shaderVT.bin @0x108):
-  base = fourcc+4: {Size=0x1c, Creator, Version, u1, u2, ConstantInfo, ...}
-  Constant infos: {Name, RegisterSet:16, RegisterIndex:16, RegisterCount:16,
-  Reserved:16, TypeInfo, DefaultValue} — the array position is found by
-  validating entries (printable name, set in 0..3, idx<256, 1<=count<=64),
-  then walking until an entry stops validating. TypeInfo =
-  {Class:16, Type:16, Rows:16, Cols:16, ...} parsed when sane.
+CTAB layout: the standard D3DXSHADER_CONSTANTTABLE. base = fourcc+4:
+  {Size=0x1c, Creator, Version, Constants, ConstantInfo, Flags, Target},
+  offsets relative to base. Constant infos: {Name, RegisterSet:16,
+  RegisterIndex:16, RegisterCount:16, Reserved:16, TypeInfo, DefaultValue},
+  each checked (printable name, set in 0..3, idx<256, 1<=count<=256). A
+  header that doesn't check out falls back to scanning for the info array.
+  TypeInfo = {Class:16, Type:16, Rows:16, Cols:16, ...} parsed when sane.
 
 Usage: shader_ctab.py <file>... [-g REGEX]
   default: one line per constant per shader. -g: only shaders whose creator
@@ -68,7 +68,7 @@ def valid_info(buf, base, pos):
     if pos + CONST_INFO.size > len(buf):
         return None
     name_off, rset, ridx, rcnt, _res, ti_off, _dv = CONST_INFO.unpack_from(buf, pos)
-    if rset not in (0, 1, 2, 3) or ridx > 255 or not 1 <= rcnt <= 64:
+    if rset not in (0, 1, 2, 3) or ridx > 255 or not 1 <= rcnt <= 256:
         return None
     name = cstring(buf, base + name_off) if 0 < name_off < 0x100000 else None
     if name is None:
@@ -91,12 +91,23 @@ def valid_info(buf, base, pos):
 
 
 def parse_ctab(buf, fourcc):
+    """D3DXSHADER_CONSTANTTABLE after the FOURCC: {Size, Creator, Version,
+    Constants, ConstantInfo, Flags, Target}, offsets relative to its start.
+    Falls back to the entry scan for a header that doesn't check out."""
     base = fourcc + 4
     if base + 0x1C > len(buf):
         return None
-    size, creator, _ver = struct.unpack_from("<III", buf, base)
+    size, creator, _ver, count, info = struct.unpack_from("<IIIII", buf, base)
     if size not in (0x1C, 0x2C):
         return None
+    if 0 < count <= 512 and 0x1C <= info < 0x100000:
+        consts = [valid_info(buf, base, base + info + CONST_INFO.size * i) for i in range(count)]
+        if all(consts):
+            return cstring(buf, base + creator), consts
+    return parse_ctab_scan(buf, base, creator)
+
+
+def parse_ctab_scan(buf, base, creator):
     # Find the info array: try dword offsets in the header region; accept the
     # first position with >=2 consecutive valid entries.
     for start in range(base + 0x1C, base + 0x30, 4):

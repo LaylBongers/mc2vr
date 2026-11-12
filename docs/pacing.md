@@ -37,4 +37,4 @@ Reading `debug_gpu_census`: its CPU times are exact since 2026-11-10 (integer ti
 
 Logging from game threads is expensive in bulk (bulk dumps from the game thread caused visible stalls): keep per-frame paths log-free. The logger doesn't disk-sync per line.
 
-The game's camera motion blur (`Mercs2.ini MotionBlur`) smears moving objects in VR.
+The game's camera motion blur (`Mercs2.ini MotionBlur`) smeared moving objects in VR; it is removed, with depth of field ([motion_blur.md](motion_blur.md)).

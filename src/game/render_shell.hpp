@@ -75,7 +75,7 @@ using g_SuppressPresent = Global<uint8_t, 0x011755c3u>;
 using g_CurPassObject = Global<uint32_t, 0x0117561cu>;
 using g_LastRecViewFlags = Global<uint16_t, 0x00ce7d20u>;  // 0xff = none
 using DAT_00ce7d24 = Global<uint16_t, 0x00ce7d24u>;        // reset together with g_LastRecViewFlags
-using DAT_00dfb363 = Global<uint8_t, 0x00dfb363u>;         // EffectPass.stencilFlag.x = 1 when set
+using g_RenderCfg_MotionBlur = Global<uint8_t, 0x00dfb363u>;  // Mercs2.ini [Render] MotionBlur -> EffectPass.blurAndTint.x
 // Zeroed at each submit start; roles unknown.
 using DAT_01163764 = Global<uint32_t, 0x01163764u>;
 using DAT_011697c8 = Global<uint32_t, 0x011697c8u>;
@@ -128,6 +128,12 @@ using s_PrecacheRenderingComplete = Global<const char, 0x00be85ecu>;    // "Prec
 constexpr uintptr_t kRenderShellDevice = 0x2d28;          // IDirect3DDevice9 * (BeginSubmit's query device)
 constexpr uintptr_t kRenderShellRT0Surface = 0x3e90;      // IDirect3DSurface9 *
 constexpr uintptr_t kRenderShellDepthSurface = 0x3ea0;    // IDirect3DSurface9 *
+constexpr uintptr_t kRenderShellAutoDepth = 0x3e94;       // IDirect3DSurface9 * (device auto depth)
+constexpr uintptr_t kRenderShellFront = 0x3e98;           // IDirect3DSurface9 * (the front; the composite's target)
+// Sub-views and post-FX inputs (PgLtiBloom_EmitPasses reads them through g_RenderShellPtrB).
+constexpr uintptr_t kRenderShellSubViewCount = 0x2b90;    // u16
+constexpr uintptr_t kRenderShellSubView = 0x2b92;         // u16, current sub-view (block at +0x10 + n * 0xe80)
+constexpr uintptr_t kRenderShellSaturation = 0x2bd8;      // float -> composite imageParams.z (role inferred)
 constexpr uintptr_t kRenderShellSkipClear = 0x4448;       // u32; nonzero = BeginSubmit does not clear
 // Render-target textures (IDirect3DTexture9 *, from SetupRenderTargets' tail).
 constexpr uintptr_t kRenderShellMainTexture = 0x43f0;        // "ColorBuffer", fp16; level 0 = +0x3e90

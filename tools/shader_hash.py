@@ -70,9 +70,17 @@ def scan(path):
         if not size or size > 1 << 20:
             continue
         names = []
-        ctab = ctabs.get(off + 8)  # version token, comment token, then "CTAB"
-        if ctab:
-            names = [c["name"] for c in ctab[1]]
+        # The CTAB is one of the leading comments (some shaders open with DBUG).
+        pos = off + 4
+        while pos + 4 <= len(buf):
+            tok = struct.unpack_from("<I", buf, pos)[0]
+            if (tok & 0xFFFF) != 0xFFFE:
+                break
+            ctab = ctabs.get(pos + 4)
+            if ctab:
+                names = [c["name"] for c in ctab[1]]
+                break
+            pos += 4 + 4 * ((tok >> 16) & 0x7FFF)
         out.append((fnv1a(buf[off:off + size]), size, prof, off, names))
     return out
 

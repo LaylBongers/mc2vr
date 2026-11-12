@@ -3,7 +3,7 @@
 // Follows the original block by block (VA ranges in the comments). Floats are
 // scalar SSE in the original (mulss/addss, no x87); the matrix keeps its
 // operation order (one multiply, plus one add for row 3) so results are
-// bit-identical. Deviations: none intended.
+// bit-identical. Deviations: none intended, besides the VR calls marked "VR:".
 
 #include "reimpl/render/submit_to_gpu.hpp"
 
@@ -192,6 +192,11 @@ void submit_record(PgPrimitive *rec)
         g_CurPassObject::set(0);
     }
     RenderShell_SetViewType(rec->viewType);
+    // VR: the view record every copy of it is uploaded from (VS and PS
+    // viewContextData, PS cameraPos): this pass's per-eye record on the main
+    // pass, the game's elsewhere. After SetViewType: it binds the targets the
+    // main-pass gate reads.
+    const view_rewrite::ViewRecord eye_view = view_rewrite::eye_view_record(vctx);
 
     // ---- dirty mask 0x855981-0x8559fc (after SetViewType: it resets caches) ----
     uint32_t dirty = 0;
@@ -220,8 +225,10 @@ void submit_record(PgPrimitive *rec)
             Dx9_SetVertexShaderConstantF(&tech->screenConsts, g_ScreenConstsVS::ptr());
         }
         if (vs_mask & 0x04) {
-            view_rewrite::on_upload_gate((uintptr_t)tech, (uintptr_t)vctx);  // VR: was the 0x855a78 MidHook
-            if (tech->viewContextData.count) Dx9_SetVertexShaderConstantF(&tech->viewContextData, vctx);
+            if (tech->viewContextData.count) {
+                view_rewrite::on_view_upload(eye_view, view_rewrite::ViewUpload::VsViewContext);
+                Dx9_SetVertexShaderConstantF(&tech->viewContextData, eye_view.rec);
+            }
             if (tech->atmosphere.count) Dx9_SetVertexShaderConstantF(&tech->atmosphere, vctx->atmosphereData);
             if (tech->globalLight.count) Dx9_SetVertexShaderConstantF(&tech->globalLight, vctx->globalLightData);
         }
@@ -264,7 +271,8 @@ void submit_record(PgPrimitive *rec)
             ps_mask = 0x7f;
         }
         if (pass != nullptr && pass->viewContextData.count) {
-            Dx9_SetPixelShaderConstantF(&pass->viewContextData, vctx);
+            view_rewrite::on_view_upload(eye_view, view_rewrite::ViewUpload::PsViewContext);
+            Dx9_SetPixelShaderConstantF(&pass->viewContextData, eye_view.rec);
         }
     }
 
@@ -301,13 +309,13 @@ void submit_record(PgPrimitive *rec)
 
     // ---- pixel side 0x855d78-0x8562af ----
     if (pass != nullptr) {
-        if ((ps_mask & 0x40) && pass->stencilFlag.count) {
+        if ((ps_mask & 0x40) && pass->blurAndTint.count) {
             alignas(16) float c[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            if (rec->stencilMode != 2 && DAT_00dfb363::get() != 0) {
+            if (rec->stencilMode != 2 && g_RenderCfg_MotionBlur::get() != 0) {
                 c[0] = 1.0f;
             }
             dev = lti_device();
-            Device_SetPixelShaderConstantF(dev, pass->stencilFlag.start_reg, c, pass->stencilFlag.count);
+            Device_SetPixelShaderConstantF(dev, pass->blurAndTint.start_reg, c, pass->blurAndTint.count);
         }
         if (ps_mask & 0x28) {
             if (rec->viewIdx == 1) {
@@ -334,7 +342,10 @@ void submit_record(PgPrimitive *rec)
         }
         if (ps_mask & 0x04) {
             if (pass->globalLight.count) Dx9_SetPixelShaderConstantF(&pass->globalLight, vctx->globalLightData);
-            if (pass->cameraPos.count) Dx9_SetPixelShaderConstantF(&pass->cameraPos, vctx->cameraPos);
+            if (pass->cameraPos.count) {
+                view_rewrite::on_view_upload(eye_view, view_rewrite::ViewUpload::PsCameraPos);
+                Dx9_SetPixelShaderConstantF(&pass->cameraPos, eye_view.rec->cameraPos);
+            }
         }
         if ((ps_mask & 0x01) && pass->screenConsts.count) {
             Dx9_SetPixelShaderConstantF(&pass->screenConsts, g_ScreenConstsPS::ptr());
@@ -345,7 +356,7 @@ void submit_record(PgPrimitive *rec)
     reimpl::RenderCmd_ExecuteStream(rec->cmdStream, tech, pass);
     // VR: a world marker's quad placed for this eye (vr/world_markers.hpp).
     const bool marker = world_markers::before_draw((uint32_t)(rec - g_PrimitiveBase::get()), rec, tech);
-    if (tech != nullptr && camera_census::on_draw(rec, tech)) {  // debug tap (true unless a debug skip)
+    if (tech != nullptr && camera_census::on_draw(rec, tech, pass)) {  // debug tap (true unless a debug skip)
         RenderShell_BindRecordStreams(rec);
         if (g_LastGeometry::get() != rec->geometryObj) {
             if (rec->geometryObj != nullptr) {

@@ -25,6 +25,7 @@ add_library(mc2vr_carrier SHARED
     hooks/site.cpp
     # reimpl/: reimplemented game systems (docs/reimpl.md).
     reimpl/render/begin_submit.cpp
+    reimpl/render/bloom_emit_passes.cpp
     reimpl/render/build_camera_constants.cpp
     reimpl/render/end_sub_view.cpp
     reimpl/render/render_cmd.cpp

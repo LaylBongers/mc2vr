@@ -17,7 +17,7 @@ Per-address facts are on the Ghidra plates and pre-comments (`RenderShell_SetVie
 - **Single render target:** the scene draws to main color `+0x3e90` with scene depth `+0x3ea0`, one target (no MRT). The only multi-target pass is an offscreen pass without depth (`FUN_00483070`, view type 7, inferred).
 - **Pointers baked into records:** besides the draw-time bind in `LtiRenderer_BeginSubmit`, six emitters copy the `+0x3e90` / `+0x3ea0` pointers into op-6 / op-7 records at build time. That includes the post chain drawing back into main (`0x74f85b`). Swapping the table therefore redirects post-processing too; the substitution has to happen when a bind executes, not in the table.
 - **Original code binds main too, at draw time:** the view-type-7 exit in `SetViewType`, `RenderCmd_EndSurfacePass` and `RenderShell_EndHalfResPass`. The last two pair main with the **auto depth** `+0x3e94`, not the scene depth.
-- **Depth copy is a separate pass:** view type 1 binds "DepthBufferCopy" (`+0x3e9c`, full-size G32R32F) as the only target, keeps the scene depth bound with Z writes on, and writes linear depth: effectively a Z-prepass. Under MSAA that pairs a 1× target with an MSAA depth, which D3D9 doesn't allow. Its order relative to the scene draws (types 5/6) is not checked yet.
+- **Depth copy is a separate pass:** view type 1 binds "DepthBufferCopy" (`+0x3e9c`, full-size G32R32F) as the only target, keeps the scene depth bound with Z writes on, and writes the post-projection depth `z/w` (`shader3.bin 0x211020`; consumers linearize it with their `ProjectParams`, [view_rewrite.md](view_rewrite.md#open-per-eye-camera-producers)): effectively a Z-prepass. Under MSAA that pairs a 1× target with an MSAA depth, which D3D9 doesn't allow. Its order relative to the scene draws (types 5/6) is not checked yet.
 - **Depth is never sampled:** no INTZ/RAWZ formats. Post effects read depth only from DepthBufferCopy.
 - **Reads of the finished scene:** the post chain starts with op 12 (`ViewType9_StretchBlit`), a StretchRect of the bound RT0 into "ColorBufferCopy" (`+0x3fa4`). Refraction materials (view type 9) do the same mid-scene. A StretchRect from a multisampled surface is itself a resolve. The main texture "ColorBuffer" (`+0x43f0`) is also reachable by name for sampling; no static binder was found, so that needs a runtime check.
 - **The engine's MSAA setting:** it only gives `+0x3ea0` its own depth surface, and that surface isn't multisampled either. The engine has no resolve code.
@@ -29,7 +29,7 @@ With the in-game AA option off, the scene depth `+0x3ea0` is the auto-depth alia
 - the shadow atlas (own 1024×4096 depth);
 - the **scene**: RT0 = main with the scene depth, view types 5/6, `LESSEQUAL`, mostly without depth writes. It relies on the prepass depth;
 - StretchRect main → ColorBufferCopy (full size), StretchRect DepthBufferCopy → a full-size G32R32F copy, one more draw into DepthBufferCopy, alpha draws into main (type 8), more full-size main → ColorBufferCopy copies;
-- the post chain into its own 1× targets without depth, one draw back into main;
+- the post chain into its own 1× targets without depth, one draw back into main (the flare pass, [post_chain.md](reverse_engineering/post_chain.md));
 - the **composite** into the front with the scene depth (58 draws, some depth-tested: the world markers).
 
 The main texture is never bound to a sampler; DepthBufferCopy's texture is. Wherever a 1× target is bound with the scene depth there are no draws.
@@ -52,4 +52,4 @@ Live (2026-11-09, full HMD size 2016×2240, Index at 90 Hz):
 - **4× (default):** 87–90 Hz with no late frames (first run, with `debug_gui_census` on): at the edge of the 90 Hz budget. Chosen ahead of the HUD/GUI pipeline work, which is expected to free GPU time.
 
 OPEN:
-- The DepthBufferCopy resolve averages linear depth at edges; post effects reading it may show thin halos. None reported so far.
+- The DepthBufferCopy resolve averages the stored depth at edges; post effects reading it may show thin halos. None reported so far.

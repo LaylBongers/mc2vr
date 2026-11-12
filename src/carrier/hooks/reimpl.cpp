@@ -7,12 +7,14 @@
 #include <array>
 #include <utility>
 
+#include "game/bloom.hpp"
 #include "game/render_cmd.hpp"
 #include "game/render_shell.hpp"
 #include "hooks/entry.hpp"
 #include "log.hpp"
 #include "game/view_context.hpp"
 #include "reimpl/render/begin_submit.hpp"
+#include "reimpl/render/bloom_emit_passes.hpp"
 #include "reimpl/render/build_camera_constants.hpp"
 #include "reimpl/render/end_sub_view.hpp"
 #include "reimpl/render/render_cmd.hpp"
@@ -39,6 +41,7 @@ const std::array kReplacements = {
     replace<game::RenderShell_EndSubView, &reimpl::RenderShell_EndSubView>(0x0062eebfu),
     replace<game::RenderShell_SetupViewports, &reimpl::RenderShell_SetupViewports>(0x0085ab47u),
     replace<game::ViewContext_BuildCameraConstants, &reimpl::ViewContext_BuildCameraConstants>(0x00859921u),
+    replace<game::PgLtiBloom_EmitPasses, &reimpl::PgLtiBloom_EmitPasses>(0x00750b77u),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;

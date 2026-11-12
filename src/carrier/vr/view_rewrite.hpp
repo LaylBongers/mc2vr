@@ -1,12 +1,12 @@
-// Per-eye camera channel at the GPU boundary (docs/view_rewrite.md,
-// docs/camera.md): the camtable union injection puts the
-// HMD-union pose into the game's camera table upstream; this module taps the
-// SetVertexShaderConstantF uploads of the technique's viewContextData and
-// applies the per-eye complement (hmd_delta; always on) or, with
-// debug_view_identity=on, the decompose/rebuild self-check:
-//   - on_upload_gate(): called by the PgPrimitive_SubmitToGPU reimplementation at
-//     each viewContextData upload; publishes the technique's exact register map.
-//   - on_set_vs_constant(): the device VmtHook tap that applies the rewrite.
+// Per-eye camera channel (docs/view_rewrite.md, docs/camera.md): the camtable
+// union injection puts the HMD-union pose into the game's camera table
+// upstream; this module produces the per-eye complement (hmd_delta; always on)
+// or, with debug_view_identity=on, the decompose/rebuild self-check:
+//   - eye_view_record() / on_view_upload(): the PgPrimitive_SubmitToGPU
+//     reimplementation uploads every copy of the view record (VS and PS
+//     viewContextData, PS cameraPos) from this pass's per-eye record.
+//   - on_set_vs_constant(): the device VmtHook tap for the explicit camera
+//     matrices outside the view record (LocalToProj, g_ViewProjMtx, LocalToView).
 //   - on_set_render_target(): pass gate (RT0 size == engine render size) — only the main
 //     scene pass is rewritten (shadow-map/reflection/offscreen passes are not).
 //   - set_identity_oracle()/set_view_world_scale(): mc2vr.conf controls.
@@ -19,21 +19,47 @@
 
 #include <cstdint>
 
+#include "game/pg_primitive.hpp"
 #include "vr/camera_table.hpp"
 #include "vr/vp_camera.hpp"
 
 namespace mc2vr::view_rewrite {
 
-// The constant-upload gate (the PgPrimitive_SubmitToGPU reimplementation, at
-// the original's 0x00855a78), render thread, right before the wrapper ->
-// device call: tech = the CURRENT technique object
-// (0 = none), rec = the pass's viewContext record pointer. Publishes the
-// technique's constant map for on_set_vs_constant.
-void on_upload_gate(uintptr_t tech, uintptr_t rec);
+// Where a record's view record comes from in this pass.
+enum class ViewSource : uint8_t {
+    Eye,        // this pass's per-eye copy (or, debug_view_identity=on, the rebuilt mono one)
+    Offscreen,  // not the main pass: the game's record
+    NotHmd,     // main pass, but no HMD view stamp matches its VP: the game's record
+    NoPose,     // no HMD pose for this frame/pass: the game's record
+    Failed,     // its VP did not decompose: the game's record
+};
+constexpr uint32_t kViewSources = 5;
+
+struct ViewRecord {
+    const game::ViewContextRecord *rec;  // what the uploads read
+    ViewSource source;
+    uint8_t slot;  // internal (the per-pass cache entry)
+};
+
+// The view record a draw record's uploads read in this pass (the
+// PgPrimitive_SubmitToGPU reimplementation, after RenderShell_SetViewType has
+// bound the record's targets): a per-eye copy of `vctx` with its VP rows and
+// camPos rebuilt for this pass's eye, or `vctx` itself. Produced once per view
+// record and pass (and again if the game's record changes); the main-pass gate
+// is checked per call. The copy stays valid while the record is submitted.
+ViewRecord eye_view_record(const game::ViewContextRecord *vctx);
+
+enum class ViewUpload : uint8_t { VsViewContext, PsViewContext, PsCameraPos };
+
+// One upload of `v` (counts; a VS viewContextData upload of an eye record also
+// makes its view the one this pass's explicit camera matrices are corrected
+// against, as it was when the rewrite ran at the device).
+void on_view_upload(const ViewRecord &v, ViewUpload what);
 
 // Tap from device.cpp's SetVertexShaderConstantF handler (main thread, before
-// the driver call). Returns the pointer the driver call must use: `data`
-// itself, or a scratch copy carrying the rewrite.
+// the driver call): the current record's explicit camera matrices. Returns the
+// pointer the driver call must use: `data` itself, or a scratch copy carrying
+// the rewrite.
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
                                 uint32_t vec4_count);
 
@@ -104,15 +130,15 @@ uint32_t current_pose_id();
 // begin_frame). False when the frame has no HMD pose (current_pose_id() == 0).
 bool frame_eyes(vp_camera::EyePose out[2]);
 
-// The RAW (pre-rewrite) game camera decomposed from the most recent
-// viewContextData/ViewProj upload (main pass
-// only). Input for the camtable row-sign calibration and the transfer probe;
+// The RAW (pre-rewrite) game camera decomposed from the most recently
+// produced main-pass view record. Input for the camtable row-sign calibration and the transfer probe;
 // valid for ~1s after the last main-pass upload.
 bool get_game_camera(vp_camera::Camera *out);
 
 // The current pass's mono -> eye clip-space map (EyeVP · MonoVP⁻¹, the same
-// delta applied to the scene): out = delta · in. False before the pass's
-// first main-pass camera upload or without an HMD pose.
+// delta applied to the scene; of the latest VS upload of an eye record):
+// out = delta · in. False before the pass's first such upload or without an
+// HMD pose.
 bool mono_clip_to_eye(const double in[4], double out[4]);
 
 // Per-pass eye override (eye_replay.cpp): pass 1 = -1, pass 2 = +1,

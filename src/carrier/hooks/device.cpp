@@ -46,7 +46,9 @@ constexpr size_t SLOT_EndScene = 42;
 // method order, which agrees with every runtime-pinned slot: Reset 16 /
 // Present 17 / BeginScene 41 / EndScene 42 / SetRenderState 57). The draw
 // camera reaches the GPU as VS constants (the engine is shader-driven;
-// SetTransform is never called).
+// SetTransform is never called). The view record is uploaded per eye by the
+// SubmitToGPU reimplementation; this tap corrects the explicit camera
+// matrices outside it (view_rewrite::on_set_vs_constant).
 constexpr size_t SLOT_SetVertexShaderConstantF = 94;
 // Observed (never altered) so the view rewrite knows which pass is drawing:
 // shadow-map / reflection / other RT passes upload their own viewContextData
@@ -485,7 +487,7 @@ bool hook_device(IDirect3DDevice9 *device)
     }
 
     // Debug-only slots (observe + forward; each a no-op unless its tool is on).
-    census_hooks::install(g_device); // debug_ps_census / debug_gpu_census / debug_gui_census
+    census_hooks::install(g_device); // debug_ps_census / debug_gpu_census / debug_gui_census / debug_camera_census
 
     MC2VR_LOG("D3D: VmtHook installed at device creation — Present/BeginScene/EndScene/"
               "Reset pinned + SetVertexShaderConstantF slot %u (the GPU-boundary channel)",

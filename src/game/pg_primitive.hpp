@@ -106,23 +106,26 @@ static_assert(offsetof(Technique, envConsts) == 0x94 && offsetof(Technique, reco
               offsetof(Technique, viewContextData) == 0xd4 && offsetof(Technique, materialExtra) == 0xf4);
 
 // Effect pass (pixel side): g_EffectPassTable entry or a RenderShell_PickPass_* result.
+// Register fields filled by EffectPass_ResolveConstantRegisters (0x0085b50a)
+// from the pixel shader's constant names (in quotes); field names are the
+// roles SubmitToGPU uploads them in.
 struct EffectPass {
     uint8_t r000[0x94];
-    ShaderConstParam screenBoolsA;       // +0x94 (B) <- screenView + 0x280
-    ShaderConstParam screenBoolsB;       // +0x9c (B) <- screenView + 0x290
-    ShaderConstParam screenConstsA;      // +0xa4  <- screenView + 0x000
-    ShaderConstParam screenConstsB;      // +0xac  <- screenView + 0x180
-    ShaderConstParam globalLight;        // +0xb4  <- viewContext.globalLightData
-    ShaderConstParam materialMatrix;     // +0xbc  <- 6 vec4: material rows x view scale/offset (or the material)
-    ShaderConstParam cameraPos;          // +0xc4  <- viewContext + 0x40
-    ShaderConstParam materialExtra;      // +0xcc  <- material.psConst178
-    ShaderConstParam screenConsts;       // +0xd4  <- g_ScreenConstsPS
-    ShaderConstParam viewContextData;    // +0xdc  <- the viewContext record
-    uint8_t r0e4[0xec - 0xe4];
-    ShaderConstParam stencilFlag;        // +0xec  <- {1 or 0, 0, 0, 0} (direct device call)
+    ShaderConstParam screenBoolsA;       // +0x94 "numPointLights" (B) <- screenView + 0x280
+    ShaderConstParam screenBoolsB;       // +0x9c "numSpotLights" (B) <- screenView + 0x290
+    ShaderConstParam screenConstsA;      // +0xa4 "pointLights" <- screenView + 0x000
+    ShaderConstParam screenConstsB;      // +0xac "spotLights" <- screenView + 0x180
+    ShaderConstParam globalLight;        // +0xb4 "globalLightData" <- viewContext.globalLightData
+    ShaderConstParam materialMatrix;     // +0xbc "materialData" <- 6 vec4: material rows x view scale/offset (or the material)
+    ShaderConstParam cameraPos;          // +0xc4 "cameraPos" <- viewContext + 0x40
+    ShaderConstParam materialExtra;      // +0xcc "user" <- material.psConst178
+    ShaderConstParam screenConsts;       // +0xd4 "viewport" <- g_ScreenConstsPS
+    ShaderConstParam viewContextData;    // +0xdc "depthXform" <- the viewContext record
+    ShaderConstParam dxt1NormalMap;      // +0xe4 "dxt1NormalMap" (not uploaded by SubmitToGPU)
+    ShaderConstParam blurAndTint;        // +0xec "blurAndTint" <- {g_RenderCfg_MotionBlur && stencilMode != 2, 0, 0, 0} (direct device call)
 };
 static_assert(offsetof(EffectPass, screenBoolsA) == 0x94 && offsetof(EffectPass, materialMatrix) == 0xbc &&
-              offsetof(EffectPass, viewContextData) == 0xdc && offsetof(EffectPass, stencilFlag) == 0xec);
+              offsetof(EffectPass, viewContextData) == 0xdc && offsetof(EffectPass, blurAndTint) == 0xec);
 
 struct PgMaterial {
     float rows[6][4];                    // +0x00  scaled by the view entry into EffectPass.materialMatrix

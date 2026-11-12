@@ -16,8 +16,9 @@
 // game/lti.hpp; the device directly for shader/index/query calls.
 //
 // VR behavior inside it, as direct calls:
-//   - view_rewrite::on_upload_gate at the viewContextData upload (0x00855a78;
-//     a MidHook there while the original runs).
+//   - the per-eye view record (view_rewrite::eye_view_record): the VS and PS
+//     viewContextData and the PS cameraPos are uploaded from this pass's eye
+//     copy of the record on the main pass.
 //   - the HUD layer (vr/hud.hpp): on headset frames the HUD records leave the
 //     walk; pass 1 draws them once into the HUD target, pass 2 skips them, and
 //     each pass ends by compositing the layer into its eye image.

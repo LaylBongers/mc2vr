@@ -7,6 +7,7 @@
 
 #include <cstdint>
 
+#include "debug/camera_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/gui_census.hpp"
 #include "debug/ps_census.hpp"
@@ -73,10 +74,14 @@ HRESULT __stdcall setrs_hook(IDirect3DDevice9 *self, D3DRENDERSTATETYPE state, D
     gui_census::on_render_state(state, value);
     return g_setrs_hook->stdcall<HRESULT>(self, state, value);
 }
-// debug_gui_census: pixel-shader constant uploads.
+// debug_gui_census / debug_camera_census: pixel-shader constant uploads.
+// The words above the arguments are the caller's stack (camera_census scans
+// them for the wrapper's caller).
 HRESULT __stdcall setpsconst_hook(IDirect3DDevice9 *self, UINT start, const float *data, UINT count)
 {
     gui_census::on_shader_constants(true, start, data, count);
+    camera_census::on_ps_constants(start, count, (uintptr_t)__builtin_return_address(0),
+                                   reinterpret_cast<const uint32_t *>(&count) + 1);
     return g_setpsconst_hook->stdcall<HRESULT>(self, start, data, count);
 }
 
@@ -91,11 +96,14 @@ void on_device(IDirect3DDevice9 * /*device*/)
             MC2VR_LOG("ps: hook_method(SetPixelShader) failed — no per-shader census");
         }
     }
-    if (gui_census::enabled()) {
+    if (gui_census::enabled() || camera_census::enabled()) {
         g_setpsconst_hook = device::hook_method(SLOT_SetPixelShaderConstantF, (void *)&setpsconst_hook);
+        MC2VR_LOG("gui/camcensus: SetPixelShaderConstantF %s (debug_gui_census / debug_camera_census)",
+                  g_setpsconst_hook ? "hooked" : "FAILED");
+    }
+    if (gui_census::enabled()) {
         g_setrs_hook = device::hook_method(SLOT_SetRenderState, (void *)&setrs_hook);
-        MC2VR_LOG("gui: SetPixelShaderConstantF %s, SetRenderState %s (debug_gui_census)",
-                  g_setpsconst_hook ? "hooked" : "FAILED", g_setrs_hook ? "hooked" : "FAILED");
+        MC2VR_LOG("gui: SetRenderState %s (debug_gui_census)", g_setrs_hook ? "hooked" : "FAILED");
     }
     if (gpu_census::enabled() || ps_census::enabled() || gui_census::enabled()) {
         struct SlotSpec {

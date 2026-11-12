@@ -11,15 +11,17 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 **atmosphereData**. Pixel shaders carry `cameraPos` (c92 in the material PSes)
 — the per-pixel effects channel (not rewritten).
 
-207 vertex shaders (non-sampler constants; samplers omitted):
+348 vertex shaders (non-sampler constants; samplers omitted):
 
 | container | shader @ | profile | constant registers |
 |---|---|---|---|
+| shader3.bin | 0x22d8 | vs_3_0 | InvViewport=c0 |
 | shader3.bin | 0x25a8 | vs_3_0 | InvViewport=c2, UVMatrix=c0-c1 |
 | shader3.bin | 0x2738 | vs_3_0 | InvViewport=c2, UVMatrix=c0-c1 |
 | shader3.bin | 0x28c8 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
 | shader3.bin | 0x2e78 | vs_3_0 | InvViewport=c2, UVMatrix=c0-c1 |
 | shader3.bin | 0x3f38 | vs_3_0 | gBillboardData=c0-c10, viewContextData=c11-c14 |
+| shader3.bin | 0x45f8 | vs_3_0 | viewContextData=c0-c3 |
 | shader3.bin | 0x4778 | vs_3_0 | atmosphereData=c21-c27, gBillboardData=c0-c10, globalLightData=c11-c20, viewContextData=c28-c33 |
 | shader3.bin | 0x54c8 | vs_3_0 | atmosphereData=c21-c27, gBillboardData=c0-c10, globalLightData=c11-c20, viewContextData=c28-c33 |
 | shader3.bin | 0x61f8 | vs_3_0 | gBillboardData=c0-c10, viewContextData=c11-c14 |
@@ -27,6 +29,7 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3.bin | 0x8c28 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
 | shader3.bin | 0x9868 | vs_3_0 | atmosphereData=c0-c6, cQuad0=c18, cQuad2=c19, cQuad3=c20, g_ViewProjMtx=c12-c15, globalLightData=c16-c17, viewContextData=c7-c11 |
 | shader3.bin | 0x9fb8 | vs_3_0 | cQuad3=c4, g_ViewProjMtx=c0-c3 |
+| shader3.bin | 0x10d28 | vs_3_0 | BoneMatrixArray=c0-c191, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
 | shader3.bin | 0x1dd248 | vs_3_0 | objectData=c4-c6, viewContextData=c0-c3 |
 | shader3.bin | 0x1dd648 | vs_3_0 | atmosphereData=c0-c6, globalLightData=c15-c16, objectData=c12-c14, viewContextData=c7-c11 |
 | shader3.bin | 0x1de598 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
@@ -34,7 +37,27 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3.bin | 0x1df618 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3.bin | 0x1dfe58 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3.bin | 0x1e0698 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
+| shader3.bin | 0x1e1088 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e1908 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e2268 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e2ae8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e3398 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e3d18 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x1e3fb8 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, UVMatrix=c206-c207, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3.bin | 0x1e43e8 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3.bin | 0x1e4798 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x1e4ab8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x1e4dd8 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x1e5078 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x1e5ab8 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x1e6428 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x1e6db8 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x1e7828 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e8178 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e89e8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x1e9278 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
 | shader3.bin | 0x1e9be8 | vs_3_0 | PositionOffset=c202, UVMatrix=c8-c9, objectData=c4-c7, viewContextData=c0-c3 |
+| shader3.bin | 0x1e9f48 | vs_3_0 | BoneMatrixArray=c0-c191, atmosphereData=c202-c208, globalLightData=c192-c201, viewContextData=c209-c214 |
 | shader3.bin | 0x1ea7a8 | vs_3_0 | BlendWeight=c0-c5, objectData=c10-c13, viewContextData=c6-c9 |
 | shader3.bin | 0x1eaaf8 | vs_3_0 | BlendWeight=c0-c5, UVMatrix=c14-c15, objectData=c10-c13, viewContextData=c6-c9 |
 | shader3.bin | 0x1eaf68 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
@@ -45,6 +68,12 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3.bin | 0x1ec1f8 | vs_3_0 | UVMatrix=c12-c13, WindMatrix=c8-c11, objectData=c4-c7, viewContextData=c0-c3 |
 | shader3.bin | 0x1ec8e8 | vs_3_0 | UVMatrix=c8-c9, objectData=c4-c7, viewContextData=c0-c3 |
 | shader3.bin | 0x1ecb78 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
+| shader3.bin | 0x1ecd88 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3.bin | 0x1ed1c8 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3.bin | 0x1ed5e8 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3.bin | 0x1eda28 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3.bin | 0x1ede48 | vs_3_0 | ObjectIDScaleArray=c0-c199, atmosphereData=c210-c216, globalLightData=c200-c209, objectData=c223-c226, viewContextData=c217-c222 |
+| shader3.bin | 0x1ee878 | vs_3_0 | ObjectIDScaleArray=c0-c199, atmosphereData=c210-c216, globalLightData=c200-c209, objectData=c223-c226, viewContextData=c217-c222 |
 | shader3.bin | 0x1ef2a8 | vs_3_0 | UVMatrix=c31-c32, WindMatrix=c27-c30, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3.bin | 0x1effb8 | vs_3_0 | UVMatrix=c31-c32, WindMatrix=c27-c30, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3.bin | 0x1f0c58 | vs_3_0 | UVMatrix=c31-c32, WindMatrix=c27-c30, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
@@ -74,7 +103,44 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3.bin | 0x1fe2f8 | vs_3_0 | atmosphereData=c0-c6, globalLightData=c12-c13, viewContextData=c7-c11 |
 | shader3.bin | 0x1fe928 | vs_3_0 | objectData=c67-c70, points_count=c71, spline=c0-c62, viewContextData=c63-c66 |
 | shader3.bin | 0x1ff098 | vs_3_0 | atmosphereData=c73-c79, globalLightData=c63-c72, objectData=c86-c89, points_count=c90, spline=c0-c62, viewContextData=c80-c85 |
+| shader3.bin | 0x1fffa8 | vs_3_0 | Mvp=c0-c1 |
 | shader3.bin | 0x200278 | vs_3_0 | Mvp=c0-c1, TexGen=c2-c3 |
+| shader3.bin | 0x207018 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x208268 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x2094b8 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20a388 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20b258 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20bc38 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20c638 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20d038 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20dd88 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20eaf8 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x20f868 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x2105b8 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x211a38 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3.bin | 0x212078 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, UVMatrix=c206-c207, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3.bin | 0x212908 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x212e38 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x2135c8 | vs_3_0 | BoneMatrixArray=c0-c191, WindMatrix=c200-c203, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x213e18 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, UVMatrix=c206-c207, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3.bin | 0x214348 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3.bin | 0x214808 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c204-c205, WindMatrix=c200-c203, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x2150d8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x215518 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3.bin | 0x2158d8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x2168f8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x2179e8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x218a08 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x219a58 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x21ab78 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x21b718 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x21c468 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x21d0e8 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x21dd88 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3.bin | 0x21eaf8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x21f768 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x220308 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3.bin | 0x220ec8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
 | shader3.bin | 0x221e38 | vs_3_0 | atmosphereData=c0-c6, globalLightData=c16-c17, objectData=c12-c15, scale=c18, viewContextData=c7-c11 |
 | shader3.bin | 0x222688 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
 | shader3.bin | 0x24b398 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c30-c31, User=c27-c29, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
@@ -82,6 +148,7 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3.bin | 0x24c928 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c38-c39, User=c0-c10, atmosphereData=c21-c27, globalLightData=c11-c20, objectData=c34-c37, viewContextData=c28-c33 |
 | shader3.bin | 0x24d468 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c42-c43, User=c0-c14, atmosphereData=c25-c31, globalLightData=c15-c24, objectData=c38-c41, viewContextData=c32-c37 |
 | shader3.bin | 0x24dfe8 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
+| shader3.bin | 0x261148 | vs_3_0 | WakeWorldUV=c0-c3 |
 | shader3.bin | 0x261268 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
 | shader3.bin | 0x261bc8 | vs_3_0 | SubDivParams=c35-c39, Waves=c0-c11, atmosphereData=c22-c28, globalLightData=c12-c21, viewContextData=c29-c34 |
 | shader3.bin | 0x262e88 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
@@ -94,15 +161,18 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3.bin | 0x26aa38 | vs_3_0 | SubDivParams=c35-c39, Waves=c0-c11, atmosphereData=c22-c28, globalLightData=c12-c21, viewContextData=c29-c34 |
 | shader3.bin | 0x26bcf8 | vs_3_0 | SubDivParams=c41-c45, Waves=c0-c17, atmosphereData=c28-c34, globalLightData=c18-c27, viewContextData=c35-c40 |
 | shader3.bin | 0x26d288 | vs_3_0 | SubDivParams=c53-c57, Waves=c0-c29, atmosphereData=c40-c46, globalLightData=c30-c39, viewContextData=c47-c52 |
+| shader3.bin | 0x26f168 | vs_3_0 | WakeWorldUV=c0-c3 |
 | shader3.bin | 0x26f2a8 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
 | shader3.bin | 0x26fc48 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
 | shader3.bin | 0x2705e8 | vs_3_0 | SubDivParams=c18-c22, Waves=c0-c17, viewContextData=c23-c26 |
 | shader3.bin | 0x2711a8 | vs_3_0 | SubDivParams=c30-c34, Waves=c0-c29, viewContextData=c35-c38 |
+| shader3Low.bin | 0x19c8 | vs_3_0 | InvViewport=c0 |
 | shader3Low.bin | 0x1c98 | vs_3_0 | InvViewport=c2, UVMatrix=c0-c1 |
 | shader3Low.bin | 0x1e28 | vs_3_0 | InvViewport=c2, UVMatrix=c0-c1 |
 | shader3Low.bin | 0x1fb8 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
 | shader3Low.bin | 0x2568 | vs_3_0 | InvViewport=c2, UVMatrix=c0-c1 |
 | shader3Low.bin | 0x3608 | vs_3_0 | gBillboardData=c0-c10, viewContextData=c11-c14 |
+| shader3Low.bin | 0x3cc8 | vs_3_0 | viewContextData=c0-c3 |
 | shader3Low.bin | 0x3e48 | vs_3_0 | atmosphereData=c21-c27, gBillboardData=c0-c10, globalLightData=c11-c20, viewContextData=c28-c33 |
 | shader3Low.bin | 0x4b98 | vs_3_0 | atmosphereData=c21-c27, gBillboardData=c0-c10, globalLightData=c11-c20, viewContextData=c28-c33 |
 | shader3Low.bin | 0x58c8 | vs_3_0 | gBillboardData=c0-c10, viewContextData=c11-c14 |
@@ -110,6 +180,7 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3Low.bin | 0x82f8 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
 | shader3Low.bin | 0x8c08 | vs_3_0 | atmosphereData=c0-c6, cQuad0=c18, cQuad2=c19, cQuad3=c20, g_ViewProjMtx=c12-c15, globalLightData=c16-c17, viewContextData=c7-c11 |
 | shader3Low.bin | 0x9358 | vs_3_0 | cQuad3=c4, g_ViewProjMtx=c0-c3 |
+| shader3Low.bin | 0xadd8 | vs_3_0 | BoneMatrixArray=c0-c191, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
 | shader3Low.bin | 0x644a8 | vs_3_0 | objectData=c4-c6, viewContextData=c0-c3 |
 | shader3Low.bin | 0x648a8 | vs_3_0 | atmosphereData=c0-c6, globalLightData=c15-c16, objectData=c12-c14, viewContextData=c7-c11 |
 | shader3Low.bin | 0x65d18 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
@@ -117,7 +188,30 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3Low.bin | 0x66d98 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3Low.bin | 0x675d8 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3Low.bin | 0x67e18 | vs_3_0 | UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
+| shader3Low.bin | 0x68808 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x69088 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x699e8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6a268 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6ab18 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6b498 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x6b738 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, UVMatrix=c206-c207, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3Low.bin | 0x6bb68 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3Low.bin | 0x6bf18 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x6c238 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x6c558 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x6c7f8 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6d238 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6dba8 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6e538 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6efa8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x6f8f8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x70168 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x709f8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
 | shader3Low.bin | 0x71368 | vs_3_0 | PositionOffset=c202, UVMatrix=c8-c9, objectData=c4-c7, viewContextData=c0-c3 |
+| shader3Low.bin | 0x716c8 | vs_3_0 | BoneMatrixArray=c0-c191, atmosphereData=c202-c208, globalLightData=c192-c201, viewContextData=c209-c214 |
+| shader3Low.bin | 0x71f28 | vs_3_0 | BoneMatrixArray=c0-c191, atmosphereData=c202-c208, globalLightData=c192-c201, viewContextData=c209-c214 |
+| shader3Low.bin | 0x72788 | vs_3_0 | BoneMatrixArray=c0-c191, atmosphereData=c202-c208, globalLightData=c192-c201, viewContextData=c209-c214 |
+| shader3Low.bin | 0x72fe8 | vs_3_0 | BoneMatrixArray=c0-c191, atmosphereData=c202-c208, globalLightData=c192-c201, viewContextData=c209-c214 |
 | shader3Low.bin | 0x73848 | vs_3_0 | BlendWeight=c0-c5, objectData=c10-c13, viewContextData=c6-c9 |
 | shader3Low.bin | 0x73b98 | vs_3_0 | BlendWeight=c0-c5, UVMatrix=c14-c15, objectData=c10-c13, viewContextData=c6-c9 |
 | shader3Low.bin | 0x74008 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
@@ -128,6 +222,14 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3Low.bin | 0x75298 | vs_3_0 | UVMatrix=c12-c13, WindMatrix=c8-c11, objectData=c4-c7, viewContextData=c0-c3 |
 | shader3Low.bin | 0x75988 | vs_3_0 | UVMatrix=c8-c9, objectData=c4-c7, viewContextData=c0-c3 |
 | shader3Low.bin | 0x75c18 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
+| shader3Low.bin | 0x75e28 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3Low.bin | 0x76268 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3Low.bin | 0x76688 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3Low.bin | 0x76ac8 | vs_3_0 | ObjectIDScaleArray=c0-c199, objectData=c204-c207, viewContextData=c200-c203 |
+| shader3Low.bin | 0x76ee8 | vs_3_0 | ObjectIDScaleArray=c0-c199, atmosphereData=c210-c216, globalLightData=c200-c209, objectData=c223-c226, viewContextData=c217-c222 |
+| shader3Low.bin | 0x77918 | vs_3_0 | ObjectIDScaleArray=c0-c199, atmosphereData=c210-c216, globalLightData=c200-c209, objectData=c223-c226, viewContextData=c217-c222 |
+| shader3Low.bin | 0x78348 | vs_3_0 | ObjectIDScaleArray=c0-c199, atmosphereData=c210-c216, globalLightData=c200-c209, objectData=c223-c226, viewContextData=c217-c222 |
+| shader3Low.bin | 0x78d78 | vs_3_0 | ObjectIDScaleArray=c0-c199, atmosphereData=c210-c216, globalLightData=c200-c209, objectData=c223-c226, viewContextData=c217-c222 |
 | shader3Low.bin | 0x797a8 | vs_3_0 | UVMatrix=c31-c32, WindMatrix=c27-c30, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3Low.bin | 0x7a4b8 | vs_3_0 | UVMatrix=c31-c32, WindMatrix=c27-c30, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
 | shader3Low.bin | 0x7b158 | vs_3_0 | UVMatrix=c31-c32, WindMatrix=c27-c30, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
@@ -157,7 +259,44 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3Low.bin | 0x887f8 | vs_3_0 | atmosphereData=c0-c6, globalLightData=c12-c13, viewContextData=c7-c11 |
 | shader3Low.bin | 0x88e28 | vs_3_0 | objectData=c67-c70, points_count=c71, spline=c0-c62, viewContextData=c63-c66 |
 | shader3Low.bin | 0x89598 | vs_3_0 | atmosphereData=c73-c79, globalLightData=c63-c72, objectData=c86-c89, points_count=c90, spline=c0-c62, viewContextData=c80-c85 |
+| shader3Low.bin | 0x8a4a8 | vs_3_0 | Mvp=c0-c1 |
 | shader3Low.bin | 0x8a778 | vs_3_0 | Mvp=c0-c1, TexGen=c2-c3 |
+| shader3Low.bin | 0x8c0c8 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x8d318 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x8e568 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x8f438 | vs_3_0 | AlphaVec=c225, BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, WindParams=c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x90308 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x90ce8 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x916e8 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x920e8 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x92e38 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x93ba8 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x94918 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x95668 | vs_3_0 | AlphaVec=c221, BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x96ae8 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3Low.bin | 0x97128 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, UVMatrix=c206-c207, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3Low.bin | 0x979b8 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x97ee8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x98678 | vs_3_0 | BoneMatrixArray=c0-c191, WindMatrix=c200-c203, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x98ec8 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, UVMatrix=c206-c207, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3Low.bin | 0x993f8 | vs_3_0 | BlendWeight=c192-c197, BoneMatrixArray=c0-c191, objectData=c202-c205, viewContextData=c198-c201 |
+| shader3Low.bin | 0x998b8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c204-c205, WindMatrix=c200-c203, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x9a188 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c200-c201, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x9a5c8 | vs_3_0 | BoneMatrixArray=c0-c191, objectData=c196-c199, viewContextData=c192-c195 |
+| shader3Low.bin | 0x9a988 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x9b9a8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x9ca98 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x9dab8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x9eb08 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c223-c224, WindMatrix=c219-c222, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0x9fc28 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa07c8 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa1518 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa2198 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa2e38 | vs_3_0 | BlendWeight=c215-c220, BoneMatrixArray=c0-c191, UVMatrix=c225-c226, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c221-c224, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa3ba8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa4818 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa53b8 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
+| shader3Low.bin | 0xa5f78 | vs_3_0 | BoneMatrixArray=c0-c191, UVMatrix=c219-c220, atmosphereData=c202-c208, globalLightData=c192-c201, objectData=c215-c218, viewContextData=c209-c214 |
 | shader3Low.bin | 0xa6ee8 | vs_3_0 | atmosphereData=c0-c6, globalLightData=c16-c17, objectData=c12-c15, scale=c18, viewContextData=c7-c11 |
 | shader3Low.bin | 0xa7738 | vs_3_0 | objectData=c4-c7, viewContextData=c0-c3 |
 | shader3Low.bin | 0xaf608 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c30-c31, User=c27-c29, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
@@ -165,6 +304,7 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3Low.bin | 0xb0b98 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c38-c39, User=c0-c10, atmosphereData=c21-c27, globalLightData=c11-c20, objectData=c34-c37, viewContextData=c28-c33 |
 | shader3Low.bin | 0xb16d8 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c42-c43, User=c0-c14, atmosphereData=c25-c31, globalLightData=c15-c24, objectData=c38-c41, viewContextData=c32-c37 |
 | shader3Low.bin | 0xb2258 | vs_3_0 | FadeDistances=c240-c241, PositionOffset=c242, UVMatrix=c27-c28, atmosphereData=c10-c16, globalLightData=c0-c9, objectData=c23-c26, viewContextData=c17-c22 |
+| shader3Low.bin | 0xbff58 | vs_3_0 | WakeWorldUV=c0-c3 |
 | shader3Low.bin | 0xc0078 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
 | shader3Low.bin | 0xc09d8 | vs_3_0 | SubDivParams=c35-c39, Waves=c0-c11, atmosphereData=c22-c28, globalLightData=c12-c21, viewContextData=c29-c34 |
 | shader3Low.bin | 0xc1c98 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
@@ -177,6 +317,7 @@ Key names: **viewContextData** (4-6 regs: the camera/view block — VP rows 0-3,
 | shader3Low.bin | 0xc9848 | vs_3_0 | SubDivParams=c35-c39, Waves=c0-c11, atmosphereData=c22-c28, globalLightData=c12-c21, viewContextData=c29-c34 |
 | shader3Low.bin | 0xcab08 | vs_3_0 | SubDivParams=c41-c45, Waves=c0-c17, atmosphereData=c28-c34, globalLightData=c18-c27, viewContextData=c35-c40 |
 | shader3Low.bin | 0xcc098 | vs_3_0 | SubDivParams=c53-c57, Waves=c0-c29, atmosphereData=c40-c46, globalLightData=c30-c39, viewContextData=c47-c52 |
+| shader3Low.bin | 0xcdf78 | vs_3_0 | WakeWorldUV=c0-c3 |
 | shader3Low.bin | 0xce0b8 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
 | shader3Low.bin | 0xcea58 | vs_3_0 | SubDivParams=c12-c16, Waves=c0-c11, viewContextData=c17-c20 |
 | shader3Low.bin | 0xcf3f8 | vs_3_0 | SubDivParams=c18-c22, Waves=c0-c17, viewContextData=c23-c26 |

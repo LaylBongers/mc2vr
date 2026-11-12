@@ -36,7 +36,8 @@ static_assert(sizeof(Frustum) == 0x218);
 //         E' = E*M renders axes' = M^-1 * axes (docs/camera.md for the
 //         measured row signs and the closed form the carrier writes).
 //   +0x50 near, +0x54 far, +0x58 fov (radians, 4:3-normalized; the builder
-//         takes halfH = fov * 0.375 * aspect), +0x60.. LOD-ish params.
+//         takes halfH = fov * 0.375 * aspect), +0x5c..+0x68 the composite's
+//         dofParams, +0x6c a DOF strength (filterParams.w = 1 - it).
 // Left-handed pipeline: clip.w = +z_view.
 constexpr uintptr_t kCamEntryStride = 0x70;
 constexpr uintptr_t kCamEntryWorld = 0x10;  // 4x4 rows (rotation + position, w = 1)
@@ -44,6 +45,8 @@ constexpr uintptr_t kCamEntryPos = 0x40;    // = kCamEntryWorld + 0x30
 constexpr uintptr_t kCamEntryNear = 0x50;
 constexpr uintptr_t kCamEntryFar = 0x54;
 constexpr uintptr_t kCamEntryFov = 0x58;    // radians, 4:3-normalized
+constexpr uintptr_t kCamEntryDof = 0x5c;    // float[4] -> composite dofParams (PgLtiBloom_EmitPasses)
+constexpr uintptr_t kCamEntryDofStrength = 0x6c;  // float: composite filterParams.w = 1 - it
 constexpr uintptr_t kCamEntryE74 = 0x74;    // copied to ctx+0xe74 (role unknown)
 
 struct ViewContext {

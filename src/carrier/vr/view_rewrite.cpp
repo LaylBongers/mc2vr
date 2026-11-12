@@ -42,27 +42,12 @@ constexpr uint32_t PS_ROWS = 224;  // ps_3_0 float constant registers
 enum class RewriteMode { HmdDelta, HmdIdentity };
 RewriteMode g_mode = RewriteMode::HmdDelta;
 
-// ---- live technique constant map (published at the upload gate) ------------
-// Register bases slide per technique and different techniques reuse the same
-// numbers, so the exact (reg, count) pairs come from the engine's own
-// resolver (Technique_ResolveConstantRegisters):
-//   [tech+0xd4] viewContextData reg   [tech+0xd8] count (4, 5 or 6)
-//   [tech+0xdc] ViewProj reg          [tech+0xe0] count (4)
-// The MidHook fires on the same thread immediately before the wrapper ->
-// device VmtHook call, so on_set_vs_constant always sees the map for the
-// CURRENT upload.
 constexpr uint32_t REG_INVALID = 0xffffffffu;
-volatile uint32_t g_vcd_reg = REG_INVALID;
-volatile uint32_t g_vcd_count = 0;
-volatile uint32_t g_vp_reg = REG_INVALID;
-volatile uint32_t g_vp_count = 0;
-uintptr_t g_tech_seen[32];  // distinct technique objects (log once each)
-uint32_t g_tech_seen_n = 0;
-// E1 prep (docs/camera.md): viewContext RECORD stats from
-// the gate ([esp+0x18] = the pass's record pointer). Each distinct record VA
-// is logged once with the table base + computed index; per-window main/off
-// upload counts then identify the world view's record by dominance. 32 slots
-// covers all 11-ish indices x both double-buffer bases seen so far.
+// E1 prep (docs/camera.md): viewContext RECORD stats from the VS
+// viewContextData uploads. Each distinct record VA is logged once with the
+// table base + computed index; per-window main/off upload counts then identify
+// the world view's record by dominance. 32 slots covers all 11-ish indices x
+// both double-buffer bases seen so far.
 struct RecStats {
     uintptr_t va;
     uint64_t main_hits;
@@ -99,7 +84,6 @@ int g_pass_eye = 0;  // Per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 n
 uint32_t g_l2p_reg = REG_INVALID;  // the current record's shader (on_record_shader)
 uint32_t g_vpm_reg = REG_INVALID;
 uint32_t g_l2v_reg = REG_INVALID;
-double g_delta[16];  // this pass's clip delta (vp_camera::clip_delta), double
 // The game's view frame (LocalToView) has the opposite handedness of
 // vp_camera's: its x points to screen-left, ours (D3D left-handed) to
 // screen-right. LocalToView_game = S * View_ours * World, S = diag(-1, 1, 1, 1)
@@ -107,10 +91,21 @@ double g_delta[16];  // this pass's clip delta (vp_camera::clip_delta), double
 // check_view_convention). T is applied in that frame: S * T * S.
 constexpr double kGameViewSigns[4] = {-1.0, 1.0, 1.0, 1.0};
 constexpr double kViewConventionTolerance = 5e-3;  // a sign error gives ~1
-double g_view_delta[16];  // this pass's T in the game's view space: S * view_delta * S
-double g_view_delta_inv[16];  // its inverse (rigid), for ViewToLocal
-vp_camera::Camera g_pass_mono;  // the mono camera g_delta / g_view_delta start from
-bool g_delta_valid = false;  // for this pass (g_delta, g_view_delta, g_pass_mono)
+// One view's mono -> eye maps for this pass, produced with its eye record.
+struct ViewDelta {
+    double clip[16];      // D (vp_camera::clip_delta), double
+    double view[16];      // T in the game's view space: S * view_delta * S
+    double view_inv[16];  // its inverse (rigid), for ViewToLocal
+    vp_camera::Camera mono;  // the mono camera D / T start from
+    // The eye camera with the camera at the origin (rotation + per-eye
+    // projection, depth terms of the main view): the target for
+    // camera-relative matrices (camera_relative_rewrite).
+    float eye_rel[16];
+};
+// The view of the pass's latest VS upload of an eye record: what the explicit
+// camera matrices are corrected against (on_view_upload).
+ViewDelta g_active;
+bool g_delta_valid = false;  // for this pass
 // The current record's mono LocalToProj / LocalToView, for the checks.
 float g_rec_l2p[16], g_rec_l2v[16];
 bool g_rec_l2p_seen = false, g_rec_l2v_seen = false;
@@ -124,11 +119,6 @@ double g_v2l_resid_max = 0.0;  // worst |ViewToLocal * LocalToView - I| (mono) t
 uint64_t g_v2l_rows = 0, g_v2l_checks = 0, g_v2l_bad = 0, g_v2l_split = 0, g_v2l_no_reg = 0;
 double g_l2v_resid_max = 0.0;  // worst convention residual this window
 uint64_t g_l2v_rows = 0, g_l2v_checks = 0, g_l2v_bad = 0, g_l2v_no_l2p = 0;
-// This pass's eye camera with the camera at the origin (rotation + per-eye
-// projection, depth terms of the main view): the target for camera-relative
-// matrices (camera_relative_rewrite).
-float g_eye_rel[16];
-bool g_eye_rel_valid = false;  // for this pass
 uint64_t g_mtx_rows = 0, g_mtx_no_delta = 0, g_mtx_split = 0, g_mtx_rel_rows = 0;
 
 uint32_t render_w()
@@ -151,52 +141,12 @@ bool pass_is_main()
 uint64_t g_vs_calls = 0, g_vs_vec4s = 0, g_rows_rewritten = 0;
 uint64_t g_rows_rewritten_total = 0; // monotonic (never reset) — rewrite_count()
 
-} // namespace
-
-// Publish the CURRENT technique's resolved constant map.
-void on_upload_gate(uintptr_t tech, uintptr_t rec)
+// The VS viewContextData upload tally (E1 prep).
+void tally_record(uintptr_t rec)
 {
-    if (tech == 0) {
-        return;
-    }
-    bool seen = false;
-    for (uint32_t k = 0; k < g_tech_seen_n; k++) {
-        if (g_tech_seen[k] == tech) {
-            seen = true;
-            break;
-        }
-    }
-    const bool do_log = !seen && g_tech_seen_n < 32;
-    if (do_log) {
-        g_tech_seen[g_tech_seen_n++] = tech;
-    }
-    const uint32_t vcd_reg = *(volatile const uint32_t *)(tech + MC2_TECH_VCD_REG_OFF);
-    const uint32_t vcd_count = *(volatile const uint32_t *)(tech + MC2_TECH_VCD_COUNT_OFF);
-    const uint32_t vp_reg = *(volatile const uint32_t *)(tech + MC2_TECH_VP_REG_OFF);
-    const uint32_t vp_count = *(volatile const uint32_t *)(tech + MC2_TECH_VP_COUNT_OFF);
-    // Fail-safe against a stale/garbage technique pointer.
-    const bool sane = (vcd_reg == REG_INVALID || vcd_reg < VS_ROWS) && vcd_count <= 8 &&
-                      (vp_reg == REG_INVALID || vp_reg < VS_ROWS) && vp_count <= 4;
-    if (!sane) {
-        if (do_log) {
-            MC2VR_LOG("view: technique %p implausible constant map (vcd c%u/%u, "
-                      "ViewProj c%u/%u) — publish skipped",
-                      (void *)tech, vcd_reg, vcd_count, vp_reg, vp_count);
-        }
-        return;
-    }
-    g_vcd_reg = vcd_reg;
-    g_vcd_count = vcd_count;
-    g_vp_reg = vp_reg;
-    g_vp_count = vp_count;
-    if (do_log) {
-        MC2VR_LOG("view: technique %p: viewContextData c%u (count %u), ViewProj c%u (count %u)",
-                  (void *)tech, vcd_reg, vcd_count, vp_reg, vp_count);
-    }
-    // Record discovery (E1 prep, docs/camera.md): rec ([esp+0x18] at the
-    // gate) is this pass's viewContext record pointer (game/addresses.h).
-    // Each distinct record logs once with the live table base + index; every
-    // hit also counts toward the per-window main/offscreen tally so the world
+    // Record discovery (E1 prep, docs/camera.md): rec is the game's
+    // viewContext record (game/addresses.h). Each distinct record logs once
+    // with the live table base + index; every hit also counts toward the per-window main/offscreen tally so the world
     // view's record identifies by upload dominance (all 24 views are walked
     // uniformly, so walk counts cannot discriminate — 2026-10-06 run 1).
     uint32_t slot = g_rec_seen_n;
@@ -235,8 +185,6 @@ void on_upload_gate(uintptr_t tech, uintptr_t rec)
     }
 }
 
-namespace {
-
 // ---- HMD camera channel (per-eye complement to the camtable union) ---------
 // The VP block is fully decomposable (D3D clip = [a x_v + c z_v, b y_v + d z_v,
 // A z_v + B, z_v] with x_v/y_v/z_v = dot(R/U/F, p - C), R/U/F orthonormal):
@@ -258,19 +206,13 @@ HmdSnapshot g_hmd;
 ULONGLONG g_hmd_ms = 0;  // last frame with sane views
 float g_world_scale = 1.0f;  // game world units per metre (VERIFIED: metres — gravity 9.81, docs/reverse_engineering/world_units.md)
 
-// Per-pass cache of the rebuilt camera position, for uploads that carry only
-// the camPos row (VP rows arrived in an earlier call).
-Vec3 g_pw;
-bool g_pw_valid = false;
-
 // E2 probe input: the RAW (pre-rewrite) game camera from the latest
-// main-pass upload (see get_game_camera in the header).
+// produced main-pass view record (see get_game_camera in the header).
 vp_camera::Camera g_game_cam;
 uint64_t g_game_cam_ms = 0;
 
-uint64_t g_hmd_blocks = 0, g_hmd_split = 0, g_hmd_decomp_fail = 0, g_hmd_cam_only = 0;
 float g_hmd_resid_max = 0.0f;  // max |rebuilt - raw| over the window (identity self-check)
-uint32_t g_hmd_split_logged = 0, g_hmd_fail_logged = 0;
+uint32_t g_hmd_fail_logged = 0;
 
 // HMD view stamps (on_hmd_view_built): the last few HMD views' VPs with the
 // HMD sample and union pose their camera was rewritten with. Written by the
@@ -383,83 +325,61 @@ bool eye_is_sane(const xr_session::EyePose &e)
     return n >= 0.98f && n <= 1.02f && e.fov.right > e.fov.left && e.fov.up > e.fov.down;
 }
 
-const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t vec4_count)
+// ---- per-eye view records (eye_view_record) -----------------------------------
+// One entry per game view record used in this pass: the eye copy every upload
+// of the record reads, produced at its first use. Reset when the pass changes
+// (set_pass_eye); an entry whose game record changed is produced again.
+constexpr uint32_t kCompareBytes = 0x60;  // VP rows, camPos and the count-6 extra row: what the uploads read
+struct EyeEntry {
+    const game::ViewContextRecord *src;  // nullptr = free
+    float raw[kCompareBytes / 4];        // the game record's bytes the entry was produced from
+    game::ViewContextRecord eye;         // the per-eye copy (source == Eye)
+    ViewSource source;
+    ViewDelta delta;                     // source == Eye
+};
+constexpr uint32_t kEyeEntries = 64;  // 2 buffers x 32 records
+EyeEntry g_eye[kEyeEntries];
+uint32_t g_eye_n = 0;     // entries in use this pass
+uint32_t g_eye_next = 0;  // the next one to reuse when all are in use
+// Per window: productions by source; uploads by kind and source.
+uint64_t g_produced[kViewSources] = {};
+uint64_t g_uploads[3][kViewSources] = {};
+
+// The eye copy of e.src for this pass's eye (or a pass-through source).
+void produce(EyeEntry &e)
 {
+    memcpy(&e.eye, e.src, sizeof(e.eye));
+    memcpy(e.raw, &e.eye, kCompareBytes);
+    const float *const raw = e.raw;  // VP rows, the upload's layout (clip_i = row_i . p)
     const bool identity = g_mode == RewriteMode::HmdIdentity;
     const int eye = g_pass_eye > 0 ? 1 : 0;
-    const uint32_t vcd_reg = g_vcd_reg, vcd_count = g_vcd_count;
-    uint32_t base = REG_INVALID;
-    bool has_cam = false;
-    if (vcd_reg != REG_INVALID && vcd_count >= 4) {
-        base = vcd_reg;
-        has_cam = vcd_count >= 5;
-    } else if (g_vp_reg != REG_INVALID && g_vp_count >= 4) {
-        base = g_vp_reg;
-    }
-    if (base == REG_INVALID || vec4_count > VS_ROWS) {
-        return data;
-    }
-    const uint32_t end = start_register + vec4_count;
-    const bool any_vp = start_register < base + 4 && end > base;
-    const bool all_vp = start_register <= base && end >= base + 4;
-    const bool cam_in = has_cam && start_register <= base + 4 && end >= base + 5;
-    if (!any_vp && !cam_in) {
-        return data;
-    }
-    static float scratch[VS_ROWS * 4];
-    memcpy(scratch, data, vec4_count * 16);
-    float *camrow = cam_in ? scratch + (base + 4 - start_register) * 4 : nullptr;
-    if (!all_vp) {
-        if (any_vp) {
-            // VP block split across uploads: needs gathering — counted so the
-            // live run says whether this ever happens.
-            g_hmd_split++;
-            if (g_hmd_split_logged++ < 8) {
-                MC2VR_LOG("view/hmd: SPLIT VP upload start=c%u count=%u (block c%u/%u) — "
-                          "passed through", start_register, vec4_count, base, vcd_count);
-            }
-            return data;
-        }
-        // camPos row alone: reuse this pass's rebuilt position.
-        if (g_pw_valid) {
-            math::store3(camrow, g_pw);
-            g_hmd_cam_only++;
-            return scratch;
-        }
-        return data;
-    }
-    const float *raw = data + (base - start_register) * 4;
     vp_camera::Camera game, cam;
     math::Vec3 eye_off{0.0f, 0.0f, 0.0f};  // cam.C - game.C, from the eye pose itself
     if (!vp_camera::decompose(raw, &game)) {
-        g_hmd_decomp_fail++;
+        e.source = ViewSource::Failed;
         if (g_hmd_fail_logged++ < 8) {
-            MC2VR_LOG("view/hmd: decompose FAILED c%u: |r3.xyz|=%.4f r0.w=%.3f "
-                      "r2=[%.3f %.3f %.3f %.3f] — passed through", base,
+            MC2VR_LOG("view/hmd: decompose FAILED: |r3.xyz|=%.4f r0.w=%.3f "
+                      "r2=[%.3f %.3f %.3f %.3f] — passed through",
                       (double)math::length(math::load3(raw + 12)), (double)raw[3],
                       (double)raw[8], (double)raw[9], (double)raw[10], (double)raw[11]);
         }
-        return data;
+        return;
     }
-    // E2 probe: publish the RAW game camera (pre-rewrite; this site is only
-    // reached on main-pass uploads) — BEFORE any pose-validity gate so the
-    // consistency oracle (and the camtable probe) works without a tracked
-    // HMD too.
+    // E2 probe: publish the RAW game camera (pre-rewrite; only main-pass
+    // records get here) — BEFORE any pose-validity gate so the consistency
+    // oracle (and the camtable probe) works without a tracked HMD too.
     g_game_cam = game;
     g_game_cam_ms = GetTickCount64();
     if (identity) {
         cam = game;
         g_hmd_resid_max = std::fmax(g_hmd_resid_max, vp_camera::rebuild_residual(raw, game));
     } else if (!g_hmd.valid || g_pass_eye == 0) {
-        // No pose for this frame/pass — pass the RAW rows through untouched.
-        return data;
-    } else if (g_mode == RewriteMode::HmdDelta) {
+        e.source = ViewSource::NoPose;  // no pose for this frame/pass: the game's record
+        return;
+    } else {
         // I1: the raw VP already carries the camtable UNION pose; apply only
         // the per-eye complement — projection from this eye's OpenXR FOV,
-        // position/rotation delta relative to the union pose THIS VP carries
-        // (matched by its basis, so the rendered eye equals the pass-1 sample
-        // whose id travels with the eye pair even if the VP came from an older
-        // table fill), else the same-frame union.
+        // position/rotation delta relative to the union pose THIS VP carries.
         math::Quat u_rot;
         math::Vec3 u_pos;
         camera_table::UnionSample smp;
@@ -468,7 +388,8 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         // and its HMD sample. No stamp = not an HMD view: passed through.
         if (!find_stamp(raw, &u_rot, &u_pos, &smp)) {
             g_stamp_misses++;
-            return data;
+            e.source = ViewSource::NotHmd;
+            return;
         }
         g_stamp_hits++;
         measure_pose_age(u_rot, smp);
@@ -495,35 +416,27 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
         // near objects. Live-verified fixed 2026-10-09.)
         cam = vp_camera::apply_eye(game, delta, g_world_scale);
         eye_off = vp_camera::eye_offset(game, delta, g_world_scale);
-    } else {
-        return data;  // unreachable: Off/On/Pulse/Stereo never reach hmd_rewrite
     }
-    vp_camera::rebuild(cam, scratch + (base - start_register) * 4);
+    // The record's view block: VP rows 0..3 and camPos (+0x40, w = 1); the
+    // count-6 extra row (+0x50, a world-fixed plane) is left alone.
+    vp_camera::rebuild(cam, e.eye.viewProj);
+    math::store3(e.eye.cameraPos, cam.C);
+    ViewDelta &d = e.delta;
     {
         vp_camera::Camera rel = cam;
         rel.C = {0.0f, 0.0f, 0.0f};
-        vp_camera::rebuild(rel, g_eye_rel);
-        g_eye_rel_valid = true;
+        vp_camera::rebuild(rel, d.eye_rel);
     }
     // D for this pass's explicit camera matrices (matrix_rewrite), from the
     // two cameras' parameters: no inverse of the world-space VP, whose ~1e3
     // translations would round into every corrected matrix.
-    vp_camera::clip_delta(game, cam, eye_off, g_delta);
+    vp_camera::clip_delta(game, cam, eye_off, d.clip);
     // T for view-space matrices (LocalToView): the factor inside D.
-    vp_camera::view_delta(game, cam, eye_off, g_view_delta);
-    math::diag_conjugate4(g_view_delta, kGameViewSigns, g_view_delta);
-    math::rigid_inverse4(g_view_delta, g_view_delta_inv);
-    g_pass_mono = game;
-    g_delta_valid = true;
-    if (camrow) {
-        math::store3(camrow, cam.C);
-    }
-    g_pw = cam.C;
-    g_pw_valid = true;
-    g_hmd_blocks++;
-    g_rows_rewritten += 4;
-    g_rows_rewritten_total += 4;
-    return scratch;
+    vp_camera::view_delta(game, cam, eye_off, d.view);
+    math::diag_conjugate4(d.view, kGameViewSigns, d.view);
+    math::rigid_inverse4(d.view, d.view_inv);
+    d.mono = game;
+    e.source = ViewSource::Eye;
 }
 
 } // namespace
@@ -645,8 +558,8 @@ bool camera_relative_rewrite(float *m)
         return false;  // depth row not along forward
     }
     const float b_depth = m[11];
-    memcpy(m, g_eye_rel, sizeof(g_eye_rel));
-    const math::Vec3 f_eye = math::load3(g_eye_rel + 12);
+    memcpy(m, g_active.eye_rel, sizeof(g_active.eye_rel));
+    const math::Vec3 f_eye = math::load3(g_active.eye_rel + 12);
     math::store3(m + 8, f_eye * a_depth);
     m[11] = b_depth;
     return true;
@@ -663,7 +576,7 @@ void check_view_convention(const float *l2v)
     }
     double p[16];
     float view_ours[16], clip[16];
-    vp_camera::projection(g_pass_mono, p);
+    vp_camera::projection(g_active.mono, p);
     math::scale_rows4(kGameViewSigns, l2v, view_ours);
     math::mul4(p, view_ours, clip);
     const double r = math::max_relative_diff(clip, g_rec_l2p, 16);
@@ -694,7 +607,7 @@ const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t
             continue;
         }
         if (!g_delta_valid) {
-            g_mtx_no_delta++;  // no viewContextData rewrite in this pass yet
+            g_mtx_no_delta++;  // no eye record uploaded in this pass yet
             continue;
         }
         if (!copied) {
@@ -707,7 +620,7 @@ const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t
             memcpy(g_rec_l2v, m, sizeof(g_rec_l2v));  // mono, before its correction
             g_rec_l2v_seen = true;
             check_view_convention(m);
-            math::mul4(g_view_delta, m, out);
+            math::mul4(g_active.view, m, out);
             memcpy(m, out, sizeof(out));
             g_l2v_rows += 4;
             continue;
@@ -716,11 +629,11 @@ const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t
             memcpy(g_rec_l2p, m, sizeof(g_rec_l2p));  // mono, before its correction
             g_rec_l2p_seen = true;
         }
-        if (g_eye_rel_valid && camera_relative_rewrite(m)) {
+        if (camera_relative_rewrite(m)) {
             g_mtx_rel_rows += 4;
             continue;
         }
-        math::mul4(g_delta, m, out);
+        math::mul4(g_active.clip, m, out);
         memcpy(m, out, sizeof(out));
         g_mtx_rows += 4;
     }
@@ -823,11 +736,57 @@ const float *on_record_ps_constant(uint32_t start_register, const float *data, u
     float v2l[16], v2l_eye[16];
     double out[16];
     math::expand_affine4(m, v2l);
-    math::mul4(v2l, g_view_delta_inv, out);
+    math::mul4(v2l, g_active.view_inv, out);
     math::to_float4(out, v2l_eye);
     memcpy(m, v2l_eye, kV2lRows * 16);
     g_v2l_rows += kV2lRows;
     return scratch;
+}
+
+ViewRecord eye_view_record(const game::ViewContextRecord *vctx)
+{
+    if (vctx == nullptr || !pass_is_main()) {
+        return {vctx, ViewSource::Offscreen, 0};
+    }
+    uint32_t k = 0;
+    for (; k < g_eye_n; k++) {
+        if (g_eye[k].src == vctx) break;
+    }
+    EyeEntry *e;
+    if (k < g_eye_n) {
+        e = &g_eye[k];
+        if (memcmp(e->raw, vctx, kCompareBytes) != 0) {
+            produce(*e);  // the game's record changed within the pass
+            g_produced[(uint32_t)e->source]++;
+        }
+    } else {
+        if (g_eye_n < kEyeEntries) {
+            k = g_eye_n++;
+        } else {
+            k = g_eye_next;  // all in use (not expected): reuse round-robin
+            g_eye_next = (g_eye_next + 1) % kEyeEntries;
+        }
+        e = &g_eye[k];
+        e->src = vctx;
+        produce(*e);
+        g_produced[(uint32_t)e->source]++;
+    }
+    return {e->source == ViewSource::Eye ? &e->eye : vctx, e->source, (uint8_t)k};
+}
+
+void on_view_upload(const ViewRecord &v, ViewUpload what)
+{
+    g_uploads[(uint32_t)what][(uint32_t)v.source]++;
+    if (what != ViewUpload::VsViewContext) {
+        return;
+    }
+    tally_record((uintptr_t)(v.source == ViewSource::Eye ? g_eye[v.slot].src : v.rec));
+    if (v.source == ViewSource::Eye) {
+        g_active = g_eye[v.slot].delta;
+        g_delta_valid = true;
+        g_rows_rewritten += 4;
+        g_rows_rewritten_total += 4;
+    }
 }
 
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
@@ -841,8 +800,7 @@ const float *on_set_vs_constant(uint32_t start_register, const float *data,
     if (!pass_is_main()) {
         return data;
     }
-    const float *out = hmd_rewrite(start_register, data, vec4_count);
-    return out != data ? out : matrix_rewrite(start_register, data, vec4_count);
+    return matrix_rewrite(start_register, data, vec4_count);
 }
 
 uint64_t rewrite_count()
@@ -866,11 +824,27 @@ void report_window()
                   std::atan(1.0 / (double)g_game_cam.b) * 180.0 / 3.14159265);
     }
     {
-        MC2VR_LOG("view/hmd: blocks=%llu camOnly=%llu split=%llu decompFail=%llu "
-                  "identityResidMax=%.3g poseId=%u valid=%d",
-                  (unsigned long long)g_hmd_blocks, (unsigned long long)g_hmd_cam_only,
-                  (unsigned long long)g_hmd_split, (unsigned long long)g_hmd_decomp_fail,
+        // Per source: eye / offscreen / notHmd / noPose / failed.
+        const auto src = [](const uint64_t *n, char *out, size_t size) {
+            snprintf(out, size, "eye=%llu offscreen=%llu notHmd=%llu noPose=%llu failed=%llu",
+                     (unsigned long long)n[0], (unsigned long long)n[1], (unsigned long long)n[2],
+                     (unsigned long long)n[3], (unsigned long long)n[4]);
+        };
+        char prod[160], vs[160], ps[160], cp[160];
+        src(g_produced, prod, sizeof prod);
+        src(g_uploads[0], vs, sizeof vs);
+        src(g_uploads[1], ps, sizeof ps);
+        src(g_uploads[2], cp, sizeof cp);
+        MC2VR_LOG("view/hmd: view records produced %s | identityResidMax=%.3g poseId=%u valid=%d", prod,
                   (double)g_hmd_resid_max, g_hmd.id, (int)g_hmd.valid);
+        // The PS copies (depthXform, cameraPos) pass through only off the main pass.
+        MC2VR_LOG("view/hmd: view record uploads: VS viewContextData %s | PS viewContextData %s | "
+                  "PS cameraPos %s",
+                  vs, ps, cp);
+        for (uint64_t &n : g_produced) n = 0;
+        for (auto &k : g_uploads) {
+            for (uint64_t &n : k) n = 0;
+        }
         MC2VR_LOG("view/hmd: camera matrices (LocalToProj, g_ViewProjMtx) rewritten rows=%llu "
                   "cameraRelative=%llu split=%llu noDelta=%llu",
                   (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_rel_rows,
@@ -887,8 +861,8 @@ void report_window()
         g_l2v_rows = g_l2v_checks = g_l2v_bad = g_l2v_no_l2p = 0;
         g_v2l_rows = g_v2l_checks = g_v2l_bad = g_v2l_split = g_v2l_no_reg = 0;
         g_l2v_resid_max = g_v2l_resid_max = 0.0;
-        MC2VR_LOG("view/hmd: HMD views hit=%llu notHmd=%llu (main-pass camera uploads with / without an HMD "
-                  "view stamp; notHmd ones pass through)",
+        MC2VR_LOG("view/hmd: HMD views hit=%llu notHmd=%llu (main-pass view records with / without an HMD "
+                  "view stamp, per record and pass; notHmd ones pass through)",
                   (unsigned long long)g_stamp_hits, (unsigned long long)g_stamp_misses);
         g_stamp_hits = g_stamp_misses = 0;
         if (g_age_n != 0 || g_age_unknown != 0) {
@@ -904,7 +878,6 @@ void report_window()
         g_age_n = g_age_frames_sum = g_age_frames_max = g_age_unknown = 0;
         g_age_ms_sum = g_age_ms_max = g_age_deg_sum = g_age_deg_max = 0.0;
         for (uint64_t &h : g_age_hist) h = 0;
-        g_hmd_blocks = g_hmd_cam_only = g_hmd_split = g_hmd_decomp_fail = 0;
         g_hmd_resid_max = 0.0f;
     }
     // Record upload tally (E1 prep): which viewContext record the passes read.
@@ -961,7 +934,7 @@ bool mono_clip_to_eye(const double in[4], double out[4])
     if (!g_delta_valid) {
         return false;
     }
-    math::transform4(g_delta, in, out);
+    math::transform4(g_active.clip, in, out);
     return true;
 }
 
@@ -1000,10 +973,10 @@ void set_pass_eye(int sign)
 {
     if (sign != g_pass_eye) {
         g_pitch_seen = false;
-        g_pw_valid = false;     // per-pass camPos cache
         g_delta_valid = false;  // per-pass camera delta
         g_age_measured = false;
-        g_eye_rel_valid = false;
+        g_eye_n = 0;  // per-pass eye records
+        g_eye_next = 0;
     }
     g_pass_eye = sign;
 }

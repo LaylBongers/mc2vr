@@ -53,7 +53,7 @@ Full chain (plates in Ghidra; narrative: [draw_camera_chain.md](reverse_engineer
 
 ## Implementation gotchas (recurring failure modes)
 
-- `on_set_vs_constant` must dispatch HmdDelta into `hmd_rewrite` — a missed dispatch silently passes everything through (blocks=0 with no other symptom).
+- Every upload of a view record must read `eye_view_record`'s result — one that reads the game's record instead silently stays mono, and no counter shows it.
 - `get_union` requires an actual rewrite in the current game frame, so hmd_delta's delta never rides records whose pose didn't get the union.
 - A row/column indexing bug in the final B·E multiply produced a clean unmixed L⁻¹ ("all flipped, no mixing" signature): row_i(B·E) takes the i-th component of EACH column of B, not all components of one column.
 
