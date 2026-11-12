@@ -13,8 +13,9 @@
 #include <cstring>
 
 #include "game/addresses.h"
+#include "game/dx9.hpp"
 #include "log.hpp"
-#include "vec_math.hpp"
+#include "vr/vec_math.hpp"
 #include "vr/camera_table.hpp"
 #include "vr/vp_camera.hpp"
 #include "vr/xr_session.hpp"
@@ -26,6 +27,7 @@ namespace {
 using math::Vec3;
 
 constexpr uint32_t VS_ROWS = 256;  // vs_3_0 float constant registers (plus headroom)
+constexpr uint32_t PS_ROWS = 224;  // ps_3_0 float constant registers
 
 // HmdDelta = I1 (docs/camera.md): the per-eye complement to the
 // camtable union injection — the raw VP already carries the union pose, so
@@ -88,13 +90,39 @@ int g_pass_eye = 0;  // Per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 n
 
 // ---- mono camera matrices outside viewContextData ----------------------------
 // Shaders without viewContextData get the camera as explicit matrices the game
-// computes from the mono view-projection: LocalToProj = VP * World,
-// g_ViewProjMtx = VP (docs/stereo.md). The pass's viewContextData rewrite
-// gives D = VP_eye * VP_mono^-1; D * VP_mono * World = VP_eye * World.
+// computes from the mono camera (docs/view_rewrite.md#explicit-camera-matrices):
+//   - clip space, LocalToProj = VP * World, g_ViewProjMtx = VP: D * M with this
+//     pass's clip delta D (D * VP_mono = VP_eye);
+//   - view space, the projected shadow boxes' LocalToView = View * World (VS)
+//     and its inverse ViewToLocal (PS): T * M and M * T^-1 with the view delta
+//     T, in the game's x-negated view frame.
 uint32_t g_l2p_reg = REG_INVALID;  // the current record's shader (on_record_shader)
 uint32_t g_vpm_reg = REG_INVALID;
+uint32_t g_l2v_reg = REG_INVALID;
 double g_delta[16];  // this pass's clip delta (vp_camera::clip_delta), double
-bool g_delta_valid = false;  // for this pass
+// The game's view space (LocalToView) is vp_camera's with x negated:
+// LocalToView_game = S * View_ours * World, S = diag(-1, 1, 1, 1)
+// (P_mono * S * LocalToView = LocalToProj on every record; checked per record,
+// check_view_convention). T is applied in that frame: S * T * S.
+constexpr double kGameViewSigns[4] = {-1.0, 1.0, 1.0, 1.0};
+constexpr double kViewConventionTolerance = 5e-3;  // a sign error gives ~1
+double g_view_delta[16];  // this pass's T in the game's view space: S * view_delta * S
+double g_view_delta_inv[16];  // its inverse (rigid), for ViewToLocal
+vp_camera::Camera g_pass_mono;  // the mono camera g_delta / g_view_delta start from
+bool g_delta_valid = false;  // for this pass (g_delta, g_view_delta, g_pass_mono)
+// The current record's mono LocalToProj / LocalToView, for the checks.
+float g_rec_l2p[16], g_rec_l2v[16];
+bool g_rec_l2p_seen = false, g_rec_l2v_seen = false;
+// ViewToLocal (the projected shadow PS, rows c0-c2: local = ViewToLocal *
+// view point) of the current LocalToView record: register from the bound PS's
+// constant table, looked up at the record's first stream PS upload.
+constexpr uint32_t kV2lRows = 3;
+uint32_t g_v2l_reg = REG_INVALID;
+bool g_v2l_resolved = false;
+double g_v2l_resid_max = 0.0;  // worst |ViewToLocal * LocalToView - I| (mono) this window
+uint64_t g_v2l_rows = 0, g_v2l_checks = 0, g_v2l_bad = 0, g_v2l_split = 0, g_v2l_no_reg = 0;
+double g_l2v_resid_max = 0.0;  // worst convention residual this window
+uint64_t g_l2v_rows = 0, g_l2v_checks = 0, g_l2v_bad = 0, g_l2v_no_l2p = 0;
 // This pass's eye camera with the camera at the origin (rotation + per-eye
 // projection, depth terms of the main view): the target for camera-relative
 // matrices (camera_relative_rewrite).
@@ -480,6 +508,11 @@ const float *hmd_rewrite(uint32_t start_register, const float *data, uint32_t ve
     // two cameras' parameters: no inverse of the world-space VP, whose ~1e3
     // translations would round into every corrected matrix.
     vp_camera::clip_delta(game, cam, eye_off, g_delta);
+    // T for view-space matrices (LocalToView): the factor inside D.
+    vp_camera::view_delta(game, cam, eye_off, g_view_delta);
+    math::diag_conjugate4(g_view_delta, kGameViewSigns, g_view_delta);
+    math::rigid_inverse4(g_view_delta, g_view_delta_inv);
+    g_pass_mono = game;
     g_delta_valid = true;
     if (camrow) {
         math::store3(camrow, cam.C);
@@ -618,16 +651,40 @@ bool camera_relative_rewrite(float *m)
     return true;
 }
 
-// The current record's explicit camera matrices, corrected by this pass's D.
+// The pinned view convention as a check, once per record: P_mono * S *
+// LocalToView must reproduce LocalToProj (both mono; LocalToProj is uploaded
+// first).
+void check_view_convention(const float *l2v)
+{
+    if (!g_rec_l2p_seen) {
+        g_l2v_no_l2p++;
+        return;
+    }
+    double p[16];
+    float view_ours[16], clip[16];
+    vp_camera::projection(g_pass_mono, p);
+    math::scale_rows4(kGameViewSigns, l2v, view_ours);
+    math::mul4(p, view_ours, clip);
+    const double r = math::max_relative_diff(clip, g_rec_l2p, 16);
+    g_l2v_checks++;
+    g_l2v_resid_max = std::fmax(g_l2v_resid_max, r);
+    if (r > kViewConventionTolerance) {
+        g_l2v_bad++;
+    }
+}
+
+// The current record's explicit camera matrices, corrected by this pass's D
+// (clip-space matrices) or T (LocalToView).
 const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t vec4_count)
 {
-    if ((g_l2p_reg == REG_INVALID && g_vpm_reg == REG_INVALID) || vec4_count > VS_ROWS) {
+    if ((g_l2p_reg == REG_INVALID && g_vpm_reg == REG_INVALID && g_l2v_reg == REG_INVALID) ||
+        vec4_count > VS_ROWS) {
         return data;
     }
     static float scratch[VS_ROWS * 4];
     bool copied = false;
     const uint32_t end = start_register + vec4_count;
-    for (const uint32_t reg : {g_l2p_reg, g_vpm_reg}) {
+    for (const uint32_t reg : {g_l2p_reg, g_vpm_reg, g_l2v_reg}) {
         if (reg == REG_INVALID || !(start_register < reg + 4 && end > reg)) {
             continue;  // not this upload
         }
@@ -644,11 +701,24 @@ const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t
             copied = true;
         }
         float *m = scratch + (reg - start_register) * 4;
+        float out[16];
+        if (reg == g_l2v_reg) {
+            memcpy(g_rec_l2v, m, sizeof(g_rec_l2v));  // mono, before its correction
+            g_rec_l2v_seen = true;
+            check_view_convention(m);
+            math::mul4(g_view_delta, m, out);
+            memcpy(m, out, sizeof(out));
+            g_l2v_rows += 4;
+            continue;
+        }
+        if (reg == g_l2p_reg) {
+            memcpy(g_rec_l2p, m, sizeof(g_rec_l2p));  // mono, before its correction
+            g_rec_l2p_seen = true;
+        }
         if (g_eye_rel_valid && camera_relative_rewrite(m)) {
             g_mtx_rel_rows += 4;
             continue;
         }
-        float out[16];
         math::mul4(g_delta, m, out);
         memcpy(m, out, sizeof(out));
         g_mtx_rows += 4;
@@ -660,7 +730,8 @@ const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t
 
 void on_record_shader(IDirect3DVertexShader9 *vs)
 {
-    g_l2p_reg = g_vpm_reg = REG_INVALID;
+    g_l2p_reg = g_vpm_reg = g_l2v_reg = g_v2l_reg = REG_INVALID;
+    g_rec_l2p_seen = g_rec_l2v_seen = g_v2l_resolved = false;
     const shader_constants::Table *t = shader_constants::of(vs);
     if (t == nullptr) {
         return;
@@ -671,6 +742,91 @@ void on_record_shader(IDirect3DVertexShader9 *vs)
     if (const shader_constants::Named *c = t->find("g_ViewProjMtx"); c != nullptr && c->count >= 4) {
         g_vpm_reg = c->reg;
     }
+    if (const shader_constants::Named *c = t->find("LocalToView"); c != nullptr && c->count >= 4) {
+        g_l2v_reg = c->reg;
+    }
+}
+
+namespace {
+
+// The bound pixel shader's ViewToLocal register (the pass pick binds the PS
+// before the record's stream runs, so it is this record's).
+void resolve_v2l_reg()
+{
+    g_v2l_resolved = true;
+    IDirect3DDevice9 *const dev = game::lti_device();
+    IDirect3DPixelShader9 *ps = nullptr;
+    if (dev == nullptr || FAILED(dev->GetPixelShader(&ps)) || ps == nullptr) {
+        return;
+    }
+    const shader_constants::Table *t = shader_constants::of(ps);
+    ps->Release();  // the cache keys on the pointer; the shader lives on in the device
+    if (t == nullptr) {
+        return;
+    }
+    if (const shader_constants::Named *c = t->find("ViewToLocal"); c != nullptr && c->count >= kV2lRows) {
+        g_v2l_reg = c->reg;
+    }
+}
+
+// Mono check: ViewToLocal must invert this record's LocalToView.
+void check_v2l(const float *v2l_rows)
+{
+    if (!g_rec_l2v_seen) {
+        return;
+    }
+    float v2l[16], prod[16];
+    double ident[16];
+    math::expand_affine4(v2l_rows, v2l);
+    math::mul4(v2l, g_rec_l2v, prod);
+    math::identity4(ident);
+    const double r = math::max_abs_diff(prod, ident, 12);
+    g_v2l_checks++;
+    g_v2l_resid_max = std::fmax(g_v2l_resid_max, r);
+    if (r > 1e-3) {
+        g_v2l_bad++;
+    }
+}
+
+} // namespace
+
+const float *on_record_ps_constant(uint32_t start_register, const float *data, uint32_t vec4_count)
+{
+    if (g_l2v_reg == REG_INVALID || data == nullptr || vec4_count > PS_ROWS || !pass_is_main()) {
+        return data;
+    }
+    if (!g_v2l_resolved) {
+        resolve_v2l_reg();
+        if (g_v2l_reg == REG_INVALID) {
+            g_v2l_no_reg++;
+        }
+    }
+    const uint32_t reg = g_v2l_reg, end = start_register + vec4_count;
+    if (reg == REG_INVALID || !(start_register < reg + kV2lRows && end > reg)) {
+        return data;  // not this upload
+    }
+    if (start_register > reg || end < reg + kV2lRows) {
+        g_v2l_split++;
+        return data;
+    }
+    if (!g_delta_valid) {
+        g_mtx_no_delta++;
+        return data;
+    }
+    static float scratch[PS_ROWS * 4];
+    memcpy(scratch, data, vec4_count * 16);
+    float *m = scratch + (reg - start_register) * 4;
+    check_v2l(m);
+    // ViewToLocal_eye = ViewToLocal_mono * (S T S)^-1: the eye-view point the
+    // PS rebuilds (from the corrected LocalToView) maps into the same box.
+    float v2l[16], v2l_eye[16];
+    double out[16];
+    math::expand_affine4(m, v2l);
+    math::mul4(v2l, g_view_delta_inv, out);
+    math::to_float4(out, v2l_eye);
+    memcpy(m, v2l_eye, kV2lRows * 16);
+    g_v2l_rows += kV2lRows;
+    return scratch;
 }
 
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
@@ -719,6 +875,17 @@ void report_window()
                   (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_rel_rows,
                   (unsigned long long)g_mtx_split, (unsigned long long)g_mtx_no_delta);
         g_mtx_rows = g_mtx_split = g_mtx_no_delta = g_mtx_rel_rows = 0;
+        MC2VR_LOG("view/hmd: shadow boxes: LocalToView rows=%llu ViewToLocal rows=%llu | checks: "
+                  "convention (P_mono*S*LocalToView = LocalToProj, S = -x) n=%llu bad=%llu max=%.3g, "
+                  "inverse (ViewToLocal*LocalToView = I) n=%llu bad=%llu max=%.3g | noL2P=%llu split=%llu noReg=%llu",
+                  (unsigned long long)g_l2v_rows, (unsigned long long)g_v2l_rows,
+                  (unsigned long long)g_l2v_checks, (unsigned long long)g_l2v_bad, g_l2v_resid_max,
+                  (unsigned long long)g_v2l_checks, (unsigned long long)g_v2l_bad, g_v2l_resid_max,
+                  (unsigned long long)g_l2v_no_l2p, (unsigned long long)g_v2l_split,
+                  (unsigned long long)g_v2l_no_reg);
+        g_l2v_rows = g_l2v_checks = g_l2v_bad = g_l2v_no_l2p = 0;
+        g_v2l_rows = g_v2l_checks = g_v2l_bad = g_v2l_split = g_v2l_no_reg = 0;
+        g_l2v_resid_max = g_v2l_resid_max = 0.0;
         MC2VR_LOG("view/hmd: HMD views hit=%llu notHmd=%llu (main-pass camera uploads with / without an HMD "
                   "view stamp; notHmd ones pass through)",
                   (unsigned long long)g_stamp_hits, (unsigned long long)g_stamp_misses);
@@ -793,10 +960,7 @@ bool mono_clip_to_eye(const double in[4], double out[4])
     if (!g_delta_valid) {
         return false;
     }
-    for (int r = 0; r < 4; r++) {
-        out[r] = g_delta[r * 4 + 0] * in[0] + g_delta[r * 4 + 1] * in[1] + g_delta[r * 4 + 2] * in[2] +
-                 g_delta[r * 4 + 3] * in[3];
-    }
+    math::transform4(g_delta, in, out);
     return true;
 }
 

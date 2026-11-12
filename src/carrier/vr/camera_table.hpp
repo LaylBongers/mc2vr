@@ -34,7 +34,7 @@
 
 #include <cstdint>
 
-#include "vec_math.hpp"
+#include "vr/vec_math.hpp"
 
 namespace mc2vr::camera_table {
 

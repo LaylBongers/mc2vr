@@ -23,6 +23,8 @@ inline Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
 inline Vec3 operator*(float s, Vec3 a) { return a * s; }
 
 inline float dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+// dot in double (no float rounding of the products or the sum).
+inline double dot_d(Vec3 a, Vec3 b) { return (double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z; }
 inline Vec3 cross(Vec3 a, Vec3 b)
 {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
@@ -67,7 +69,8 @@ inline Quat conj(Quat q) { return {-q.x, -q.y, -q.z, q.w}; }
 
 // Read/write 3 consecutive floats (shader-constant rows are float[4], xyz first).
 inline Vec3 load3(const float *p) { return {p[0], p[1], p[2]}; }
-inline void store3(float *p, Vec3 v)
+template <class T>
+inline void store3(T *p, Vec3 v)
 {
     p[0] = v.x;
     p[1] = v.y;
@@ -90,7 +93,8 @@ inline void mul4(const float *a, const float *b, float *out)
 // out = m^-1 by Gauss-Jordan with partial pivoting, in double; false if
 // (near-)singular. Perspective view-projections are ill-conditioned (their
 // depth row is nearly the w row), so keep the result in double.
-inline bool invert4(const float *m, double *out)
+template <class T>
+inline bool invert4(const T *m, double *out)
 {
     double a[4][8];
     for (int r = 0; r < 4; r++) {
@@ -147,6 +151,95 @@ inline void mul4(const double *a, const float *b, float *out)
                                      a[r * 4 + 2] * b[2 * 4 + c] + a[r * 4 + 3] * b[3 * 4 + c]);
         }
     }
+}
+
+// out = m * v for a column 4-vector, in double (m: float or double).
+template <class T>
+inline void transform4(const T *m, const double v[4], double out[4])
+{
+    for (int r = 0; r < 4; r++) {
+        out[r] = (double)m[r * 4 + 0] * v[0] + (double)m[r * 4 + 1] * v[1] + (double)m[r * 4 + 2] * v[2] +
+                 (double)m[r * 4 + 3] * v[3];
+    }
+}
+
+// out = m * (p, 1): a point through a row-form matrix, in double.
+template <class T>
+inline void transform_point4(const T *m, Vec3 p, double out[4])
+{
+    const double v[4] = {p.x, p.y, p.z, 1.0};
+    transform4(m, v, out);
+}
+
+// out = S * m * S with S = diag(s): the matrix m expressed in a frame whose
+// axes are scaled by s (for signs ±1, S^-1 = S). out may alias m.
+inline void diag_conjugate4(const double *m, const double s[4], double *out)
+{
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) out[r * 4 + c] = s[r] * m[r * 4 + c] * s[c];
+    }
+}
+
+// out = diag(s) * m: row r of m scaled by s[r]. out may alias m.
+template <class T>
+inline void scale_rows4(const double s[4], const T *m, T *out)
+{
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) out[r * 4 + c] = (T)(s[r] * m[r * 4 + c]);
+    }
+}
+
+inline void identity4(double *out)
+{
+    for (int i = 0; i < 16; i++) out[i] = i % 5 == 0 ? 1.0 : 0.0;
+}
+
+// out = m^-1 for a rigid m (orthonormal 3x3 R, translation t, last row
+// 0 0 0 1): R^T and -R^T t, exact in closed form. out must not alias m.
+inline void rigid_inverse4(const double *m, double *out)
+{
+    identity4(out);
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) out[r * 4 + c] = m[c * 4 + r];
+        out[r * 4 + 3] = -(m[0 * 4 + r] * m[3] + m[1 * 4 + r] * m[7] + m[2 * 4 + r] * m[11]);
+    }
+}
+
+// The 4x4 of an affine matrix given as its 3 rows (row 3 = 0 0 0 1).
+inline void expand_affine4(const float *rows3, float *out)
+{
+    for (int i = 0; i < 12; i++) out[i] = rows3[i];
+    out[12] = out[13] = out[14] = 0.0f;
+    out[15] = 1.0f;
+}
+
+inline void to_float4(const double *m, float *out)
+{
+    for (int i = 0; i < 16; i++) out[i] = (float)m[i];
+}
+
+// Largest |a − ref| / (1 + |ref|) over n entries.
+template <class A, class B>
+inline double max_relative_diff(const A *a, const B *ref, int n)
+{
+    double worst = 0.0;
+    for (int i = 0; i < n; i++) {
+        const double e = std::fabs((double)a[i] - (double)ref[i]) / (1.0 + std::fabs((double)ref[i]));
+        if (e > worst) worst = e;
+    }
+    return worst;
+}
+
+// Largest |a − b| over n entries.
+template <class A, class B>
+inline double max_abs_diff(const A *a, const B *b, int n)
+{
+    double worst = 0.0;
+    for (int i = 0; i < n; i++) {
+        const double e = std::fabs((double)a[i] - (double)b[i]);
+        if (e > worst) worst = e;
+    }
+    return worst;
 }
 
 } // namespace mc2vr::math

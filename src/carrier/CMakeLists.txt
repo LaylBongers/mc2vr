@@ -83,7 +83,6 @@ set_target_properties(mc2vr_carrier PROPERTIES PREFIX "")
 # (docs/xr_session.md).
 target_include_directories(mc2vr_carrier PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../common
 )
 target_include_directories(mc2vr_carrier SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/vendor/openxr-sdk/include

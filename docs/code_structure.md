@@ -5,7 +5,6 @@ How the source is organized, and the reasoning behind the split. It describes th
 ## Top level
 
 - **`src/launcher/`**: prepares the VR environment, starts the game suspended, injects the carrier ([launcher.md](launcher.md)).
-- **`src/common/`**: small shared math (`vec_math.hpp`).
 - **`src/game/`** (`mc2vr_game` library): facts about `Mercenaries2.exe`, without mod behavior, mirroring the Ghidra project and keyed to the exe hash.
   - Typed data: structs with offset `static_assert`s, and `Global<T, VA>` globals under their Ghidra names.
   - Original functions as typed callables (`function.hpp`): parameter locations and callee pops. The call shim that makes them callable lives here too.
@@ -23,6 +22,7 @@ How the source is organized, and the reasoning behind the split. It describes th
   - Keeping this in one place makes the full set of patches to the game visible, and keeps VR code free of register-level detail.
 - **`reimpl/`:** reimplemented game systems ([reimpl.md](reimpl.md)), written to read like the original through `game::` types and functions. They call `vr/` directly where they implement VR behavior, which is the reason for reimplementing something at all.
 - **`vr/`:** the VR implementation as plain C++: the OpenXR session and its presentation ([xr_session.md](xr_session.md)), camera, view rewrite, eye images, render outputs and sizing, pacing, device parameters, shader constant tables.
+  - Vector, quaternion and 4×4 matrix math lives in `vec_math.hpp` (header-only); camera matrices (view, projection, deltas) in `vp_camera`.
   - Entry points are named for the game event they handle (`on_<event>`).
   - It uses a few services the hooks provide (`hooks::frame_count()`, `device::blit_surfaces`).
 - **`debug/`:** debugging tools, each behind a `debug_*` conf key (off by default): censuses, dumps, probes, tracers. They install their own hooks, and the 10 s report poller lives here.

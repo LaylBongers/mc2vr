@@ -39,7 +39,7 @@
 
 #include <cstdint>
 
-#include "vec_math.hpp"
+#include "vr/vec_math.hpp"
 #include "vr/camera_table.hpp"
 
 namespace mc2vr::game {

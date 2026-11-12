@@ -1,5 +1,5 @@
-// The named float4 constants of a vertex shader, from the constant table
-// (CTAB) embedded in its bytecode (IDirect3DVertexShader9::GetFunction):
+// The named float4 constants of a vertex or pixel shader, from the constant table
+// (CTAB) embedded in its bytecode (GetFunction):
 // which register range holds viewContextData, LocalToProj, ... for the shader
 // a record draws with. Parsed once per shader, cached by pointer (render thread).
 #pragma once
@@ -24,5 +24,6 @@ struct Table {
 // The shader's table (empty when it has none); nullptr only for a null shader
 // or when the cache is full.
 const Table *of(IDirect3DVertexShader9 *vs);
+const Table *of(IDirect3DPixelShader9 *ps);
 
 } // namespace mc2vr::shader_constants

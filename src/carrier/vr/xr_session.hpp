@@ -24,7 +24,7 @@
 
 #include <d3d9.h>
 
-#include "vec_math.hpp"
+#include "vr/vec_math.hpp"
 
 namespace mc2vr::eye_share {
 struct Pair;

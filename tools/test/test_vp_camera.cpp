@@ -1,6 +1,6 @@
 // Native unit test for src/carrier/vr/vp_camera.cpp (pure math, no game deps).
 // Build + run (one line):
-//   g++ -std=c++17 -I src/common -I src/carrier tools/test/test_vp_camera.cpp src/carrier/vr/vp_camera.cpp -o /tmp/test_vp_camera && /tmp/test_vp_camera
+//   g++ -std=c++17 -I src/carrier tools/test/test_vp_camera.cpp src/carrier/vr/vp_camera.cpp -o /tmp/test_vp_camera && /tmp/test_vp_camera
 #include <cmath>
 #include <cstdio>
 
@@ -23,13 +23,11 @@ static int g_fail = 0;
 // Project world point p through VP rows -> ndc (x, y) and clip w.
 static void project(const float *vp, Vec3 p, float *ndc_x, float *ndc_y, float *w)
 {
-    float c[4];
-    for (int i = 0; i < 4; i++) {
-        c[i] = dot(load3(vp + i * 4), p) + vp[i * 4 + 3];
-    }
-    *w = c[3];
-    *ndc_x = c[0] / c[3];
-    *ndc_y = c[1] / c[3];
+    double c[4];
+    transform_point4(vp, p, c);
+    *w = (float)c[3];
+    *ndc_x = (float)(c[0] / c[3]);
+    *ndc_y = (float)(c[1] / c[3]);
 }
 
 static Camera make_game_camera()
@@ -112,40 +110,7 @@ int main()
     const Vec3 r = rotate({0, s45, 0, s45}, {1, 0, 0});
     CHECK(distance(r, {0, 0, -1}) < 1e-5f, "rotate: %g %g %g", r.x, r.y, r.z);
 
-    // 7. Per-eye correction of explicit camera matrices (view_rewrite): with
-    //    D = VP_eye * VP_mono^-1, the corrected LocalToProj = D * (VP_mono * W)
-    //    must project a local point exactly where VP_eye projects W * q.
-    {
-        float vp_mono[16], vp_eye[16], l2p[16], fixed[16];
-        double inv[16], delta[16];
-        rebuild(game, vp_mono);
-        rebuild(apply_eye(game, shift, 1.0f), vp_eye);
-        CHECK(invert4(vp_mono, inv), "VP not invertible");
-        mul4(vp_eye, inv, delta);
-        const float W[16] = {0.8f, -0.6f, 0, 3, 0.6f, 0.8f, 0, 1, 0, 0, 1, -2, 0, 0, 0, 1};  // rotate + translate
-        mul4(vp_mono, W, l2p);
-        mul4(delta, l2p, fixed);
-        const float q[4] = {0.5f, -1.0f, 2.0f, 1.0f};
-        float wq[4], a[4], b[4];
-        for (int r = 0; r < 4; r++) {
-            wq[r] = W[r * 4] * q[0] + W[r * 4 + 1] * q[1] + W[r * 4 + 2] * q[2] + W[r * 4 + 3] * q[3];
-        }
-        float worst = 0;
-        for (int r = 0; r < 4; r++) {
-            a[r] = fixed[r * 4] * q[0] + fixed[r * 4 + 1] * q[1] + fixed[r * 4 + 2] * q[2] + fixed[r * 4 + 3] * q[3];
-            b[r] = vp_eye[r * 4] * wq[0] + vp_eye[r * 4 + 1] * wq[1] + vp_eye[r * 4 + 2] * wq[2] +
-                   vp_eye[r * 4 + 3] * wq[3];
-            worst = std::fmax(worst, std::fabs(a[r] - b[r]));
-        }
-        CHECK(worst < 1e-3f, "corrected LocalToProj off by %g (clip magnitudes ~200)", worst);
-        // An eye at the game camera gives D = identity (mono frames unchanged).
-        mul4(vp_mono, inv, delta);
-        float off = 0;
-        for (int i = 0; i < 16; i++) off = std::fmax(off, std::fabs(delta[i] - (i % 5 == 0 ? 1.0f : 0.0f)));
-        CHECK(off < 1e-4f, "VP * VP^-1 differs from identity by %g", off);
-    }
-
-    // 8. Analytic clip delta (clip_delta): D * clip_mono(p) = clip_eye(p) for
+    // 7. Clip delta (clip_delta): D * clip_mono(p) = clip_eye(p) for
     //    any point, without inverting a VP; an identity eye gives D = I exactly,
     //    even with the camera far from the origin.
     {
@@ -163,21 +128,15 @@ int main()
         rebuild(cam, vp_eye);
         const Vec3 pts[3] = {game.C + game.F * 10.0f + game.R * 2.0f, game.C + game.F * 300.0f - game.U * 40.0f,
                              game.C + game.F * 1.5f + game.R * -0.4f + game.U * 0.3f};
-        float worst = 0;
+        double worst = 0;
         for (const Vec3 &p : pts) {
-            double cm[4], ce[4];
-            for (int r = 0; r < 4; r++) {
-                cm[r] = (double)vp_mono[r * 4] * p.x + (double)vp_mono[r * 4 + 1] * p.y +
-                        (double)vp_mono[r * 4 + 2] * p.z + vp_mono[r * 4 + 3];
-                ce[r] = (double)vp_eye[r * 4] * p.x + (double)vp_eye[r * 4 + 1] * p.y +
-                        (double)vp_eye[r * 4 + 2] * p.z + vp_eye[r * 4 + 3];
-            }
-            for (int r = 0; r < 4; r++) {
-                const double d = D[r * 4] * cm[0] + D[r * 4 + 1] * cm[1] + D[r * 4 + 2] * cm[2] + D[r * 4 + 3] * cm[3];
-                worst = std::fmax(worst, (float)(std::fabs(d - ce[r]) / (1.0 + std::fabs(ce[r]))));
-            }
+            double cm[4], ce[4], d[4];
+            transform_point4(vp_mono, p, cm);
+            transform_point4(vp_eye, p, ce);
+            transform4(D, cm, d);
+            worst = std::fmax(worst, max_relative_diff(d, ce, 4));
         }
-        CHECK(worst < 1e-4f, "clip_delta: D * clip_mono differs from clip_eye by %g (relative)", worst);
+        CHECK(worst < 1e-4, "clip_delta: D * clip_mono differs from clip_eye by %g (relative)", worst);
 
         // Identity eye: D = I up to the float axes' own rounding (~1e-8), the
         // same near the origin and ~3 km away (the inverse-VP route degrades
@@ -185,15 +144,120 @@ int main()
         auto identity_error = [&](Vec3 c) {
             Camera g2 = game;
             g2.C = c;
-            double I[16];
+            double I[16], ident[16];
             clip_delta(g2, apply_eye(g2, id, 1.0f), eye_offset(g2, id, 1.0f), I);
-            double off = 0;
-            for (int i = 0; i < 16; i++) off = std::fmax(off, std::fabs(I[i] - (i % 5 == 0 ? 1.0 : 0.0)));
-            return off;
+            identity4(ident);
+            return max_abs_diff(I, ident, 16);
         };
         const double near_err = identity_error({1.f, 2.f, 3.f}), far_err = identity_error({1500.f, 80.f, -2650.f});
         CHECK(near_err < 1e-6 && far_err < 1e-6 && far_err <= near_err * 1.01 + 1e-12,
               "clip_delta identity error near %g far %g (must not grow with distance)", near_err, far_err);
+    }
+
+    // 8. View-space delta (view_delta): T * view_mono(p) = view_eye(p) for any
+    //    point; the corrected LocalToView = T * (V_mono * W) maps a local
+    //    point where V_eye maps W * q (the row-form order view_rewrite uses),
+    //    also in a sign-flipped view frame (S * T * S, the game's view space is
+    //    x-negated); clip_delta = P_eye * T * P_mono^-1; an identity eye gives T = I.
+    {
+        EyePose eye = id;
+        eye.pos = {-0.032f, 0.012f, -0.006f};
+        const float yh = 0.08f, ph = -0.04f, rh = 0.02f;  // turn, nod, roll
+        eye.rot = Quat{0, std::sin(yh), 0, std::cos(yh)} * Quat{std::sin(ph), 0, 0, std::cos(ph)} *
+                  Quat{0, 0, std::sin(rh), std::cos(rh)};
+        eye.fov_left = -0.95f; eye.fov_right = 0.80f; eye.fov_up = 0.85f; eye.fov_down = -0.92f;
+        Camera far_game = game;
+        far_game.C = {1500.f, 80.f, -2650.f};  // world translations of the size the game has
+        const Camera cam = apply_eye(far_game, eye, 1.0f);
+        double T[16], v_mono[16], v_eye[16];
+        view_delta(far_game, cam, eye_offset(far_game, eye, 1.0f), T);
+        view_matrix(far_game, v_mono);
+        view_matrix(cam, v_eye);
+        const Vec3 pts[3] = {far_game.C + far_game.F * 10.0f + far_game.R * 2.0f,
+                             far_game.C + far_game.F * 300.0f - far_game.U * 40.0f,
+                             far_game.C + far_game.F * 0.8f + far_game.R * -0.4f + far_game.U * 0.3f};
+        double worst = 0;
+        for (const Vec3 &p : pts) {
+            double vm[4], ve[4], t[4];
+            transform_point4(v_mono, p, vm);
+            transform_point4(v_eye, p, ve);
+            transform4(T, vm, t);
+            // Absolute in view units: the inputs are float world points ~3 km out.
+            worst = std::fmax(worst, max_abs_diff(t, ve, 4));
+        }
+        CHECK(worst < 2e-3, "view_delta: T * view_mono differs from view_eye by %g", worst);
+
+        // LocalToView: an object 6 units ahead (local origin), rotated + scaled,
+        // handed over in float as the game does, in our view frame and in the
+        // game's x-negated one.
+        const Vec3 o = far_game.C + far_game.F * 6.0f + far_game.R * 1.5f;
+        const double W[16] = {1.6, -1.2, 0, o.x, 1.2, 1.6, 0, o.y, 0, 0, 2.0, o.z, 0, 0, 0, 1};
+        const double signs[2][4] = {{1, 1, 1, 1}, {-1, 1, 1, 1}};
+        for (const auto &sg : signs) {
+            double vw[16], ts[16], ve_w[16];
+            float l2v_ours[16], l2v_mono[16], l2v_eye[16];
+            mul4(v_mono, W, vw);
+            to_float4(vw, l2v_ours);
+            scale_rows4(sg, l2v_ours, l2v_mono);  // S * V_mono * W
+            diag_conjugate4(T, sg, ts);           // S * T * S
+            mul4(ts, l2v_mono, l2v_eye);
+            mul4(v_eye, W, ve_w);
+            double ref[16];
+            scale_rows4(sg, ve_w, ref);  // S * V_eye * W
+            const double worst_l = max_abs_diff(l2v_eye, ref, 16);
+            CHECK(worst_l < 2e-3, "corrected LocalToView (x sign %g) off by %g view units", sg[0], worst_l);
+        }
+
+        // clip_delta is P_eye * T * P_mono^-1: D * P_mono = P_eye * T.
+        double D[16], pm[16], pe[16], dp[16], pt[16];
+        clip_delta(far_game, cam, eye_offset(far_game, eye, 1.0f), D);
+        projection(far_game, pm);
+        projection(cam, pe);
+        mul4(D, pm, dp);
+        mul4(pe, T, pt);
+        const double off = max_abs_diff(dp, pt, 16);
+        CHECK(off < 1e-9, "clip_delta != P_eye * view_delta * P_mono^-1 (%g)", off);
+
+        // P * V reproduces the VP rows rebuild writes; P^-1 * P = I.
+        double pv[16], pinv[16], pp[16], ident[16];
+        float vp[16];
+        mul4(pm, v_mono, pv);
+        rebuild(far_game, vp);
+        CHECK(max_relative_diff(vp, pv, 16) < 1e-6, "projection * view_matrix != rebuild");
+        inverse_projection(far_game, pinv);
+        mul4(pinv, pm, pp);
+        identity4(ident);
+        CHECK(max_abs_diff(pp, ident, 16) < 1e-9, "inverse_projection * projection != I");
+
+        // rigid_inverse4(T) * T = I (T is rigid: the ViewToLocal correction).
+        double t_inv[16], tt[16];
+        rigid_inverse4(T, t_inv);
+        mul4(t_inv, T, tt);
+        CHECK(max_abs_diff(tt, ident, 16) < 1e-6, "rigid_inverse4(T) * T != I (%g)", max_abs_diff(tt, ident, 16));
+
+        // ViewToLocal (the inverse of LocalToView, applied in the PS to view-space
+        // points): ViewToLocal_eye = ViewToLocal_mono * (S T S)^-1 maps the eye-view
+        // point of a local point q back to q, in the game's x-negated frame.
+        {
+            const double sg[4] = {-1, 1, 1, 1};
+            double vw[16], l2v_mono[16], v2l_mono[16], ts[16], ts_inv[16], v2l_eye[16], l2v_eye[16], back[16];
+            mul4(v_mono, W, vw);
+            scale_rows4(sg, vw, l2v_mono);
+            CHECK(invert4(l2v_mono, v2l_mono), "LocalToView not invertible");
+            diag_conjugate4(T, sg, ts);
+            rigid_inverse4(ts, ts_inv);
+            mul4(v2l_mono, ts_inv, v2l_eye);
+            mul4(ts, l2v_mono, l2v_eye);
+            mul4(v2l_eye, l2v_eye, back);
+            CHECK(max_abs_diff(back, ident, 16) < 1e-6, "ViewToLocal_eye * LocalToView_eye != I (%g)",
+                  max_abs_diff(back, ident, 16));
+        }
+
+        // Identity eye: T = I to the axes' rounding, ~3 km from the origin.
+        double I[16];
+        view_delta(far_game, apply_eye(far_game, id, 1.0f), eye_offset(far_game, id, 1.0f), I);
+        const double ioff = max_abs_diff(I, ident, 16);
+        CHECK(ioff < 1e-6, "view_delta identity error %g", ioff);
     }
 
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL PASS\n", g_fail);

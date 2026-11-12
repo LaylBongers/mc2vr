@@ -16,6 +16,7 @@
 #include "game/render_shell.hpp"
 #include "debug/render_dump.hpp"
 #include "log.hpp"
+#include "vr/view_rewrite.hpp"
 
 namespace mc2vr::reimpl {
 
@@ -68,7 +69,9 @@ void RenderCmd_ExecuteStream(const uint32_t *stream, void *vs_ctx, void *ps_ctx)
         }
         case RenderCmdOp::SetPSConstants: {
             const auto &cmd = as<rcmd::SetShaderConstants>(c);
-            Dx9_SetPixelShaderConstantF_Direct(cmd.start_reg, cmd.data, cmd.vec4_count);
+            // VR: the projected shadow's ViewToLocal per eye (docs/view_rewrite.md).
+            const float *data = view_rewrite::on_record_ps_constant(cmd.start_reg, cmd.data, cmd.vec4_count);
+            Dx9_SetPixelShaderConstantF_Direct(cmd.start_reg, data, cmd.vec4_count);
             break;
         }
         case RenderCmdOp::BindVertexTexture: {

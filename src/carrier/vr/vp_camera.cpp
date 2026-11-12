@@ -76,51 +76,59 @@ Vec3 eye_offset(const Camera &game, const EyePose &eye, float units_per_metre)
     return to_game(game, eye.pos) * units_per_metre;
 }
 
-void clip_delta(const Camera &mono, const Camera &eye, const Vec3 &offset, double out[16])
+void view_delta(const Camera &mono, const Camera &eye, const Vec3 &offset, double out[16])
 {
     const Vec3 me[3] = {eye.R, eye.U, eye.F}, mm[3] = {mono.R, mono.U, mono.F};
-    // T: mono view space -> eye view space.
-    double t[16] = {};
+    identity4(out);
     for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            t[i * 4 + j] = (double)me[i].x * mm[j].x + (double)me[i].y * mm[j].y + (double)me[i].z * mm[j].z;
-        }
-        t[i * 4 + 3] = -((double)me[i].x * offset.x + (double)me[i].y * offset.y + (double)me[i].z * offset.z);
+        for (int j = 0; j < 3; j++) out[i * 4 + j] = dot_d(me[i], mm[j]);
+        out[i * 4 + 3] = -dot_d(me[i], offset);
     }
-    t[15] = 1.0;
-    // P_eye (row form: clip = P * view).
-    double pe[16] = {};
-    pe[0] = eye.a;
-    pe[2] = eye.c;
-    pe[5] = eye.b;
-    pe[6] = eye.d;
-    pe[10] = eye.A;
-    pe[11] = eye.B;
-    pe[14] = 1.0;
-    // P_mono^-1: x_v = (x - c*w)/a, y_v = (y - d*w)/b, z_v = w, 1 = (z - A*w)/B.
-    double pm[16] = {};
-    pm[0] = 1.0 / mono.a;
-    pm[3] = -(double)mono.c / mono.a;
-    pm[5] = 1.0 / mono.b;
-    pm[7] = -(double)mono.d / mono.b;
-    pm[11] = 1.0;
-    pm[14] = 1.0 / mono.B;
-    pm[15] = -(double)mono.A / mono.B;
-    double pt[16];
-    for (int r = 0; r < 4; r++) {
-        for (int c = 0; c < 4; c++) {
-            double s = 0.0;
-            for (int k = 0; k < 4; k++) s += pe[r * 4 + k] * t[k * 4 + c];
-            pt[r * 4 + c] = s;
-        }
+}
+
+void view_matrix(const Camera &cam, double out[16])
+{
+    const Vec3 axes[3] = {cam.R, cam.U, cam.F};
+    identity4(out);
+    for (int i = 0; i < 3; i++) {
+        store3(out + i * 4, axes[i]);
+        out[i * 4 + 3] = -dot_d(axes[i], cam.C);
     }
-    for (int r = 0; r < 4; r++) {
-        for (int c = 0; c < 4; c++) {
-            double s = 0.0;
-            for (int k = 0; k < 4; k++) s += pt[r * 4 + k] * pm[k * 4 + c];
-            out[r * 4 + c] = s;
-        }
-    }
+}
+
+void projection(const Camera &cam, double out[16])
+{
+    for (int i = 0; i < 16; i++) out[i] = 0.0;
+    out[0] = cam.a;
+    out[2] = cam.c;
+    out[5] = cam.b;
+    out[6] = cam.d;
+    out[10] = cam.A;
+    out[11] = cam.B;
+    out[14] = 1.0;
+}
+
+void inverse_projection(const Camera &cam, double out[16])
+{
+    // x_v = (x - c*w)/a, y_v = (y - d*w)/b, z_v = w, 1 = (z - A*w)/B.
+    for (int i = 0; i < 16; i++) out[i] = 0.0;
+    out[0] = 1.0 / cam.a;
+    out[3] = -(double)cam.c / cam.a;
+    out[5] = 1.0 / cam.b;
+    out[7] = -(double)cam.d / cam.b;
+    out[11] = 1.0;
+    out[14] = 1.0 / cam.B;
+    out[15] = -(double)cam.A / cam.B;
+}
+
+void clip_delta(const Camera &mono, const Camera &eye, const Vec3 &offset, double out[16])
+{
+    double t[16], pe[16], pm_inv[16], pt[16];
+    view_delta(mono, eye, offset, t);  // mono view space -> eye view space
+    projection(eye, pe);
+    inverse_projection(mono, pm_inv);
+    mul4(pe, t, pt);
+    mul4(pt, pm_inv, out);
 }
 
 Camera apply_eye(const Camera &game, const EyePose &eye, float units_per_metre)
@@ -148,13 +156,9 @@ Camera apply_eye(const Camera &game, const EyePose &eye, float units_per_metre)
 
 float rebuild_residual(const float *rows, const Camera &decomposed)
 {
-    float re[16], worst = 0.0f;
+    float re[16];
     rebuild(decomposed, re);
-    for (int i = 0; i < 16; i++) {
-        const float e = std::fabs(re[i] - rows[i]) / (1.0f + std::fabs(rows[i]));
-        if (e > worst) worst = e;
-    }
-    return worst;
+    return (float)max_relative_diff(re, rows, 16);
 }
 
 } // namespace mc2vr::vp_camera

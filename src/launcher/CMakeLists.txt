@@ -7,7 +7,6 @@ add_executable(mc2vr_launcher
     vr_registry.c
 )
 
-target_include_directories(mc2vr_launcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 
 target_compile_definitions(mc2vr_launcher PRIVATE UNICODE _UNICODE)
 

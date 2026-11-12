@@ -4,7 +4,7 @@
 // No game or D3D dependencies — unit-tested natively by tools/test/test_vp_camera.cpp.
 #pragma once
 
-#include "vec_math.hpp"
+#include "vr/vec_math.hpp"
 
 namespace mc2vr::vp_camera {
 
@@ -42,13 +42,25 @@ Camera apply_eye(const Camera &game, const EyePose &eye, float units_per_metre);
 // eye's own position, not as a difference of two large world positions).
 Vec3 eye_offset(const Camera &game, const EyePose &eye, float units_per_metre);
 
+// The camera's matrices in row form (double): view V (view = V * (p, 1),
+// view = (x_v, y_v, z_v, 1)), projection P (clip = P * view; P * V = the VP
+// rows rebuild writes) and P^-1 in closed form from the projection terms.
+void view_matrix(const Camera &cam, double out[16]);
+void projection(const Camera &cam, double out[16]);
+void inverse_projection(const Camera &cam, double out[16]);
+
+// The view-space delta T with view_eye = T * view_mono for every point (row
+// form, view = (x_v, y_v, z_v, 1) as in Camera): the eye camera's view of the
+// mono camera's view space, a rigid transform with rotation M_eye * M_mono^T
+// (M = rows R, U, F) and translation -M_eye * offset, where offset =
+// eye.C - mono.C = eye_offset(mono, ...). Neither camera's world position
+// enters: an identity eye gives T = I to the axes' float rounding. Double
+// precision. Corrects view-space matrices: LocalToView_eye = T * LocalToView_mono.
+void view_delta(const Camera &mono, const Camera &eye, const Vec3 &offset, double out[16]);
+
 // The clip-space delta D with clip_eye = D * clip_mono for every point (row
 // form: D * VP_mono = VP_eye), analytically: D = P_eye * T * P_mono^-1, T =
-// the eye camera's view of the mono camera's view space (rotation
-// M_eye * M_mono^T, translation -M_eye * offset), P^-1 in closed form from
-// the projection terms. offset = eye_offset(mono, ...). Neither camera's world
-// position enters, so no large numbers do: an identity eye gives D = I
-// exactly. Double precision.
+// view_delta(mono, eye, offset), P^-1 = inverse_projection(mono). Same precision properties as view_delta: an identity eye gives D = I.
 void clip_delta(const Camera &mono, const Camera &eye, const Vec3 &offset, double out[16]);
 
 // Largest relative |rebuild(decompose(rows)) − rows| entry (identity self-check).

@@ -25,7 +25,7 @@ row-major, clip_i = dot(VP_row_i, worldpos)
 - Blocks arrive split across upload calls, and register numbers are reused across techniques, so shape heuristics conflate techniques. The exact registers come from the game's own resolver: at the upload gate `0x00855a78` (`cmp [edi+0xd8],0` in `PgPrimitive_SubmitToGPU`, before the gated `Dx9_SetVertexShaderConstantF` call) EDI = the current technique, whose `+0xd4`/`+0xd8` (viewContextData reg/count) and `+0xdc`/`+0xe0` (ViewProj reg/count) are already resolved.
 - View row0 = camera right: VP row0.xyz = P00·right.
 - Shadow-map, reflection and other offscreen passes upload their own `viewContextData` (the shadow pass's "camera" is the light). Seen RT0 sizes: 2560x1440 main; 1024x4096 shadow atlas, 512², 128², 64², 853x480, and the 1280x720 → 1x1 downsample chain. Main scene RT is fp16 HDR (D3DFMT_A16B16G16R16F). Shadow *receivers* look up in world space (the VS passes world position to the PS), so they are eye-invariant.
-- Shaders without `viewContextData`: explicit `g_ViewProjMtx` (`c0-3`, shader3.bin `0x9fb8`); `LocalToProj` (`0x6cc8`: view folded in per object); `Mvp`/`TexGen` (`0x200278`); rain (`0x1fe198`).
+- Shaders without `viewContextData`: explicit `g_ViewProjMtx` (`c0-3`, shader3.bin `0x9fb8`); `LocalToProj` + `LocalToView` (`0x6cc8`: the projected shadow boxes, [view_rewrite.md](../view_rewrite.md)); `Mvp`/`TexGen` (`0x200278`); rain (`0x1fe198`).
 
 ## Constant-name → technique-field map
 

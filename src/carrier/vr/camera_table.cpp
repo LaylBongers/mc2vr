@@ -15,7 +15,7 @@
 #include "game/view_context.hpp"
 #include "hooks/frame_tick.hpp"
 #include "log.hpp"
-#include "vec_math.hpp"
+#include "vr/vec_math.hpp"
 #include "vr/xr_session.hpp"
 #include "vr/view_rewrite.hpp"
 #include "vr/vp_camera.hpp"

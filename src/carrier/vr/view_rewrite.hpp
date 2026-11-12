@@ -62,9 +62,15 @@ bool main_camera_pitch(float *degrees);
 
 // The vertex shader the next record draws with (the PgPrimitive_SubmitToGPU
 // reimplementation, before the record's command stream runs): its explicit
-// camera matrices (LocalToProj, g_ViewProjMtx), if any, get this pass's
-// per-eye correction when uploaded.
+// camera matrices (LocalToProj, g_ViewProjMtx in clip space; LocalToView in
+// view space), if any, get this pass's per-eye correction when uploaded.
 void on_record_shader(IDirect3DVertexShader9 *vs);
+
+// A PS constant upload from the current record's command stream
+// (RenderCmd_ExecuteStream, SetPSConstants): in a LocalToView record, the
+// pixel shader's ViewToLocal gets this pass's per-eye correction. Returns the
+// data to upload (a scratch copy when rewritten).
+const float *on_record_ps_constant(uint32_t start_register, const float *data, uint32_t vec4_count);
 
 // The rewrite is always hmd_delta: per-eye projection from the OpenXR FOV +
 // per-eye position delta, the pose already in the records from the camera

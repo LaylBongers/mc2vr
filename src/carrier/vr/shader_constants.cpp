@@ -13,7 +13,7 @@ namespace {
 constexpr uint32_t kSlots = 1024;  // open addressing, power of two
 
 struct Entry {
-    IDirect3DVertexShader9 *vs;
+    const void *shader;  // IDirect3DVertexShader9 / IDirect3DPixelShader9
     Table table;
 };
 Entry g_entries[kSlots];
@@ -77,27 +77,31 @@ const Named *Table::find(const char *name) const
     return nullptr;
 }
 
-const Table *of(IDirect3DVertexShader9 *vs)
+namespace {
+
+// Either shader type: both expose their bytecode through GetFunction.
+template <class Shader>
+const Table *lookup(Shader *shader)
 {
-    if (vs == nullptr) {
+    if (shader == nullptr) {
         return nullptr;
     }
-    uint32_t h = ((uint32_t)(uintptr_t)vs >> 4) * 2654435761u;
+    uint32_t h = ((uint32_t)(uintptr_t)shader >> 4) * 2654435761u;
     for (uint32_t probe = 0; probe < kSlots; probe++) {
         Entry &e = g_entries[(h + probe) & (kSlots - 1)];
-        if (e.vs == vs) {
+        if (e.shader == shader) {
             return &e.table;
         }
-        if (e.vs == nullptr) {
+        if (e.shader == nullptr) {
             if (g_used >= kSlots / 2) {
                 return nullptr;  // keep the table sparse
             }
             g_used++;
-            e.vs = vs;
+            e.shader = shader;
             UINT size = 0;
-            if (SUCCEEDED(vs->GetFunction(nullptr, &size)) && size > 0 && size < (1u << 20)) {
+            if (SUCCEEDED(shader->GetFunction(nullptr, &size)) && size > 0 && size < (1u << 20)) {
                 std::vector<uint8_t> buf(size);
-                if (SUCCEEDED(vs->GetFunction(buf.data(), &size))) {
+                if (SUCCEEDED(shader->GetFunction(buf.data(), &size))) {
                     parse(e.table, buf.data(), size);
                 }
             }
@@ -105,6 +109,18 @@ const Table *of(IDirect3DVertexShader9 *vs)
         }
     }
     return nullptr;
+}
+
+} // namespace
+
+const Table *of(IDirect3DVertexShader9 *vs)
+{
+    return lookup(vs);
+}
+
+const Table *of(IDirect3DPixelShader9 *ps)
+{
+    return lookup(ps);
 }
 
 } // namespace mc2vr::shader_constants
