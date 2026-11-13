@@ -64,7 +64,9 @@ void RenderCmd_ExecuteStream(const uint32_t *stream, void *vs_ctx, void *ps_ctx)
         }
         case RenderCmdOp::SetVSConstants: {
             const auto &cmd = as<rcmd::SetShaderConstants>(c);
-            Dx9_SetVertexShaderConstantF_Direct(cmd.start_reg, cmd.data, cmd.vec4_count);
+            // VR: the clouds sky matrices per eye (docs/view_rewrite.md).
+            const float *data = view_rewrite::on_record_vs_constant(cmd.start_reg, cmd.data, cmd.vec4_count);
+            Dx9_SetVertexShaderConstantF_Direct(cmd.start_reg, data, cmd.vec4_count);
             break;
         }
         case RenderCmdOp::SetPSConstants: {

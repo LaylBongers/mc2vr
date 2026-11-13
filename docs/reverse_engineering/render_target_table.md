@@ -30,7 +30,7 @@ A full plaintext scan of the slot offsets ([ghidra-reva.md](ghidra-reva.md)) fin
 - `LtiRenderer_EndSubmit`: StretchRect main → `+0x3ea4`, then SetRenderTarget(front) — the menu/loading path.
 - **Render-command op 6** (SetRenderTargets, `0x00856a95`: color `[rec+4]`, depth `[rec+8]`) — the gameplay composite and HUD. `PgLtiBloom_EmitPasses` bakes `+0x3e98` / `+0x3e94` into these records producer-side, before the stereo passes. Both passes replay the same pointer, so a per-pass table swap cannot redirect it.
 - Render-command target switch case 7 (`0x008563e4`, `0x00856847`): `+0x3e90`.
-- Clouds code (`PgClouds_EmitRecords` / `PgClouds_EmitViewRecords`): `+0x3e90` / `+0x3ea0`.
+- Clouds code (`PgClouds_EmitCloudGen` / `PgClouds_EmitCloudRender1`, their rebind records): `+0x3e90` / `+0x3ea0`.
 - Device getters: only the setup tail (`0x0074a1d8` / `0x0074a24c`) and the cache seeding; no runtime getter path.
 
 Every creation site also registers its surface by name with the PrecacheSurface registries (`g_SurfaceRegistryPtrA/B`; `vfn[+0x1c]` = register(hash, surf, 3), which re-records when the pointer differs). With the front replaced, no binds through these entries were observed.

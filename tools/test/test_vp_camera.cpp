@@ -260,6 +260,50 @@ int main()
         CHECK(ioff < 1e-6, "view_delta identity error %g", ioff);
     }
 
+    // Sky matrix (the clouds emitters, reimpl/render/clouds_emit.cpp): built the
+    // game's way, transpose(inverse(camera rotation) * P) with the ctx tans and
+    // the sky depth terms A' = 1.0000019, B' = -A'. It decomposes with C = 0,
+    // the camera's axes (F = row 2, R along row 0) and its own A'/B'; with an
+    // identity eye and C kept at 0 it rebuilds to itself.
+    {
+        const float yaw = 0.7f, pitch = -0.3f;
+        const Vec3 f{std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
+        Vec3 r;
+        normalize(cross({0, 1, 0}, f), &r);
+        const Vec3 u = cross(f, r);
+        const float cam_rows[3][3] = {{r.x, r.y, r.z}, {u.x, u.y, u.z}, {f.x, f.y, f.z}};
+        const float th = 0.9f, tv = 1.1f;
+        const float a1 = 1.0000019f;
+        const float p[4][4] = {{-1.0f / th, 0, 0, 0}, {0, 1.0f / tv, 0, 0}, {0, 0, a1, 1}, {0, 0, -a1, 0}};
+        float inv[4][4] = {};  // the rotation's inverse = its transpose (row vectors)
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) inv[i][j] = cam_rows[j][i];
+        }
+        inv[3][3] = 1.0f;
+        float prod[4][4] = {}, sky[16];
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                for (int k = 0; k < 4; k++) prod[i][j] += inv[i][k] * p[k][j];
+            }
+        }
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) sky[i * 4 + j] = prod[j][i];
+        }
+        CHECK(sky[3] == 0.0f && sky[7] == 0.0f && sky[15] == 0.0f, "sky rows 0/1/3 w != 0");
+        Camera s;
+        CHECK(decompose(sky, &s), "sky decompose failed");
+        CHECK(length(s.C) < 1e-5f, "sky C = %g", length(s.C));
+        CHECK(distance(s.F, f) < 1e-5f && std::fabs(std::fabs(dot(s.R, r)) - 1.0f) < 1e-5f, "sky axes");
+        CHECK(std::fabs(s.a - 1.0f / th) < 1e-5f && std::fabs(s.b - 1.0f / tv) < 1e-5f, "sky a/b");
+        CHECK(std::fabs(s.A - a1) < 1e-7f && std::fabs(s.B + a1) < 1e-6f, "sky A'/B' = %.9g/%.9g", s.A, s.B);
+        const float stl = -(1.0f + s.c) / s.a, str = (1.0f - s.c) / s.a;
+        const float std_ = -(1.0f + s.d) / s.b, stu = (1.0f - s.d) / s.b;
+        const EyePose sid{{0.03f, 0, 0}, {0, 0, 0, 1}, std::atan(stl), std::atan(str), std::atan(stu), std::atan(std_)};
+        Camera e = apply_eye(s, sid, 1.0f);
+        e.C = {0, 0, 0};  // rotation and projection only
+        CHECK(rebuild_residual(sky, e) < 1e-5f, "sky identity-eye residual %g", rebuild_residual(sky, e));
+    }
+
     std::printf(g_fail ? "FAILED (%d)\n" : "ALL PASS\n", g_fail);
     return g_fail ? 1 : 0;
 }

@@ -96,7 +96,7 @@ constexpr uintptr_t kShellCascadeBase = 0x2bc0;   // float, first cascade split
 constexpr uintptr_t kShellFovAspect = 0x2bc8;     // float, scales the fov by the viewport aspect
 constexpr uintptr_t kShellTanHScale = 0x2bcc;     // float, scales tanH
 constexpr uintptr_t kShellRenderScale = 0x2bd4;   // float
-constexpr uintptr_t kShellVmStepArg = 0x3e8c;     // g_RenderShellPtr: ECX for thunk_FUN_02537cb0
+constexpr uintptr_t kShellVmStepArg = 0x3e8c;     // g_RenderShellPtr: the material thunk_FUN_02537cb0 takes (ECX)
 
 // ---- globals ----------------------------------------------------------------------
 using g_SineTable = GlobalArray<float, 0x00cf1900u, 0x2000>;  // sin over one turn, filled at boot
@@ -136,11 +136,15 @@ inline constexpr Function<void(const float *splits, ViewContext *ctx, const Frus
                                    0x0085a3f0u,
                                    {EAX, STK, STK, STK, STK, STK, STK, STK, STK, STK, STK}};
 inline constexpr Function<void(ViewContext *ctx)> FUN_00859ad0{"FUN_00859ad0", 0x00859ad0u, {STK}};
-// Unpatched VM stub (0x00854740 -> 0x02537cb0), called before a scratch-record
-// Submit; the builder then reads the scratch materialIdx. The registers are
-// what the builder's call site holds (VM code: inputs not mapped).
-inline constexpr Function<void(void *shell, uint32_t arg, uint32_t *cmd)> thunk_FUN_02537cb0{
-    "thunk_FUN_02537cb0", 0x00854740u, {EAX, ECX, EDX}};
+// VM stub 0x00854740 (-> 0x02537cb0), patched at runtime to plaintext
+// 0x00500476 -> 0x00854749 (docs/reverse_engineering/data/vm_thunks_runtime.csv).
+// Called before a scratch-record Submit with ECX = a material object: gives it
+// a scratch index if it has none (+0x180 == 0xffff; table 0x01163770, counter
+// 0x01163704), then sets the scratch record's materialIdx (+0x3c) and type
+// (+0x44, from the material's +0xa0 / +0x5c). Reads only ECX (EAX/EDX are
+// overwritten before use, ESI is saved).
+inline constexpr Function<void(const void *material)> thunk_FUN_02537cb0{"thunk_FUN_02537cb0", 0x00854740u,
+                                                                         {ECX}};
 // PgPrimitiveScratchRecord_Submit(EAX count, EDX first index, primType, ...,
 // materialIdx), cdecl.
 inline constexpr Function<void(uint32_t count, uint32_t first, uint32_t p1, uint32_t p2, uint32_t p3, uint32_t p4,

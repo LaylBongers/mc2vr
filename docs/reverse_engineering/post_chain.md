@@ -11,7 +11,7 @@ Static RE, 2026-11-12: from the decompile and disassembly, with shader facts fro
 4. **A half-size pass** into `+0x22c8` (material `+0x2080`), with no constants. Inferred to be the DOF blur image (`blurMap2`); the sampler binding is not checked.
 5. **The composite** into the front (`+0x3e98`) with the auto depth (`+0x3e94`), drawn with `g_PostFxCompositeTechnique` (every other pass uses `g_PostFxQuadTechnique`).
 
-The only condition is a sub-view count ≤ 2 at the top: no quality, MB or DOF switches. This corrects [../msaa.md](../msaa.md)'s earlier reading: the post chain's "one draw back into main" is the flare pass; the final image goes to the front.
+The only condition is a sub-view count ≤ 2 at the top: no quality, MB or DOF switches. The post chain's one draw back into main ([../msaa.md](../msaa.md)) is the flare pass; the final image goes to the front.
 
 ## The composite (`shader3.bin 0x24e990`)
 

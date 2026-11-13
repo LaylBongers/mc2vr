@@ -28,17 +28,24 @@ constexpr uint32_t kMaxNamed = 12;
 
 bool g_enabled = false;
 // debug_gui_census=clouds: instead of the GUI range, the records emitted by
-// the clouds/fog pass (PgClouds_EmitViewRecords, PgClouds_EmitFogLayer), in both eye
+// the clouds pass (PgClouds_EmitCloudRender1, PgClouds_EmitCloudRender2), in both eye
 // passes of kCloudFrames consecutive frames (docs/view_rewrite.md
-// "Camera-relative matrices").
+// "Clouds").
 bool g_clouds = false;
 constexpr uint32_t kCloudFrames = 2;
 uint32_t g_frames_left = 0;
 uint32_t g_pass = 0;
 
-bool is_clouds_emitter(uint32_t ret)
+bool in_clouds_emitters(uint32_t ret)
 {
     return ret >= MC2_CLOUDS_EMIT_BEGIN && ret < MC2_CLOUDS_EMIT_END;
+}
+
+// A clouds record: Submitted from the emitters, or (the generation's quad,
+// RenderShell_EmitScreenQuad) one caller up.
+bool is_clouds_record(uint32_t emitter, const uint32_t above[3])
+{
+    return in_clouds_emitters(emitter) || in_clouds_emitters(above[0]);
 }
 
 struct Op {
@@ -304,7 +311,7 @@ void on_record(uint16_t index, const game::PgPrimitive *rec)
     if (rank < g_from_rank) return;
     uint32_t above[3];
     const uint32_t emitter = build_census::record_emitter(game::g_PrimitiveBase::get(), index, above);
-    if (g_clouds && !is_clouds_emitter(emitter)) return;
+    if (g_clouds && !is_clouds_record(emitter, above)) return;
     if (g_record_count >= kMaxRecords) {
         g_dropped++;
         return;

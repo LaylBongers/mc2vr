@@ -17,7 +17,7 @@
 //
 // Calls (original): ViewCtx_GetViewport, Matrix_Inverse4x4, D3DXMatrixMultiply,
 // Frustum_Build x2, ViewContext_BuildCascadeFrusta x2, FUN_00859ad0,
-// thunk_FUN_02537cb0 (VM), PgPrimitiveScratchRecord_Submit.
+// thunk_FUN_02537cb0 (the material step), PgPrimitiveScratchRecord_Submit.
 // Writes directly: the ctx (ViewContext fields), the g_ViewContextTable record,
 // g_CascadeSplitSum, g_ViewContextRecordNext, the scratch record (viewContextIdx,
 // techniqueIdx, vertexShader, envIdx, viewId, cmdStream), the scratch command

@@ -14,8 +14,8 @@
 // capture. Inert unless enabled.
 //
 // debug_gui_census=clouds: the same per-record view, but of the records the
-// clouds/fog pass emits (emitter inside PgClouds_EmitViewRecords /
-// PgClouds_EmitFogLayer), in both eye passes of two consecutive frames.
+// clouds pass emits (emitter inside PgClouds_EmitCloudRender1 /
+// PgClouds_EmitCloudRender2), in both eye passes of two consecutive frames.
 #pragma once
 
 #include <windows.h>

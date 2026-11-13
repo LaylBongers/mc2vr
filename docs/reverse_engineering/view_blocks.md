@@ -28,7 +28,7 @@ Who reads each sub-view's screen rect and UI scale, and on which thread. Used by
 | `LuaPlayer_GetViewport` (view 0) | x/y/W/H | script binding (`Player.GetViewport`) | update |
 | `World_ProjectToViewPixels`, `FUN_0070cee0`, `FUN_0071c530` | x/y/W/H | unclassified | update / ? |
 
-- `ViewCtx_GetViewport`'s callers: the scene (`ViewContext_BuildCameraConstants`, `FUN_00483070`, `FUN_00487070`, `FUN_0046d6c0`/`PgClouds_EmitRecords`/`FUN_0047f890`, `PgLtiBloom_EmitPasses`), and GUI code projecting world points into the eye image (`World_ProjectToPixels` → world markers, `LuaGui_FindGuiLocation`, the Bink 3D overlay; `Camera_BuildProjection` → the reticle).
+- `ViewCtx_GetViewport`'s callers: the scene (`ViewContext_BuildCameraConstants`, `FUN_00483070`, `FUN_00487070`, `FUN_0046d6c0`/`PgClouds_EmitCloudGen`/`FUN_0047f890`, `PgLtiBloom_EmitPasses`), and GUI code projecting world points into the eye image (`World_ProjectToPixels` → world markers, `LuaGui_FindGuiLocation`, the Bink 3D overlay; `Camera_BuildProjection` → the reticle).
 
 ## Consequences
 

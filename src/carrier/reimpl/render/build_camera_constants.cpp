@@ -206,7 +206,7 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
     game::g_ScratchCmdNext::set(n + 8);
     scratch.cmdStream = cmd;
     uint8_t *const shell_a = reinterpret_cast<uint8_t *>(game::g_RenderShellPtr::get());
-    game::thunk_FUN_02537cb0(shell_a, shell_field<uint32_t>(shell_a, game::kShellVmStepArg), cmd);
+    game::thunk_FUN_02537cb0(reinterpret_cast<const void *>(shell_field<uintptr_t>(shell_a, game::kShellVmStepArg)));
     game::PgPrimitiveScratchRecord_Submit(0, 0, 0xffff, 0, 0, 0, 0, scratch.materialIdx);
     scratch.viewId = (uint16_t)(scratch.viewId + 1);
     scratch.cmdStream = nullptr;

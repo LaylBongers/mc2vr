@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "game/bloom.hpp"
+#include "game/clouds.hpp"
 #include "game/render_cmd.hpp"
 #include "game/render_shell.hpp"
 #include "hooks/entry.hpp"
@@ -16,6 +17,7 @@
 #include "reimpl/render/begin_submit.hpp"
 #include "reimpl/render/bloom_emit_passes.hpp"
 #include "reimpl/render/build_camera_constants.hpp"
+#include "reimpl/render/clouds_emit.hpp"
 #include "reimpl/render/end_sub_view.hpp"
 #include "reimpl/render/render_cmd.hpp"
 #include "reimpl/render/setup_viewports.hpp"
@@ -42,6 +44,8 @@ const std::array kReplacements = {
     replace<game::RenderShell_SetupViewports, &reimpl::RenderShell_SetupViewports>(0x0085ab47u),
     replace<game::ViewContext_BuildCameraConstants, &reimpl::ViewContext_BuildCameraConstants>(0x00859921u),
     replace<game::PgLtiBloom_EmitPasses, &reimpl::PgLtiBloom_EmitPasses>(0x00750b77u),
+    replace<game::PgClouds_EmitCloudRender1, &reimpl::PgClouds_EmitCloudRender1>(0x0047e8b1u),
+    replace<game::PgClouds_EmitCloudRender2, &reimpl::PgClouds_EmitCloudRender2>(0x0047f089u),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;

@@ -52,7 +52,7 @@ HMD tracked, gameplay.
 | `entry_fov_decouple` | Wrong value semantics (wrote the 300.0 scale constant into fov slots) — garbage projections. |
 | Entry-fov census, `cull_snap_dump`, `gcamtan` watch target | Diagnostics for the above; removed. |
 
-Misreadings worth not repeating: `[0x00BEAB5C]` is the base fov in radians, 4:3-normalized (0.95975) — not a cosine, not "300 engine units" (`[0x00BAD260]` = 300.0 is a separate constant). `Fov_TanIndexHelper` is camera-controller boom math, not the projection's fov reader. `PgClouds_EmitViewRecords` (reads the slot-ctx tans) builds render constants (fog/atmosphere terms), not a per-object cull ([below](#cloudsfog-pass-and-the-ctx-tans)). `ViewCtx_BuildSnapshot`'s snapshot is a stack temporary used only for a viewport rect.
+Misreadings worth not repeating: `[0x00BEAB5C]` is the base fov in radians, 4:3-normalized (0.95975) — not a cosine, not "300 engine units" (`[0x00BAD260]` = 300.0 is a separate constant). `Fov_TanIndexHelper` is camera-controller boom math, not the projection's fov reader. `PgClouds_EmitCloudRender1`/`2` (read the slot-ctx tans) build the clouds' sky matrix from them, not a per-object cull ([below](#clouds-pass-and-the-ctx-tans)). `ViewCtx_BuildSnapshot`'s snapshot is a stack temporary used only for a viewport rect.
 
 Lesson: **replace a derived value where it is DERIVED, not at one consumer's copy** (the builder recomputes every frame and consumers read sibling products); then exempt consumers that must stay stock at their own private copy. Method gotchas (raw byte decode, watchpoints): [debugging.md](debugging.md). VR smearing: [occluder_boxes.md](occluder_boxes.md).
 
@@ -60,9 +60,9 @@ Lesson: **replace a derived value where it is DERIVED, not at one consumer's cop
 
 One builder view per frame is not HMD-driven (`otherView` ≈ 1 per frame in `cullfov: window`), so it keeps the game's extents: `FUN_00486460`'s mirrored camera, most likely the water reflection (see View discrimination). Its frustum is the game's narrow one, so reflections may miss objects near the edges of the HMD view (OPEN, unchecked). Widening it whenever its camera was within 1 m of the HMD camera (a since-removed A/B) made objects pop frame to frame, near ones included. Don't widen views that don't match.
 
-## Clouds/fog pass and the ctx tans
+## Clouds pass and the ctx tans
 
-`PgClouds_EmitViewRecords` maps the screen to view directions with the ctx tans (ctx+0x30/+0x34), so the widened values must be written there too: with the game's own (18.5°/20.4° at the eye aspect) the fog layer slides with head pitch. They are stable frame to frame (one read per frame, render thread). Its sky matrices get their own per-eye rewrite ([view_rewrite.md](view_rewrite.md#explicit-camera-matrices)).
+`PgClouds_EmitCloudRender1`/`2` map the screen to view directions with the ctx tans (ctx+0x30/+0x34), so the widened values must be written there too: with the game's own (18.5°/20.4° at the eye aspect) cloud render 2 slides with head pitch. They are stable frame to frame (one read per frame, render thread). On HMD views its sky matrices are replaced per eye with the eye's own FOV ([view_rewrite.md](view_rewrite.md#clouds)), so the widened ctx tans reach the screen only through the mono fallback (no stamp or pose).
 
 ## OPEN: scenery culled and ghost images when looking steeply up or down
 
@@ -76,7 +76,7 @@ Ruled out:
 
 - Frustum culling: past 50° the extra `Frustum_TestPoints` rejections are by the view's bottom plane (`debug_cull_probe`: caller, frustum, plane by pitch), but 10° of extra vertical cull extent changed nothing, and the scenery cuts out anywhere in the view, not near the bottom edge.
 - The per-eye rewrite using a wrong head pose: every main-pass camera upload matches an HMD view stamp exactly ([view_rewrite.md](view_rewrite.md#hmd-view-stamps)).
-- For the ghosts: `g_ViewProjMtx` draws (the clouds/fog matrices) — the ghosts remain with all of them hidden (`debug_camera_census_skip=g_ViewProjMtx`).
+- For the ghosts: `g_ViewProjMtx` draws (the clouds' sky matrices) — the ghosts remain with all of them hidden (`debug_camera_census_skip=g_ViewProjMtx`).
 
 - `ParticleRecord_UpdateBounds` (`0x00876a90`, formerly misnamed `ViewEntry_DeriveCullTask`): an effect update and bounds step, not a view cull.
 

@@ -384,9 +384,12 @@ void pub_out()
     }
 }
 
+uint32_t g_emitter_override = 0;  // set_emitter_override (build thread)
+
 void h_submit(safetyhook::Context &ctx)
 {
-    const uint32_t ret = *(volatile const uint32_t *)ctx.esp;  // MidHook at the entry instruction
+    const uint32_t stack_ret = *(volatile const uint32_t *)ctx.esp;  // MidHook at the entry instruction
+    const uint32_t ret = g_emitter_override != 0 ? g_emitter_override : stack_ret;
     const uint8_t type = *(volatile const uint8_t *)MC2_G_PRIM_SCRATCH_TYPE;
     uint16_t view = 0xffff;
     if (g_build_active && GetCurrentThreadId() == g_build_tid) {
@@ -539,6 +542,11 @@ uint32_t record_emitter(const void *base, uint32_t index, uint32_t above[3])
         for (int i = 0; i < kAbove; i++) above[i] = g_pub_emitters2[index][i];
     }
     return g_pub_emitters[index];
+}
+
+void set_emitter_override(uint32_t ret)
+{
+    g_emitter_override = ret;
 }
 
 int is_gui_record(const void *base, uint32_t index)

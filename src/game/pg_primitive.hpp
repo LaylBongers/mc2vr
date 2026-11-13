@@ -86,9 +86,16 @@ using g_PrimWriteCount = Global<uint32_t, 0x00ff36f0u>;
 // Partial layouts: only what PgPrimitive_SubmitToGPU reads. rNNN = unknown.
 // Shader-constant parameter names say what the submit uploads into them.
 
-// Technique (vertex side), g_TechniqueTable[record.techniqueIdx].
+// Both start with the shader header PgShader_Register writes: +0x00 vtable,
+// +0x04 name hash, +0x08 tableIdx, +0x0b the .sho path, +0x8c variant.
+// Subclasses append their own constant params (e.g. game/clouds.hpp).
+
+// Technique (vertex side), g_TechniqueTable[record.techniqueIdx]. Ghidra
+// PgTechnique; base ctor 0x0085b050, vtable 0x00be88e4.
 struct Technique {
-    uint8_t r000[0x94];
+    uint8_t r000[0x08];
+    uint16_t tableIdx;                   // +0x08  its g_TechniqueTable index (0xffff until registered)
+    uint8_t r00a[0x94 - 0x0a];
     ShaderConstParam envConsts;          // +0x94  <- the record's env entry
     uint8_t r09c[0xac - 0x9c];
     ShaderConstParam recordConsts;       // +0xac  <- record.vsConstData (count*3 vec4s, direct device call)
@@ -101,16 +108,25 @@ struct Technique {
     ShaderConstParam atmosphere;         // +0xe4  <- viewContext.atmosphereData
     ShaderConstParam atmosphereVec;      // +0xec  <- atmosphereData + 0x60 (one vec4, direct device call)
     ShaderConstParam materialExtra;      // +0xf4  <- material.vsConst170
+    uint8_t r0fc[0x10c - 0xfc];
+    void *shader;                        // +0x10c the shader object its constant names resolve against
+    IDirect3DVertexShader9 *vertexShader;// +0x110
 };
-static_assert(offsetof(Technique, envConsts) == 0x94 && offsetof(Technique, recordConsts) == 0xac &&
-              offsetof(Technique, viewContextData) == 0xd4 && offsetof(Technique, materialExtra) == 0xf4);
+static_assert(offsetof(Technique, tableIdx) == 0x08 && offsetof(Technique, envConsts) == 0x94 &&
+              offsetof(Technique, recordConsts) == 0xac && offsetof(Technique, viewContextData) == 0xd4 &&
+              offsetof(Technique, materialExtra) == 0xf4 && offsetof(Technique, shader) == 0x10c &&
+              offsetof(Technique, vertexShader) == 0x110);
+static_assert(sizeof(Technique) == 0x114);
 
 // Effect pass (pixel side): g_EffectPassTable entry or a RenderShell_PickPass_* result.
+// Base ctor 0x0085af50, vtable 0x00be88cc.
 // Register fields filled by EffectPass_ResolveConstantRegisters (0x0085b50a)
 // from the pixel shader's constant names (in quotes); field names are the
 // roles SubmitToGPU uploads them in.
 struct EffectPass {
-    uint8_t r000[0x94];
+    uint8_t r000[0x08];
+    uint16_t tableIdx;                   // +0x08  (0xffff until registered)
+    uint8_t r00a[0x94 - 0x0a];
     ShaderConstParam screenBoolsA;       // +0x94 "numPointLights" (B) <- screenView + 0x280
     ShaderConstParam screenBoolsB;       // +0x9c "numSpotLights" (B) <- screenView + 0x290
     ShaderConstParam screenConstsA;      // +0xa4 "pointLights" <- screenView + 0x000
@@ -123,7 +139,10 @@ struct EffectPass {
     ShaderConstParam viewContextData;    // +0xdc "depthXform" <- the viewContext record
     ShaderConstParam dxt1NormalMap;      // +0xe4 "dxt1NormalMap" (not uploaded by SubmitToGPU)
     ShaderConstParam blurAndTint;        // +0xec "blurAndTint" <- {g_RenderCfg_MotionBlur && stencilMode != 2, 0, 0, 0} (direct device call)
+    void *shader;                        // +0xf4  the shader object its constant names resolve against
+    uint32_t r0f8;                       // +0xf8
 };
+static_assert(sizeof(EffectPass) == 0xfc && offsetof(EffectPass, shader) == 0xf4);
 static_assert(offsetof(EffectPass, screenBoolsA) == 0x94 && offsetof(EffectPass, materialMatrix) == 0xbc &&
               offsetof(EffectPass, viewContextData) == 0xdc && offsetof(EffectPass, blurAndTint) == 0xec);
 

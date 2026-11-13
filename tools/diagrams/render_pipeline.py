@@ -65,7 +65,7 @@ RENDER = [
      'cull frustum widened to the HMD FOV (+5°)', ''),
     (4, 'Matrix_Inverse4x4 · Frustum_Build · ViewContext_BuildCascadeFrusta', 'view matrix, view frustum, 4 shadow cascades', 2, '', ''),
     (3, 'Scene_EmitViewPrimitives  0x00466da0', 'fills the view-context records, then every renderable kind:', 3, '', ''),
-    (4, 'object emitters (vtables 0x00bab1c4…) · Terrain_QuadtreeWalk · PgClouds_EmitRecords', 'the bulk of the records', 3, '', ''),
+    (4, 'object emitters (vtables 0x00bab1c4…) · Terrain_QuadtreeWalk · PgClouds_EmitCloudGen/Render1/2', 'the bulk of the records', 3, '', ''),
     (4, 'shadow / reflection / offscreen passes', 'each with its own view context', 3, '', ''),
     (4, 'ViewObjects_DrawAndEmitOcclusionBoxes  0x00468ea0', 'occlusion-query boxes', 3, 'calls NOPed: occlusion culling off', ''),
     (3, 'RenderShell_EndSubView  0x0062ee20  (phase 2)', 'end of the sub-view', 3, 'brackets the world-marker and HUD record ranges', 'R'),

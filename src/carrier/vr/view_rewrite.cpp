@@ -76,13 +76,13 @@ int g_pass_eye = 0;  // Per-pass eye (eye_replay.cpp): -1 pass 1, +1 pass 2, 0 n
 // ---- mono camera matrices outside viewContextData ----------------------------
 // Shaders without viewContextData get the camera as explicit matrices the game
 // computes from the mono camera (docs/view_rewrite.md#explicit-camera-matrices):
-//   - clip space, LocalToProj = VP * World, g_ViewProjMtx = VP: D * M with this
-//     pass's clip delta D (D * VP_mono = VP_eye);
+//   - clip space, LocalToProj = VP * World: D * M with this pass's clip delta
+//     D (D * VP_mono = VP_eye);
 //   - view space, the projected shadow boxes' LocalToView = View * World (VS)
 //     and its inverse ViewToLocal (PS): T * M and M * T^-1 with the view delta
 //     T, in the game's x-negated view frame.
 uint32_t g_l2p_reg = REG_INVALID;  // the current record's shader (on_record_shader)
-uint32_t g_vpm_reg = REG_INVALID;
+uint32_t g_vpm_reg = REG_INVALID;  // g_ViewProjMtx: only the clouds' sky matrices (on_record_vs_constant)
 uint32_t g_l2v_reg = REG_INVALID;
 // The game's view frame (LocalToView) has the opposite handedness of
 // vp_camera's: its x points to screen-left, ours (D3D left-handed) to
@@ -97,10 +97,6 @@ struct ViewDelta {
     double view[16];      // T in the game's view space: S * view_delta * S
     double view_inv[16];  // its inverse (rigid), for ViewToLocal
     vp_camera::Camera mono;  // the mono camera D / T start from
-    // The eye camera with the camera at the origin (rotation + per-eye
-    // projection, depth terms of the main view): the target for
-    // camera-relative matrices (camera_relative_rewrite).
-    float eye_rel[16];
 };
 // The view of the pass's latest VS upload of an eye record: what the explicit
 // camera matrices are corrected against (on_view_upload).
@@ -119,7 +115,7 @@ double g_v2l_resid_max = 0.0;  // worst |ViewToLocal * LocalToView - I| (mono) t
 uint64_t g_v2l_rows = 0, g_v2l_checks = 0, g_v2l_bad = 0, g_v2l_split = 0, g_v2l_no_reg = 0;
 double g_l2v_resid_max = 0.0;  // worst convention residual this window
 uint64_t g_l2v_rows = 0, g_l2v_checks = 0, g_l2v_bad = 0, g_l2v_no_l2p = 0;
-uint64_t g_mtx_rows = 0, g_mtx_no_delta = 0, g_mtx_split = 0, g_mtx_rel_rows = 0;
+uint64_t g_mtx_rows = 0, g_mtx_no_delta = 0, g_mtx_split = 0;
 
 uint32_t render_w()
 {
@@ -325,6 +321,28 @@ bool eye_is_sane(const xr_session::EyePose &e)
     return n >= 0.98f && n <= 1.02f && e.fov.right > e.fov.left && e.fov.up > e.fov.down;
 }
 
+// This pass's eye relative to the union pose a view was built with, for
+// apply_eye. apply_eye maps the delta through the game camera's R/U/F, which
+// already carry the union (head) rotation — so the delta is expressed in the
+// HEAD frame, not XR local space (otherwise the eye baseline only lies along
+// the camera's right axis when the head faces its initial yaw). The rotation
+// part includes the head turn since the build (Pose age). The decomposed R is
+// the SCREEN-right axis by construction (clip.x = a·dot(R,p−C)+c·z with a>0),
+// so XR +x (eye right) maps to +R: no flip (an earlier R-negation gave
+// pseudoscopic parallax; live-verified fixed 2026-10-09).
+vp_camera::EyePose eye_delta(const math::Quat &u_rot, const math::Vec3 &u_pos, const vp_camera::EyePose &pose)
+{
+    const math::Quat u_inv = math::conj(u_rot);
+    vp_camera::EyePose delta;
+    delta.pos = math::rotate(u_inv, pose.pos - u_pos);
+    delta.rot = u_inv * pose.rot;
+    delta.fov_left = pose.fov_left;
+    delta.fov_right = pose.fov_right;
+    delta.fov_up = pose.fov_up;
+    delta.fov_down = pose.fov_down;
+    return delta;
+}
+
 // ---- per-eye view records (eye_view_record) -----------------------------------
 // One entry per game view record used in this pass: the eye copy every upload
 // of the record reads, produced at its first use. Reset when the pass changes
@@ -394,26 +412,7 @@ void produce(EyeEntry &e)
         g_stamp_hits++;
         measure_pose_age(u_rot, smp);
         note_pitch(game);
-        const vp_camera::EyePose &pose = g_hmd.eye[eye];
-        vp_camera::EyePose delta;
-        // apply_eye maps the delta through the game camera's R/U/F, which
-        // already carry the union (head) rotation — so the delta must be
-        // expressed in the HEAD frame, not XR local space. Otherwise the eye
-        // baseline only lies along the camera's right axis when the head
-        // faces its initial yaw (wrong vertical/depth disparity elsewhere,
-        // most visible at near range).
-        const math::Quat u_inv = math::conj(u_rot);
-        delta.pos = math::rotate(u_inv, pose.pos - u_pos);
-        delta.rot = u_inv * pose.rot;
-        delta.fov_left = pose.fov_left;
-        delta.fov_right = pose.fov_right;
-        delta.fov_up = pose.fov_up;
-        delta.fov_down = pose.fov_down;
-        // The decomposed R is the SCREEN-right axis by construction (clip.x =
-        // a·dot(R,p−C)+c·z with a>0), so XR +x (eye right) must map to +R: no
-        // flip. (An earlier R-negation put each eye on the wrong side:
-        // pseudoscopic parallax, invisible at distance but uncomfortable for
-        // near objects. Live-verified fixed 2026-10-09.)
+        const vp_camera::EyePose delta = eye_delta(u_rot, u_pos, g_hmd.eye[eye]);
         cam = vp_camera::apply_eye(game, delta, g_world_scale);
         eye_off = vp_camera::eye_offset(game, delta, g_world_scale);
     }
@@ -422,11 +421,6 @@ void produce(EyeEntry &e)
     vp_camera::rebuild(cam, e.eye.viewProj);
     math::store3(e.eye.cameraPos, cam.C);
     ViewDelta &d = e.delta;
-    {
-        vp_camera::Camera rel = cam;
-        rel.C = {0.0f, 0.0f, 0.0f};
-        vp_camera::rebuild(rel, d.eye_rel);
-    }
     // D for this pass's explicit camera matrices (matrix_rewrite), from the
     // two cameras' parameters: no inverse of the world-space VP, whose ~1e3
     // translations would round into every corrected matrix.
@@ -533,36 +527,70 @@ void on_set_render_target(uint32_t w, uint32_t h)
 // |row_k.xyz| * e_k (row_k.xyz = P_kk * basis_k).
 namespace {
 
-// A camera-relative VP (the sky/fog matrices of the clouds pass: rows 0, 1 and
-// 3 have w = 0, i.e. the camera sits at the origin of its input space; its depth
-// row is its own, z = A'·z_v + B'). D maps the MONO VIEW's clip space: D·m
-// reinterprets m's depth with the main view's depth terms, so the result gets
-// the main view's slope A (~1.0004 instead of 1.0000019) and distant fog
-// lands past the far plane, clipped (docs/view_rewrite.md). Instead build m
-// directly: this pass's eye rotation and projection at the origin, m's own
-// depth terms. False (m untouched) when m isn't camera-relative or not of the
-// assumed form.
-bool camera_relative_rewrite(float *m)
+// ---- sky matrices (the clouds emitters) ----------------------------------------
+// A camera-relative VP: rows 0, 1 and 3 have w = 0 (the camera at the origin
+// of its input space), its depth row is its own (A' = 1.0000019, B' = -A').
+// The emitters register each one with the view it was built for; its stream
+// upload is replaced by this pass's eye version: the view's union rotation
+// composed with this pass's eye delta (the late pose correction included) and
+// the eye's projection, at the origin, with the matrix's own depth terms.
+// (Not D·m: D maps the main view's clip space, so D·m would take the main
+// view's depth slope and push cloud render 2's distant geometry past the far
+// plane.)
+// Written by the scene build, read by the render thread: seqlocked, keyed by
+// the matrix's scratch address and checked against its content.
+struct SkyEntry {
+    std::atomic<uint32_t> seq{0};
+    const float *block;      // the matrix in the scratch constant buffer
+    float mono[16];          // its content (the upload layout)
+    vp_camera::Camera cam;   // decomposed: the view's rotation and tans at C = 0, A'/B'
+    math::Quat rot;          // the union pose of the view's HMD stamp
+    math::Vec3 pos;
+    bool hmd;                // the view has an HMD stamp
+};
+constexpr uint32_t kSkyEntries = 8;  // 2 per frame, a few frames back
+SkyEntry g_sky[kSkyEntries];
+std::atomic<uint32_t> g_sky_next{0};
+// Per window. Built (scene build): with/without an HMD view, or not of the
+// camera-relative form; the worst angle between the matrix's axes and its
+// view's (the emitter's camera argument should be the view's camera).
+uint64_t g_sky_built_hmd = 0, g_sky_built_not_hmd = 0, g_sky_built_failed = 0;
+float g_sky_axis_deg_max = 0.0f;
+// Uploads (render thread), by what they carried.
+uint64_t g_sky_up_eye = 0, g_sky_up_not_hmd = 0, g_sky_up_no_pose = 0;
+float g_sky_resid_max = 0.0f;  // debug_view_identity: |rebuilt - mono|
+uint64_t g_sky_up_unregistered = 0;  // g_ViewProjMtx uploads no emitter registered: passed through mono
+
+// The angle between unit vectors a and b. Not acos(dot): near 1 a float dot
+// steps by 2^-24, so acos reads 0.0198° * sqrt(k) for k ulps of rounding (the
+// first live run showed a flat 0.0396°/0.0442° = 4/5 ulps). The chord form
+// keeps ~1e-5° resolution in single precision (this file is x87 code, and the
+// render threads run the x87 FPU at 24 bits: vr/fpu_precision.hpp).
+float axis_angle_deg(const math::Vec3 &a, const math::Vec3 &b)
 {
-    constexpr float EPS = 1e-6f;
-    if (std::fabs(m[3]) > EPS || std::fabs(m[7]) > EPS || std::fabs(m[15]) > EPS) {
-        return false;
+    const float h = 0.5f * math::length(a - b);
+    return 2.0f * std::asin(h > 1.0f ? 1.0f : h) * 57.29578f;
+}
+
+// The registered entry `data` is (its pointer and content), copied out; false
+// when none.
+bool find_sky(const float *data, SkyEntry *out)
+{
+    for (SkyEntry &e : g_sky) {
+        const uint32_t s0 = e.seq.load(std::memory_order_acquire);
+        if (s0 == 0 || (s0 & 1u) != 0 || e.block != data) continue;
+        memcpy(out->mono, e.mono, sizeof out->mono);
+        out->cam = e.cam;
+        out->rot = e.rot;
+        out->pos = e.pos;
+        out->hmd = e.hmd;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (e.seq.load(std::memory_order_relaxed) != s0) continue;
+        if (memcmp(out->mono, data, sizeof out->mono) == 0) {
+            return true;
+        }
     }
-    const math::Vec3 r2 = math::load3(m + 8), r3 = math::load3(m + 12);
-    const float f2 = math::dot(r3, r3);
-    if (std::fabs(f2 - 1.0f) > 1e-3f) {
-        return false;  // row3 must be the unit forward axis
-    }
-    const float a_depth = math::dot(r2, r3);  // A' (|row3| = 1)
-    if (math::length(r2 - r3 * a_depth) > 1e-3f * (std::fabs(a_depth) + 1.0f)) {
-        return false;  // depth row not along forward
-    }
-    const float b_depth = m[11];
-    memcpy(m, g_active.eye_rel, sizeof(g_active.eye_rel));
-    const math::Vec3 f_eye = math::load3(g_active.eye_rel + 12);
-    math::store3(m + 8, f_eye * a_depth);
-    m[11] = b_depth;
-    return true;
+    return false;
 }
 
 // The pinned view convention as a check, once per record: P_mono * S *
@@ -591,14 +619,13 @@ void check_view_convention(const float *l2v)
 // (clip-space matrices) or T (LocalToView).
 const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t vec4_count)
 {
-    if ((g_l2p_reg == REG_INVALID && g_vpm_reg == REG_INVALID && g_l2v_reg == REG_INVALID) ||
-        vec4_count > VS_ROWS) {
+    if ((g_l2p_reg == REG_INVALID && g_l2v_reg == REG_INVALID) || vec4_count > VS_ROWS) {
         return data;
     }
     static float scratch[VS_ROWS * 4];
     bool copied = false;
     const uint32_t end = start_register + vec4_count;
-    for (const uint32_t reg : {g_l2p_reg, g_vpm_reg, g_l2v_reg}) {
+    for (const uint32_t reg : {g_l2p_reg, g_l2v_reg}) {
         if (reg == REG_INVALID || !(start_register < reg + 4 && end > reg)) {
             continue;  // not this upload
         }
@@ -628,10 +655,6 @@ const float *matrix_rewrite(uint32_t start_register, const float *data, uint32_t
         if (reg == g_l2p_reg) {
             memcpy(g_rec_l2p, m, sizeof(g_rec_l2p));  // mono, before its correction
             g_rec_l2p_seen = true;
-        }
-        if (camera_relative_rewrite(m)) {
-            g_mtx_rel_rows += 4;
-            continue;
         }
         math::mul4(g_active.clip, m, out);
         memcpy(m, out, sizeof(out));
@@ -743,6 +766,85 @@ const float *on_record_ps_constant(uint32_t start_register, const float *data, u
     return scratch;
 }
 
+void on_sky_matrix_built(const float *m, const float *view_vp)
+{
+    vp_camera::Camera sky;
+    // Camera-relative form: rows 0, 1, 3 with w = 0 (decompose then puts C at
+    // the origin and reads A', B' from the depth row).
+    constexpr float EPS = 1e-6f;
+    if (std::fabs(m[3]) > EPS || std::fabs(m[7]) > EPS || std::fabs(m[15]) > EPS || !vp_camera::decompose(m, &sky)) {
+        g_sky_built_failed++;
+        return;
+    }
+    sky.C = {0.0f, 0.0f, 0.0f};
+    float vp[16];  // the view's VP in the upload layout (what the stamps hold)
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) vp[r * 4 + c] = view_vp[c * 4 + r];
+    }
+    math::Quat rot{0.0f, 0.0f, 0.0f, 1.0f};
+    math::Vec3 pos{0.0f, 0.0f, 0.0f};
+    camera_table::UnionSample smp;
+    const bool hmd = find_stamp(vp, &rot, &pos, &smp);
+    if (hmd) {
+        g_sky_built_hmd++;
+        vp_camera::Camera view;
+        if (vp_camera::decompose(vp, &view)) {
+            const float deg = std::fmax(std::fmax(axis_angle_deg(sky.R, view.R), axis_angle_deg(sky.U, view.U)),
+                                        axis_angle_deg(sky.F, view.F));
+            g_sky_axis_deg_max = std::fmax(g_sky_axis_deg_max, deg);
+        }
+    } else {
+        g_sky_built_not_hmd++;
+    }
+    SkyEntry &e = g_sky[g_sky_next.fetch_add(1, std::memory_order_relaxed) % kSkyEntries];
+    const uint32_t s = e.seq.load(std::memory_order_relaxed);
+    e.seq.store(s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    e.block = m;
+    memcpy(e.mono, m, sizeof e.mono);
+    e.cam = sky;
+    e.rot = rot;
+    e.pos = pos;
+    e.hmd = hmd;
+    std::atomic_thread_fence(std::memory_order_release);
+    e.seq.store(s + 2, std::memory_order_relaxed);
+}
+
+const float *on_record_vs_constant(uint32_t start_register, const float *data, uint32_t vec4_count)
+{
+    SkyEntry e;
+    if (data == nullptr || vec4_count == 0 || vec4_count > 4) {
+        return data;
+    }
+    if (!find_sky(data, &e)) {
+        // g_ViewProjMtx is a sky matrix (the clouds shaders only): one no emitter
+        // registered stays mono. Never D * m (the main view's depth slope).
+        if (g_vpm_reg != REG_INVALID && start_register <= g_vpm_reg && start_register + vec4_count > g_vpm_reg) {
+            g_sky_up_unregistered++;
+        }
+        return data;
+    }
+    static float out[16];
+    if (g_mode == RewriteMode::HmdIdentity) {
+        vp_camera::rebuild(e.cam, out);
+        g_sky_resid_max = std::fmax(g_sky_resid_max, vp_camera::rebuild_residual(data, e.cam));
+        g_sky_up_eye++;
+    } else if (!e.hmd) {
+        g_sky_up_not_hmd++;
+        return data;
+    } else if (!g_hmd.valid || g_pass_eye == 0) {
+        g_sky_up_no_pose++;
+        return data;
+    } else {
+        const vp_camera::EyePose delta = eye_delta(e.rot, e.pos, g_hmd.eye[g_pass_eye > 0 ? 1 : 0]);
+        vp_camera::Camera cam = vp_camera::apply_eye(e.cam, delta, g_world_scale);
+        cam.C = {0.0f, 0.0f, 0.0f};  // rotation and projection only: the sky is at infinity
+        vp_camera::rebuild(cam, out);
+        g_sky_up_eye++;
+    }
+    return out;
+}
+
 ViewRecord eye_view_record(const game::ViewContextRecord *vctx)
 {
     if (vctx == nullptr || !pass_is_main()) {
@@ -845,11 +947,21 @@ void report_window()
         for (auto &k : g_uploads) {
             for (uint64_t &n : k) n = 0;
         }
-        MC2VR_LOG("view/hmd: camera matrices (LocalToProj, g_ViewProjMtx) rewritten rows=%llu "
-                  "cameraRelative=%llu split=%llu noDelta=%llu",
-                  (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_rel_rows,
-                  (unsigned long long)g_mtx_split, (unsigned long long)g_mtx_no_delta);
-        g_mtx_rows = g_mtx_split = g_mtx_no_delta = g_mtx_rel_rows = 0;
+        MC2VR_LOG("view/hmd: camera matrices (LocalToProj) rewritten rows=%llu "
+                  "split=%llu noDelta=%llu",
+                  (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_split,
+                  (unsigned long long)g_mtx_no_delta);
+        g_mtx_rows = g_mtx_split = g_mtx_no_delta = 0;
+        MC2VR_LOG("view/hmd: sky matrices (clouds): built hmd=%llu notHmd=%llu failed=%llu axesVsView max=%.3gdeg | "
+                  "uploads eye=%llu notHmd=%llu noPose=%llu unregistered=%llu identityResidMax=%.3g",
+                  (unsigned long long)g_sky_built_hmd, (unsigned long long)g_sky_built_not_hmd,
+                  (unsigned long long)g_sky_built_failed, (double)g_sky_axis_deg_max,
+                  (unsigned long long)g_sky_up_eye, (unsigned long long)g_sky_up_not_hmd,
+                  (unsigned long long)g_sky_up_no_pose, (unsigned long long)g_sky_up_unregistered,
+                  (double)g_sky_resid_max);
+        g_sky_built_hmd = g_sky_built_not_hmd = g_sky_built_failed = 0;
+        g_sky_up_eye = g_sky_up_not_hmd = g_sky_up_no_pose = g_sky_up_unregistered = 0;
+        g_sky_axis_deg_max = g_sky_resid_max = 0.0f;
         MC2VR_LOG("view/hmd: shadow boxes: LocalToView rows=%llu ViewToLocal rows=%llu | checks: "
                   "convention (P_mono*S*LocalToView = LocalToProj, S = -x) n=%llu bad=%llu max=%.3g, "
                   "inverse (ViewToLocal*LocalToView = I) n=%llu bad=%llu max=%.3g | noL2P=%llu split=%llu noReg=%llu",

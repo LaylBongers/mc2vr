@@ -197,10 +197,12 @@
 // ring id, about to go into the object's history, the counter and the record.
 #define MC2_RING_ID_READY ((uintptr_t)0x0046fa22u)
 
-// The clouds/fog pass (docs/view_rewrite.md "Camera-relative matrices"): the two emitters'
-// extent [begin, end): PgClouds_EmitViewRecords
-// 0x0047ded0..0x0047e8b0, PgClouds_EmitFogLayer ..0x0047f088.
-#define MC2_CLOUDS_EMIT_BEGIN ((uint32_t)0x0047ded0u)
+// The clouds pass (docs/view_rewrite.md "Clouds"): the emitters' extent
+// [begin, end): PgClouds_EmitCloudGen (the cloud generation) 0x0047db80..0x0047decf,
+// PgClouds_EmitCloudRender1 0x0047ded0..0x0047e8b0, PgClouds_EmitCloudRender2
+// ..0x0047f088 (contiguous). The generation's quad is submitted through
+// RenderShell_EmitScreenQuad, so it is found one caller up.
+#define MC2_CLOUDS_EMIT_BEGIN ((uint32_t)0x0047db80u)
 #define MC2_CLOUDS_EMIT_END ((uint32_t)0x0047f088u)
 
 // The builder's view frustum struct at ctx+0x38 (Frustum_Build output, 0x218 bytes):

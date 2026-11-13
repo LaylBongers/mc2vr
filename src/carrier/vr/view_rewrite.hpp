@@ -6,7 +6,9 @@
 //     reimplementation uploads every copy of the view record (VS and PS
 //     viewContextData, PS cameraPos) from this pass's per-eye record.
 //   - on_set_vs_constant(): the device VmtHook tap for the explicit camera
-//     matrices outside the view record (LocalToProj, g_ViewProjMtx, LocalToView).
+//     matrices outside the view record (LocalToProj, LocalToView).
+//   - on_sky_matrix_built() / on_record_vs_constant(): the clouds sky
+//     matrices, registered by their emitters and uploaded per eye.
 //   - on_set_render_target(): pass gate (RT0 size == engine render size) — only the main
 //     scene pass is rewritten (shadow-map/reflection/offscreen passes are not).
 //   - set_identity_oracle()/set_view_world_scale(): mc2vr.conf controls.
@@ -88,9 +90,24 @@ bool main_camera_pitch(float *degrees);
 
 // The vertex shader the next record draws with (the PgPrimitive_SubmitToGPU
 // reimplementation, before the record's command stream runs): its explicit
-// camera matrices (LocalToProj, g_ViewProjMtx in clip space; LocalToView in
+// camera matrices (LocalToProj in clip space; LocalToView in
 // view space), if any, get this pass's per-eye correction when uploaded.
 void on_record_shader(IDirect3DVertexShader9 *vs);
+
+// The clouds emitters (reimpl/render/clouds_emit.cpp, scene build) built a
+// camera-relative sky matrix `m` (16 floats, the upload layout: rows 0, 1, 3
+// with w = 0, its own depth row) in the scratch constant buffer, for the view
+// whose VP is `view_vp` (the ctx's D3DX viewProj). Registers it with that
+// view's HMD stamp: a later stream upload of `m` is replaced per eye.
+void on_sky_matrix_built(const float *m, const float *view_vp);
+
+// A VS constant upload from the current record's command stream
+// (RenderCmd_ExecuteStream, SetVSConstants): a registered sky matrix gets
+// this pass's eye version — the eye's rotation (with the late pose
+// correction) and per-eye projection, the matrix's own depth terms. Returns
+// the data to upload (a scratch copy when rewritten). The device tap leaves
+// such uploads alone; an unregistered g_ViewProjMtx upload stays mono.
+const float *on_record_vs_constant(uint32_t start_register, const float *data, uint32_t vec4_count);
 
 // A PS constant upload from the current record's command stream
 // (RenderCmd_ExecuteStream, SetPSConstants): in a LocalToView record, the

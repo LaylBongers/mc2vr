@@ -39,6 +39,11 @@ int is_gui_record(const void *base, uint32_t index);
 // gets heuristic return addresses further up the stack (0 when none found).
 uint32_t record_emitter(const void *base, uint32_t index, uint32_t above[3] = nullptr);
 
+// A reimplemented emitter (reimpl/) calls Submit from our code, so the return
+// address is ours: while `ret` is nonzero, Submits are filed under it instead
+// (the original's call-site return address). 0 = off. Build thread only.
+void set_emitter_override(uint32_t ret);
+
 // 10 s window report (render_dump.cpp's poller); resets the window counters.
 void report_window();
 
