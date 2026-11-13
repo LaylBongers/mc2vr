@@ -19,8 +19,9 @@ How the source is organized, and the reasoning behind the split. It describes th
   - `install.cpp` lists them in install order.
   - `site.hpp` creates hooks and refuses sites inside replaced originals, where a hook would silently never fire.
   - `reimpl.cpp` lists the reimplementations that replace originals; `entry.hpp` generates the entry each one is reached through from the original's `game/` declaration.
+  - `shader_reimpl.cpp` is the same for shaders: the list of reimplemented shaders (`reimpl/shaders/`) and their substitution at `CreatePixelShader`.
   - Keeping this in one place makes the full set of patches to the game visible, and keeps VR code free of register-level detail.
-- **`reimpl/`:** reimplemented game systems ([reimpl.md](reimpl.md)), written to read like the original through `game::` types and functions. They call `vr/` directly where they implement VR behavior, which is the reason for reimplementing something at all.
+- **`reimpl/`:** reimplemented game systems ([reimpl.md](reimpl.md)) and shaders (`reimpl/shaders/`, HLSL; [shaders.md](shaders.md)), written to read like the original through `game::` types and functions. They call `vr/` directly where they implement VR behavior, which is the reason for reimplementing something at all.
 - **`vr/`:** the VR implementation as plain C++: the OpenXR session and its presentation ([xr_session.md](xr_session.md)), camera, view rewrite, eye images, render outputs and sizing, pacing, device parameters, shader constant tables.
   - Vector, quaternion and 4×4 matrix math lives in `vec_math.hpp` (header-only); camera matrices (view, projection, deltas) in `vp_camera`.
   - Entry points are named for the game event they handle (`on_<event>`).
@@ -39,4 +40,4 @@ How the source is organized, and the reasoning behind the split. It describes th
 - Only `hooks/` and `debug/` use SafetyHook. `grep -rl 'safetyhook\|SafetyHook' src/carrier | grep -v 'hooks/\|debug/'` lists only `CMakeLists.txt`.
 - Debug taps appear in `hooks/`, `reimpl/` and `vr/`.
 
-A new VR feature usually has its logic in `vr/`, its hook in `hooks/<feature>.cpp` and an entry in `hooks/install.cpp`. A reimplementation goes in `reimpl/<subsystem>/` with an entry in `hooks/reimpl.cpp`. Hooks that sat inside the replaced original become direct calls in it; the guard logs a REFUSED line for any left over.
+A new VR feature usually has its logic in `vr/`, its hook in `hooks/<feature>.cpp` and an entry in `hooks/install.cpp`. A reimplementation goes in `reimpl/<subsystem>/` with an entry in `hooks/reimpl.cpp`; a reimplemented shader goes in `reimpl/shaders/` with an entry in `hooks/shader_reimpl.cpp` and its compile line in `src/carrier/CMakeLists.txt`. Hooks that sat inside the replaced original become direct calls in it; the guard logs a REFUSED line for any left over.

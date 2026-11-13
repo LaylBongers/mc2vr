@@ -23,7 +23,13 @@ SteamVR as the OpenXR runtime.
 
    Adjust the SteamVR path if your Steam library is elsewhere. If this is missing, the launcher
    log (`mc2vr_launcher.log`) prints the exact command for your system.
-3. Run `./launch.sh`. It builds what's missing, deploys to `<game dir>/mc2vr/` and starts the
+3. Install Microsoft's HLSL compiler into the project's own Wine prefix, once. The mod's shaders
+   are compiled at build time with `d3dcompiler_43` (June 2010 DirectX redistributable):
+
+   ```sh
+   WINEPREFIX="$PWD/.wine" winetricks -q d3dcompiler_43
+   ```
+4. Run `./launch.sh`. It builds what's missing, deploys to `<game dir>/mc2vr/` and starts the
    game. Logs land next to the deployed files.
 
 To play without VR, run `./launch_novr.sh`: the same Proton setup, without the mod.

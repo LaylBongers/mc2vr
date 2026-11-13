@@ -13,6 +13,13 @@ Game-side facts from a static read (2026-11-13). Per-address detail is in the Gh
 - **Caster pass:** depth bias 2⁻²⁰ and slope-scaled bias 2.5 (`RenderCmd_BeginSurfacePass`), cull NONE.
 - **Receivers:** `GlobalLightData_Build` (`0x00465690`) uploads the fade (`globalLightData[9]`), the split ends ([10]) and the four world→atlas matrices ([11..26]). Sampler 15 (`RenderCmd_BindTextureAndSamplers`) is POINT/POINT, no mips, CLAMP or BORDER. The PS picks a cascade with a hard switch on view depth: no blend band between cascades.
   - **9-tap family** (315 shaders in `shader3.bin`): a 3×3 grid at texel offsets {−½, +½, +1½}, compared per tap (`z < sample`), then 2×2 box groups weighted bilinearly by `frc(uv·(1024,4096))`. Under point sampling this is a continuous 2-texel tent with a constant +½-texel shift. The texel size is hard-coded in the `def` constants (c0/c3/c4).
+  - **1-tap family, identified live** (2026-11-13; high-quality shaders only, as the live ini uses). Hashes are bytecode FNV-1a (`tools/shader_hash.py`); found with `debug_ps_census_watch` and the cycling `debug_camera_census_skip=ps:` groups. 8 of the 27 single-tap shaders in `shader3.bin` draw:
+    - **PgFastFP** (`3e76835c`, `shader3.bin@0x1d6370`): the cheap generic material, covering vegetation and other "fast" meshes, including wind-animated ones. ~350 draws per eye per frame, ~1–2 Mpix. The lighting is identical to the 9-tap `PgDiffAmbOccFP` (`0x11570`) minus the filtering.
+    - **PgScrubLightFP** (`765f3420`, `@0x2004c0`): scrub/brush vegetation. ~120 draws. The same code as PgFastFP, with vertex colour and different inputs.
+    - **PgBillboardTreeFP** / `_fade` (`eacf64f8`, `@0x2ff0` and `@0x3790`, one bytecode): billboard trees, ~85 draws. Not noticed when hidden: probably far tree impostors.
+    - **PgWaterFPDWE** (`c2dde179`, `@0x254a80`): water. ~2 draws, but **~0.8 ms GPU** with reflections off (OPEN: why it costs that much).
+    - **PgDecal2FP** (`deef11a9`, `@0xa2a0`) and **PgDecal2FP_pl** (`8360631b`): the decals. They drew only in bursts at certain places (indoors at the start, one outdoor spot), a few draws per frame, and weren't visible when blinked at 1 Hz.
+    - Names: [reverse_engineering/shader_containers.md](reverse_engineering/shader_containers.md). The 27 single-tap shaders are PgFastFP ×7, PgScrubLightFP ×7, PgDecal2FP ×7, PgBillboardTreeFP, and the water: PgWaterFP, PgWaterFP_LI, PgWaterFPDWE, PgWaterFPbl, PgUnderwaterFP. They match Mercenaries2Remastered's list (grass, bushes, trees, decals, water) exactly.
   - **1-tap family** (28 shaders in `shader3.bin` + every shader in `shader3Low.bin`): one `texldp` with a binary compare, so there is no filtering at all. These are the `diffuseMap`-only shaders without `materialData` (most likely foliage, per the Mercenaries2Remastered note) and the billboard trees (`gDiffuseTexture`/`gNormalmap`, beside the `gBillboardData` VS). The water shaders are also 1-tap. Material ownership is unconfirmed live (OPEN: `debug_ps_census` + `tools/shader_hash.py`).
   - The per-tap compare assumes the texture returns depth (`DF24`). With `D24S8` the hardware returns the compare result, which this shader thresholds again. That is still correct under POINT, but it rules out simply switching the sampler to LINEAR for hardware PCF.
 
@@ -61,7 +68,7 @@ VR makes it continuous and larger:
      - OPEN: whether those 85 s were a blend or jitter. `sunPath`/`sunNet` per window settle it: path ≈ net is a blend; path ≫ net is jitter, which would want an angular snap.
    - **Cost:** a sphere wastes texels against the tight box, which loses resolution near the camera (estimate, cascade 0: ~1.7 cm stock FOV, ~4 cm VR union). Step 2 recovers it.
 2. **Recover resolution:** retune the splits for the HMD (base distance and/or a practical-split scheme in `ViewContext_BuildCascadeFrusta`), and/or a 2048×8192 atlas. The atlas change touches the creation size, the cascade viewport table and the 9-tap shaders' texel `def` constants, which would be patched at `CreatePixelShader`.
-3. **Filtering:**
+3. **Filtering** (all 27 single-tap receivers reimplemented with the 9-tap kernel, [shaders.md](shaders.md)):
    - Give the 1-tap (foliage/billboard) family the 9-tap kernel or better.
    - Optionally move every receiver to hardware PCF (`D24S8` + LINEAR, with the manual compare removed).
    - Add a blend band at cascade switches.

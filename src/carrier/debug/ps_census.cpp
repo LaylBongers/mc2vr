@@ -4,6 +4,7 @@
 #include <d3d9.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -55,6 +56,10 @@ Shader g_sh[kShaders];
 int g_sh_n = 0;
 uint64_t w_frames = 0, w_unread = 0, w_overflow = 0;
 double w_gpu_total[kPasses] = {};
+// debug_ps_census_watch: hashes reported every window whatever their rank.
+constexpr int kWatch = 64;
+uint32_t g_watch[kWatch];
+int g_watch_n = 0;
 uint64_t w_pix_total[kPasses][CAT_N] = {};
 
 IDirect3DQuery9 *create_query(D3DQUERYTYPE type)
@@ -219,6 +224,24 @@ bool set_enabled(const char *value)
     return true;
 }
 
+bool set_watch(const char *value)
+{
+    g_watch_n = 0;
+    const char *p = value;
+    while (*p != '\0' && g_watch_n < kWatch) {
+        char *end = nullptr;
+        const unsigned long h = strtoul(p, &end, 16);
+        if (end == p) return false;
+        g_watch[g_watch_n++] = (uint32_t)h;
+        p = end;
+        while (*p == ',' || *p == ' ') p++;
+    }
+    if (g_watch_n == 0) return false;
+    g_enabled = true;
+    MC2VR_LOG("ps: debug_ps_census_watch: %d hashes (implies the census)", g_watch_n);
+    return true;
+}
+
 bool enabled()
 {
     return g_enabled;
@@ -319,6 +342,22 @@ void report_window()
                   s.hash, s.size, kCat[s.cat], s.gpu[1] / n, s.gpu[2] / n, s.pix[1] / n / 1e6,
                   s.pix[2] / n / 1e6, (double)(s.draws[1] + s.draws[2]) / n,
                   pix > 0 ? bv * 1e6 / pix : 0.0);
+    }
+    // Watched hashes, summed over their shader objects. seen = created at
+    // all (SetPixelShader since boot); draws/Mpix = this window's samples.
+    for (int w = 0; w < g_watch_n; w++) {
+        int objs = 0;
+        double gpu = 0.0, pix = 0.0, draws = 0.0;
+        for (int i = 0; i < g_sh_n; i++) {
+            const Shader &s = g_sh[i];
+            if (s.hash != g_watch[w]) continue;
+            objs++;
+            gpu += s.gpu[1] + s.gpu[2];
+            pix += (double)(s.pix[1] + s.pix[2]);
+            draws += (double)(s.draws[1] + s.draws[2]);
+        }
+        MC2VR_LOG("ps:   watch %08x objs=%d | GPU %.3f ms | Mpix %.3f | draws %.1f (per frame, both passes)",
+                  g_watch[w], objs, gpu / n, pix / n / 1e6, draws / n);
     }
     for (int i = 0; i < g_sh_n; i++) {
         memset(g_sh[i].gpu, 0, sizeof g_sh[i].gpu);

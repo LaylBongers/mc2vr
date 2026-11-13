@@ -35,7 +35,14 @@ bool enabled();
 // mc2vr.conf debug_camera_census_skip=<constant name>: main-pass draws whose
 // vertex or pixel shader has that constant are not drawn (both eyes) — to
 // identify which draws an artifact comes from. Implies the census.
+// debug_camera_census_skip=ps:<hash>,<hash>,...: the same by pixel-shader
+// bytecode hash (FNV-1a; ps_census, tools/shader_hash.py). Groups separated
+// by ';' are hidden in turn: 15 s nothing, 15 s group 0, 15 s nothing,
+// 15 s group 1, ... ("skip cycle" log lines).
 bool set_skip(const char *value);
+// mc2vr.conf debug_camera_census_skip_phase_ms=<ms>: the skip cycle's phase
+// length (default 15000); with it a single skip group blinks hidden/shown.
+bool set_skip_phase(const char *value);
 
 // A record about to be drawn (render thread), after its command stream ran.
 // Returns false when the draw is to be skipped (debug_camera_census_skip);

@@ -26,8 +26,48 @@ namespace {
 using namespace game;
 
 bool g_enabled = false;
-char g_skip[32] = "";  // debug_camera_census_skip
+char g_skip[32] = "";  // debug_camera_census_skip (a constant name, or "ps:<n> hashes")
+constexpr int kMaxSkipHashes = 64;
+uint32_t g_skip_hashes[kMaxSkipHashes];  // debug_camera_census_skip=ps:<hash>,...[;<hash>,...]
+int g_skip_hash_group[kMaxSkipHashes];   // group of each hash (';' separates groups)
+int g_skip_hash_n = 0;
+int g_skip_groups = 0;
+// With several groups the skip cycles: one phase nothing hidden, then
+// group 0 hidden, nothing, group 1, ... (phase changes logged when phases are
+// 5 s or longer). Phase length: debug_camera_census_skip_phase_ms (default
+// 15 s); setting it also makes a single group blink (hidden, shown, ...).
+uint64_t g_skip_phase_ms = 15000;
+bool g_skip_phase_set = false;
+uint64_t g_skip_t0 = 0;
+int g_skip_phase = -1;
+
+// The hash's group, or -1.
+int skip_group(uint32_t h)
+{
+    for (int i = 0; i < g_skip_hash_n; i++) {
+        if (g_skip_hashes[i] == h) return g_skip_hash_group[i];
+    }
+    return -1;
+}
+
+// The group hidden right now, or -1.
+int hidden_group()
+{
+    if (g_skip_groups == 0) return -1;
+    if (g_skip_groups == 1 && !g_skip_phase_set) return 0;
+    const uint64_t now = GetTickCount64();
+    if (g_skip_t0 == 0) g_skip_t0 = now;
+    const int phase = (int)(((now - g_skip_t0) / g_skip_phase_ms) % (uint64_t)(2 * g_skip_groups));
+    const int group = (phase & 1) ? phase / 2 : -1;
+    if (phase != g_skip_phase && g_skip_phase_ms >= 5000) {
+        g_skip_phase = phase;
+        if (group < 0) MC2VR_LOG("camcensus: skip cycle: nothing hidden");
+        else MC2VR_LOG("camcensus: skip cycle: hiding group %d", group);
+    }
+    return group;
+}
 uint64_t g_skipped = 0;  // window
+uint64_t g_skipped_by_hash[kMaxSkipHashes] = {};  // window, per debug_camera_census_skip=ps: hash
 
 constexpr int kMaxSources = 16;
 constexpr int kMaxShaders = 512;
@@ -60,6 +100,7 @@ struct Shader {
     bool has_vcd;  // VS: the technique uploads viewContextData (the rewritten channel)
     bool camera;   // a camera-named constant (VS: other than viewContextData)
     bool skip;     // has the debug_camera_census_skip constant
+    int skipGroup; // its debug_camera_census_skip=ps: group, or -1
     bool reported;
     uint32_t draws;  // total
     // PS: per CTAB constant, the device writers seen at draw time and the
@@ -188,6 +229,7 @@ template <class T> Shader *shader_of(Shader *arr, std::atomic<int> &count, T *sh
     s.pass = pass;
     s.tab = shader_constants::of(shader);
     hash_bytecode(shader, s.hash, s.size);
+    s.skipGroup = (ps && s.hash != 0) ? skip_group(s.hash) : -1;
     for (int i = 0; s.tab != nullptr && i < s.tab->n; i++) {
         const char *name = s.tab->c[i].name;
         s.camera = s.camera || (ps ? camera_named_ps(name) : camera_named(name));
@@ -389,8 +431,45 @@ bool enabled()
     return g_enabled;
 }
 
+bool set_skip_phase(const char *value)
+{
+    char *end = nullptr;
+    const unsigned long ms = strtoul(value, &end, 10);
+    if (end == value || ms < 100 || ms > 600000) return false;
+    g_skip_phase_ms = ms;
+    g_skip_phase_set = true;
+    MC2VR_LOG("camcensus: debug_camera_census_skip_phase_ms=%lu — skip groups cycle per %lu ms "
+              "(a single group blinks: hidden, shown, ...)", ms, ms);
+    return true;
+}
+
 bool set_skip(const char *value)
 {
+    if (strncmp(value, "ps:", 3) == 0) {
+        // Pixel-shader bytecode hashes (FNV-1a, as ps_census / tools/shader_hash.py).
+        g_skip_hash_n = 0;
+        g_skip_groups = 1;
+        const char *p = value + 3;
+        while (*p != '\0' && g_skip_hash_n < kMaxSkipHashes) {
+            char *end = nullptr;
+            const unsigned long h = strtoul(p, &end, 16);
+            if (end == p) break;
+            g_skip_hash_group[g_skip_hash_n] = g_skip_groups - 1;
+            g_skip_hashes[g_skip_hash_n++] = (uint32_t)h;
+            p = end;
+            while (*p == ',' || *p == ' ') p++;
+            if (*p == ';') {
+                g_skip_groups++;
+                p++;
+                while (*p == ' ') p++;
+            }
+        }
+        snprintf(g_skip, sizeof(g_skip), "ps:%d hashes/%d groups", g_skip_hash_n, g_skip_groups);
+        g_enabled = true;
+        MC2VR_LOG("camcensus: debug_camera_census_skip=%s — main-pass draws with these pixel shaders are NOT drawn",
+                  g_skip);
+        return true;
+    }
     snprintf(g_skip, sizeof(g_skip), "%s", value);
     g_enabled = true;
     MC2VR_LOG("camcensus: debug_camera_census_skip=%s — main-pass draws of shaders with it are NOT drawn", g_skip);
@@ -440,8 +519,11 @@ bool on_draw(const PgPrimitive *rec, const Technique *tech, const EffectPass *pa
         if (dev != nullptr && SUCCEEDED(dev->GetPixelShader(&ps)) && ps != nullptr) {
             Shader *p = shader_of(g_ps, g_nps, ps, nullptr, pass, true);
             ps->Release();
-            if (p != nullptr && p->skip) {
+            if (p != nullptr && (p->skip || (p->skipGroup >= 0 && p->skipGroup == hidden_group()))) {
                 g_skipped++;
+                for (int i = 0; i < g_skip_hash_n; i++) {
+                    if (g_skip_hashes[i] == p->hash) g_skipped_by_hash[i]++;
+                }
                 return false;
             }
         }
@@ -518,6 +600,16 @@ void report_window()
               (unsigned long long)g_ps_uploads);
     if (g_skip[0] != '\0') {
         MC2VR_LOG("camcensus: skipped %llu draws (both eyes) with %s", (unsigned long long)g_skipped, g_skip);
+        // Per pixel-shader hash, those that drew this window.
+        char line[512];
+        int n = 0;
+        for (int i = 0; i < g_skip_hash_n && n < (int)sizeof line - 32; i++) {
+            if (g_skipped_by_hash[i] == 0) continue;
+            n += snprintf(line + n, sizeof line - (size_t)n, " %08x=%llu", g_skip_hashes[i],
+                          (unsigned long long)g_skipped_by_hash[i]);
+            g_skipped_by_hash[i] = 0;
+        }
+        if (n > 0) MC2VR_LOG("camcensus:   by shader:%s", line);
     }
     g_draws = g_draws_unrewritten = g_draws_ps_camera = g_skipped = g_ps_uploads = 0;
 }

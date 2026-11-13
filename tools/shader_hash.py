@@ -7,7 +7,10 @@ Finds every D3D9 shader blob in the given files by its version token
 (vs/ps 1.x-3.0), walks the token stream to the end token (0x0000FFFF) to get
 the exact length, hashes it the same way, and prints
 
-    hash  size  profile  file@offset  constants...
+    hash  size  profile  file@offset  [original name]  constants...
+
+(original names from docs/reverse_engineering/data/shader3_names.csv for
+shader3.bin; docs/reverse_engineering/shader_containers.md)
 
 (constant names from the CTAB via shader_ctab.py). With hashes given via -H,
 only those are printed.
@@ -85,6 +88,21 @@ def scan(path):
     return out
 
 
+NAMES_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "docs", "reverse_engineering", "data", "shader3_names.csv")
+
+
+def load_names():
+    """{(container basename, offset): original .sho file base} (shader3.bin)."""
+    out = {}
+    if os.path.exists(NAMES_CSV):
+        import csv
+        for r in csv.DictReader(open(NAMES_CSV)):
+            if r["file"]:
+                out[("shader3.bin", int(r["offset"], 16))] = r["file"].rsplit("_3.sho", 1)[0]
+    return out
+
+
 def main(argv):
     want = None
     files = []
@@ -100,6 +118,7 @@ def main(argv):
         print(__doc__)
         return 2
     seen = set()
+    sho = load_names()
     for path in files:
         for h, size, prof, off, names in scan(path):
             if want is not None and h not in want:
@@ -108,8 +127,10 @@ def main(argv):
             if key in seen:
                 continue
             seen.add(key)
-            print("%08x %6u %-7s %s@0x%x %s" % (h, size, prof, os.path.basename(path), off,
-                                                 " ".join(n for n in names if n)))
+            name = sho.get((os.path.basename(path), off), "")
+            print("%08x %6u %-7s %s@0x%x %s%s" % (h, size, prof, os.path.basename(path), off,
+                                                   "[%s] " % name if name else "",
+                                                   " ".join(n for n in names if n)))
     return 0
 
 

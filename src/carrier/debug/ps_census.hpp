@@ -19,6 +19,8 @@
 namespace mc2vr::ps_census {
 
 bool set_enabled(const char *value);
+// debug_ps_census_watch=<hex hash>,...: always report these (implies the census).
+bool set_watch(const char *value);
 bool enabled();
 
 void on_pass(uint32_t pass);  // eye_replay::set_pass entry: 1, 2, 0

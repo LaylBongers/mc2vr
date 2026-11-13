@@ -16,6 +16,7 @@
 #include "hooks/frame_tick.hpp"
 #include "init.hpp"
 #include "log.hpp"
+#include "hooks/shader_reimpl.hpp"
 #include "vr/adaptation.hpp"
 #include "vr/device_params.hpp"
 #include "vr/eye_replay.hpp"
@@ -57,6 +58,9 @@ constexpr size_t SLOT_SetRenderTarget = 37;
 constexpr size_t SLOT_StretchRect = 34;
 constexpr size_t SLOT_SetDepthStencilSurface = 39;
 constexpr size_t SLOT_SetTexture = 65;
+// Pixel-shader creation: the reimplemented shaders are substituted here
+// (hooks/shader_reimpl.hpp; d3d9.h method order, SetPixelShader = 107).
+constexpr size_t SLOT_CreatePixelShader = 106;
 // IDirect3D9::CreateDevice (d3d9.h method order, cross-checked against the
 // game's observed use: RenderSystem_Init reads the adapter count through
 // IDirect3D9 vtable +0x10 = slot 4 GetAdapterCount).
@@ -74,6 +78,7 @@ safetyhook::VmHook *g_setrt_hook = nullptr;
 safetyhook::VmHook *g_stretchrect_hook = nullptr;
 safetyhook::VmHook *g_setds_hook = nullptr;
 safetyhook::VmHook *g_settex_hook = nullptr;
+safetyhook::VmHook *g_createps_hook = nullptr;
 IDirect3DDevice9 *g_device = nullptr;
 bool g_params_logged = false;
 
@@ -377,6 +382,21 @@ HRESULT __stdcall settex_hook(IDirect3DDevice9 *self, DWORD stage, IDirect3DBase
     return g_settex_hook->stdcall<HRESULT>(self, stage, texture);
 }
 
+// The game's shader creation: ours instead of a reimplemented original. The
+// game keeps the object it gets back (no cache desync). If the device refuses
+// ours, the original is created instead.
+HRESULT __stdcall createps_hook(IDirect3DDevice9 *self, const DWORD *function, IDirect3DPixelShader9 **shader)
+{
+    const auto *original = reinterpret_cast<const uint32_t *>(function);
+    const uint32_t *use = hooks::shader_reimpl::substitute_pixel_shader(original);
+    HRESULT hr = g_createps_hook->stdcall<HRESULT>(self, reinterpret_cast<const DWORD *>(use), shader);
+    if (FAILED(hr) && use != original) {
+        hooks::shader_reimpl::on_substitute_failed(use, (long)hr);
+        hr = g_createps_hook->stdcall<HRESULT>(self, function, shader);
+    }
+    return hr;
+}
+
 HRESULT __stdcall setvsconstf_hook(IDirect3DDevice9 *self, UINT start, const float *data, UINT count)
 {
     g_setvsconst_calls++;
@@ -473,6 +493,7 @@ bool hook_device(IDirect3DDevice9 *device)
          "StretchRect"},
         {SLOT_SetDepthStencilSurface, (void *)&setds_hook, &g_setds_hook, "SetDepthStencilSurface"},
         {SLOT_SetTexture, (void *)&settex_hook, &g_settex_hook, "SetTexture"},
+        {SLOT_CreatePixelShader, (void *)&createps_hook, &g_createps_hook, "CreatePixelShader"},
     };
 
     for (const SlotSpec &spec : slots) {

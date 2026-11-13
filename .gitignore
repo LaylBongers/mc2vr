@@ -1,6 +1,7 @@
 /backups
 /ghidra
 /build
+/.wine
 __pycache__
 
 # Agent local configurations

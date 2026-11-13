@@ -61,8 +61,9 @@ USAGE = {0: "position", 1: "blendweight", 2: "blendindices", 3: "normal", 4: "ps
          6: "tangent", 7: "binormal", 8: "tessfactor", 9: "positiont", 10: "color", 11: "fog",
          12: "depth", 13: "sample"}
 SAMPLER = {1: "1d", 2: "2d", 3: "cube", 4: "volume"}
-SRC_MOD = {0: "{}", 1: "-{}", 2: "{}_bias", 3: "-{}_bias", 4: "{}_bx2", 5: "-{}_bx2", 6: "{}_x2",
-           7: "-{}_x2", 8: "{}_dz", 9: "{}_dw", 10: "abs({})", 11: "-abs({})", 12: "!{}"}
+# D3DSPSM_*: NONE, NEG, BIAS, BIASNEG, SIGN, SIGNNEG, COMP, X2, X2NEG, DZ, DW, ABS, ABSNEG, NOT.
+SRC_MOD = {0: "{}", 1: "-{}", 2: "{}_bias", 3: "-{}_bias", 4: "{}_bx2", 5: "-{}_bx2", 6: "1-{}",
+           7: "{}_x2", 8: "-{}_x2", 9: "{}_dz", 10: "{}_dw", 11: "abs({})", 12: "-abs({})", 13: "!{}"}
 
 
 def u32(buf, p):

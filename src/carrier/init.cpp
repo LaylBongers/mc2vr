@@ -37,6 +37,7 @@
 #include "vr/pacing.hpp"
 #include "vr/xr_session.hpp"
 #include "reimpl/render/fit_shadow_cascades.hpp"
+#include "hooks/shader_reimpl.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -152,6 +153,12 @@ static void load_conf()
             if (!hud::set_size(value)) {
                 MC2VR_LOG("conf: hud_size=%s not recognized (degrees, 10-120)", value);
             }
+        } else if (strcmp(key, "shader_reimpl") == 0) {
+            // Reimplemented pixel shaders (hooks/shader_reimpl.hpp,
+            // docs/shaders.md): on (default) or off, for A/B.
+            if (!hooks::shader_reimpl::set_enabled(value)) {
+                MC2VR_LOG("conf: shader_reimpl=%s not recognized (use on|off)", value);
+            }
         } else if (strcmp(key, "shadow_fit") == 0) {
             // Shadow cascade fit (reimpl/render/fit_shadow_cascades.hpp,
             // docs/shadows.md): stable (default) or stock, for A/B.
@@ -181,6 +188,11 @@ static void load_conf()
             // debug/wait_census.hpp).
             if (!wait_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_wait_census=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_ps_census_watch") == 0) {
+            // Pixel-shader hashes always reported by the ps census (debug/ps_census.hpp).
+            if (!ps_census::set_watch(value)) {
+                MC2VR_LOG("conf: debug_ps_census_watch=%s not recognized (use hex hashes, comma-separated)", value);
             }
         } else if (strcmp(key, "debug_camera_census") == 0) {
             // Which shaders take the camera from outside viewContextData (debug/camera_census.hpp).
@@ -214,6 +226,10 @@ static void load_conf()
             // camera classes, player modes, look input (debug/gameplay_census.hpp).
             if (!gameplay_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_gameplay_census=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "debug_camera_census_skip_phase_ms") == 0) {
+            if (!camera_census::set_skip_phase(value)) {
+                MC2VR_LOG("conf: debug_camera_census_skip_phase_ms=%s not recognized (100..600000)", value);
             }
         } else if (strcmp(key, "debug_camera_census_skip") == 0) {
             camera_census::set_skip(value);

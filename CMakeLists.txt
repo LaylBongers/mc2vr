@@ -27,7 +27,10 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "mc2vr is 32-bit only: use cmake/i686-w64-mingw32.cmake")
 endif()
 
+include(cmake/hlsl.cmake)
+
 add_subdirectory(vendor/safetyhook)
+add_subdirectory(tools/hlslc)
 add_subdirectory(src/launcher)
 add_subdirectory(src/game)
 add_subdirectory(src/carrier)
