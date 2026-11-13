@@ -15,7 +15,7 @@ The builder calls `cull_frustum::on_tans_ready` right after computing them. For 
 
 Why the game's projection may change: for the main view the HMD never sees the game's projection — `hmd_delta` rebuilds it per eye ([view_rewrite.md](view_rewrite.md)); the monitor shows the left eye.
 
-Accepted side effects: `view: gameproj` reports the HMD angles; shadow cascades are fitted to the wider frustum (coarser texels); screen-size LOD metrics see the wider projection; ADS zoom no longer narrows culling (the max() keeps the HMD extents).
+Accepted side effects: `view: gameproj` reports the HMD angles; shadow cascades are fitted to the wider frustum (coarser texels, [shadows.md](shadows.md)); screen-size LOD metrics see the wider projection; ADS zoom no longer narrows culling (the max() keeps the HMD extents).
 
 ## The consumer that must stay stock: camera clearance
 
@@ -58,7 +58,7 @@ Lesson: **replace a derived value where it is DERIVED, not at one consumer's cop
 
 ## Views that are not HMD-driven
 
-One builder view per frame is not HMD-driven (`otherView` ≈ 1 per frame in `cullfov: window`), so it keeps the game's extents: `FUN_00486460`'s mirrored camera, most likely the water reflection (see View discrimination). Its frustum is the game's narrow one, so reflections may miss objects near the edges of the HMD view (OPEN, unchecked). Widening it whenever its camera was within 1 m of the HMD camera (a since-removed A/B) made objects pop frame to frame, near ones included. Don't widen views that don't match.
+One builder view per frame is not HMD-driven (`otherView` ≈ 1 per frame in `cullfov: window`), so it keeps the game's extents: `FUN_00486460`'s mirrored camera, most likely the water reflection (see View discrimination). It is built every frame even though water reflections are disabled in the live game settings (since the mod's start; enabling them is planned). Its fov also varies (tanH 0.34–0.39, [shadows.md](shadows.md)). Its frustum is the game's narrow one, so reflections may miss objects near the edges of the HMD view (OPEN, unchecked). Widening it whenever its camera was within 1 m of the HMD camera (a since-removed A/B) made objects pop frame to frame, near ones included. Don't widen views that don't match.
 
 ## Clouds pass and the ctx tans
 

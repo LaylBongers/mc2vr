@@ -11,6 +11,7 @@
 
 #include "game/render_shell.hpp"
 #include "game/view_context.hpp"
+#include "reimpl/render/fit_shadow_cascades.hpp"
 #include "vr/cull_frustum.hpp"
 #include "vr/view_rewrite.hpp"
 
@@ -171,7 +172,7 @@ void ViewContext_BuildCameraConstants(game::ViewContext *ctx)
     game::ViewContext_BuildCascadeFrusta(ctx->cascadeSplits, ctx, &ctx->frustumShadow, ctx->cascades,
                                          ctx->cascadesB, ctx->cascadesC, 4, c0, c1, c2, c3);
     ctx->ra90 = 0xf;
-    game::FUN_00859ad0(ctx);
+    ViewContext_FitShadowCascades(ctx);  // reimplemented (stabilized fit)
 
     // ---- this frame's g_ViewContextTable record 0x85973e-0x859882 ----
     game::PgPrimitive &scratch = *game::g_ScratchPrimitive::ptr();

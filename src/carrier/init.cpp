@@ -36,6 +36,7 @@
 #include "debug/wait_census.hpp"
 #include "vr/pacing.hpp"
 #include "vr/xr_session.hpp"
+#include "reimpl/render/fit_shadow_cascades.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -150,6 +151,12 @@ static void load_conf()
             // HUD layer width in degrees (vr/hud.hpp, docs/hud.md).
             if (!hud::set_size(value)) {
                 MC2VR_LOG("conf: hud_size=%s not recognized (degrees, 10-120)", value);
+            }
+        } else if (strcmp(key, "shadow_fit") == 0) {
+            // Shadow cascade fit (reimpl/render/fit_shadow_cascades.hpp,
+            // docs/shadows.md): stable (default) or stock, for A/B.
+            if (!reimpl::set_shadow_fit(value)) {
+                MC2VR_LOG("conf: shadow_fit=%s not recognized (use stable|stock)", value);
             }
         } else if (strcmp(key, "msaa") == 0) {
             // Scene MSAA sample count (vr/msaa.hpp, docs/msaa.md). Must

@@ -23,9 +23,16 @@ struct Frustum {
     float nearZ;              // +0x00
     float farZ;               // +0x04
     float invNear;            // +0x08
-    uint8_t r00c[0x218 - 0x0c];
+    float corners[8][3];      // +0x0c world space: near 0..3, then far 4..7
+    uint8_t r06c[0x218 - 0x6c];
 };
-static_assert(sizeof(Frustum) == 0x218);
+static_assert(sizeof(Frustum) == 0x218 && offsetof(Frustum, corners) == 0x0c);
+
+// ViewContext_BuildCascadeFrusta's per-cascade slices (ctx+0x46c, 4 of them):
+// the same head as Frustum (near, far, 1/near, 8 world corners at +0x0c) in a
+// 0x114-byte stride.
+constexpr uintptr_t kCascadeFrustumStride = 0x114;
+constexpr uintptr_t kCascadeFrustumCorners = 0x0c;
 
 // A camera object (ctx+0x28; also each g_CameraTable slot): self-indexed,
 // active entry = cam + [cam] * 0x70. Offsets are from that entry. In gameplay
@@ -75,7 +82,12 @@ struct ViewContext {
     float proj[16];              // +0xb20
     float viewProj[16];          // +0xb60 view * proj -> the g_ViewContextTable record
     float prevViewProj[16];      // +0xba0 last build's viewProj
-    uint8_t rbe0[0xe70 - 0xbe0];
+    uint8_t rbe0[0xbf0 - 0xbe0];
+    // ViewContext_FitShadowCascades' outputs (docs/shadows.md):
+    float cascadeViewProj[4][16];   // +0xbf0 world -> cascade clip (the shadow pass's record)
+    float cascadeAtlas[4][16];      // +0xcf0 world -> atlas UV + depth (globalLightData[11..26])
+    float cascadeScaleBias[4][4];   // +0xdf0 base NDC -> atlas (sx/2, -sy/8, (ox+1)/2, i/4 - oy/8 + 1/8)
+    float shadowBase[16];           // +0xe30 world -> whole-shadow-range ortho
     float re70;                  // +0xe70 0.672015 with a camera, 1.0 without (role unknown)
     float re74;                  // +0xe74 camera entry +0x74 (role unknown)
 };
@@ -87,11 +99,15 @@ static_assert(offsetof(ViewContext, whole) == 0x954 && offsetof(ViewContext, ra9
 static_assert(offsetof(ViewContext, view) == 0xaa0 && offsetof(ViewContext, cameraWorld) == 0xae0);
 static_assert(offsetof(ViewContext, proj) == 0xb20 && offsetof(ViewContext, viewProj) == 0xb60);
 static_assert(offsetof(ViewContext, prevViewProj) == 0xba0 && offsetof(ViewContext, re70) == 0xe70);
+static_assert(offsetof(ViewContext, cascadeViewProj) == 0xbf0 && offsetof(ViewContext, cascadeAtlas) == 0xcf0);
+static_assert(offsetof(ViewContext, cascadeScaleBias) == 0xdf0 && offsetof(ViewContext, shadowBase) == 0xe30);
+static_assert(offsetof(ViewContext, cascades) + kCascadeFrustumCorners == 0x478);
 static_assert(sizeof(ViewContext) == 0xe78);
 
 // ---- the render shell's fields the builder reads (g_RenderShellPtrB) ----------------
 constexpr uintptr_t kShellRenderW = 0x2b98;       // int
 constexpr uintptr_t kShellRenderH = 0x2b9c;       // int
+constexpr uintptr_t kShellSunDirNeg = 0x2bb0;     // float[3], the negated sun direction (FUN_00466be0)
 constexpr uintptr_t kShellCascadeBase = 0x2bc0;   // float, first cascade split
 constexpr uintptr_t kShellFovAspect = 0x2bc8;     // float, scales the fov by the viewport aspect
 constexpr uintptr_t kShellTanHScale = 0x2bcc;     // float, scales tanH
@@ -135,7 +151,20 @@ inline constexpr Function<void(const float *splits, ViewContext *ctx, const Frus
     ViewContext_BuildCascadeFrusta{"ViewContext_BuildCascadeFrusta",
                                    0x0085a3f0u,
                                    {EAX, STK, STK, STK, STK, STK, STK, STK, STK, STK, STK}};
-inline constexpr Function<void(ViewContext *ctx)> FUN_00859ad0{"FUN_00859ad0", 0x00859ad0u, {STK}};
+// The cascade fit, stdcall(ctx), `ret 4`. Reimplemented
+// (reimpl/render/fit_shadow_cascades.hpp); its only caller is the builder
+// reimplementation, so the original stays callable (the reimplementation's
+// self-check runs it on a copy of the ctx).
+inline constexpr Function<void(ViewContext *ctx)> ViewContext_FitShadowCascades{
+    "ViewContext_FitShadowCascades", 0x00859ad0u, {STK}};
+// Light/camera world matrix from eye and target: rows right, up, forward =
+// normalize(target - eye), position = eye (up from world Y; near-vertical
+// forward falls back). (EAX target, out, eye), `ret 8`.
+inline constexpr Function<void(const float *target, float *out, const float *eye)> Matrix_LookAtToWorld{
+    "Matrix_LookAtToWorld", 0x008257c0u, {EAX, STK, STK}};
+// The game's static D3DX (import thunk): out = (v, 1) * m, divided by w; stdcall.
+inline constexpr Function<float *(float *out, const float *v, const float *m)> D3DXVec3TransformCoord{
+    "D3DXVec3TransformCoord", 0x0096bd70u, {STK, STK, STK}};
 // VM stub 0x00854740 (-> 0x02537cb0), patched at runtime to plaintext
 // 0x00500476 -> 0x00854749 (docs/reverse_engineering/data/vm_thunks_runtime.csv).
 // Called before a scratch-record Submit with ECX = a material object: gives it

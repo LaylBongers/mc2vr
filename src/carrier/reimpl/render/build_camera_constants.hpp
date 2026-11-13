@@ -16,7 +16,8 @@
 // then the frame's g_ViewContextTable record and a scratch viewport record.
 //
 // Calls (original): ViewCtx_GetViewport, Matrix_Inverse4x4, D3DXMatrixMultiply,
-// Frustum_Build x2, ViewContext_BuildCascadeFrusta x2, FUN_00859ad0,
+// Frustum_Build x2, ViewContext_BuildCascadeFrusta x2, ViewContext_FitShadowCascades
+// (reimplemented: reimpl/render/fit_shadow_cascades.hpp),
 // thunk_FUN_02537cb0 (the material step), PgPrimitiveScratchRecord_Submit.
 // Writes directly: the ctx (ViewContext fields), the g_ViewContextTable record,
 // g_CascadeSplitSum, g_ViewContextRecordNext, the scratch record (viewContextIdx,
@@ -26,6 +27,8 @@
 // VR behavior inside it, as a direct call:
 //   - vr/cull_frustum widens the frustum half-extents for HMD views to the
 //     eyes' union, right after the game computes them (docs/culling.md).
+//   - the shadow cascades are fitted stably (fit_shadow_cascades.hpp,
+//     docs/shadows.md).
 #pragma once
 
 namespace mc2vr::game {

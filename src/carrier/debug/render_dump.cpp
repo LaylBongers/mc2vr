@@ -34,6 +34,7 @@
 #include "vr/occlusion_queries.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
+#include "reimpl/render/fit_shadow_cascades.hpp"
 
 namespace mc2vr::render {
 
@@ -236,6 +237,7 @@ void report_window()
     gui_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
+    reimpl::shadow_fit_report_window();
     cull_probe::report_window();
     first_person::report_window();
     occlusion_queries::report_window();
