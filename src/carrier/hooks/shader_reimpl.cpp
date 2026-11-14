@@ -17,6 +17,27 @@
 #include "shaders/PgDecal2FP_pl_sl_li.h"
 #include "shaders/PgDecal2FP_sl.h"
 #include "shaders/PgDecal2FP_sl_li.h"
+#include "shaders/PgDiffSpecMetalNormFP.h"
+#include "shaders/PgDiffSpecMetalNormFP_pl.h"
+#include "shaders/PgDiffSpecMetalNormFP_pl_li.h"
+#include "shaders/PgDiffSpecMetalNormFP_pl_sl.h"
+#include "shaders/PgDiffSpecMetalNormFP_pl_sl_li.h"
+#include "shaders/PgDiffSpecMetalNormFP_sl.h"
+#include "shaders/PgDiffSpecMetalNormFP_sl_li.h"
+#include "shaders/PgDiffSpecNormAmbOccFP.h"
+#include "shaders/PgDiffSpecNormAmbOccFP_pl.h"
+#include "shaders/PgDiffSpecNormAmbOccFP_pl_li.h"
+#include "shaders/PgDiffSpecNormAmbOccFP_pl_sl.h"
+#include "shaders/PgDiffSpecNormAmbOccFP_pl_sl_li.h"
+#include "shaders/PgDiffSpecNormAmbOccFP_sl.h"
+#include "shaders/PgDiffSpecNormAmbOccFP_sl_li.h"
+#include "shaders/PgDiffSpecNormFP.h"
+#include "shaders/PgDiffSpecNormFP_pl.h"
+#include "shaders/PgDiffSpecNormFP_pl_li.h"
+#include "shaders/PgDiffSpecNormFP_pl_sl.h"
+#include "shaders/PgDiffSpecNormFP_pl_sl_li.h"
+#include "shaders/PgDiffSpecNormFP_sl.h"
+#include "shaders/PgDiffSpecNormFP_sl_li.h"
 #include "shaders/PgFastFP.h"
 #include "shaders/PgFastFP_pl.h"
 #include "shaders/PgFastFP_pl_li.h"
@@ -61,6 +82,27 @@ Entry g_entries[] = {
     {0x4552f636u, "PgDecal2FP_pl_sl_li (shader3.bin@0xddd0)", mc2vr::shaders::PgDecal2FP_pl_sl_li, 0, false},
     {0x15cf77adu, "PgDecal2FP_sl (shader3.bin@0xeed0)", mc2vr::shaders::PgDecal2FP_sl, 0, false},
     {0xe651a6c7u, "PgDecal2FP_sl_li (shader3.bin@0x10070)", mc2vr::shaders::PgDecal2FP_sl_li, 0, false},
+    {0xb45eaaccu, "PgDiffSpecNormAmbOccFP (shader3.bin@0xd9c70)", mc2vr::shaders::PgDiffSpecNormAmbOccFP, 0, false},
+    {0x700f33e6u, "PgDiffSpecNormAmbOccFP_pl (shader3.bin@0xda8a0)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl, 0, false},
+    {0xb11bb21fu, "PgDiffSpecNormAmbOccFP_pl_li (shader3.bin@0xdc7f0)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_li, 0, false},
+    {0xf40d81d0u, "PgDiffSpecNormAmbOccFP_pl_sl (shader3.bin@0xddc10)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_sl, 0, false},
+    {0xee834b1fu, "PgDiffSpecNormAmbOccFP_pl_sl_li (shader3.bin@0xe0ba0)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_sl_li, 0, false},
+    {0x44ad8ebau, "PgDiffSpecNormAmbOccFP_sl (shader3.bin@0xe2930)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_sl, 0, false},
+    {0xea5d97d6u, "PgDiffSpecNormAmbOccFP_sl_li (shader3.bin@0xe4580)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_sl_li, 0, false},
+    {0x3591a5e2u, "PgDiffSpecNormFP (shader3.bin@0xf1bf0)", mc2vr::shaders::PgDiffSpecNormFP, 0, false},
+    {0xb0a3f572u, "PgDiffSpecNormFP_pl (shader3.bin@0xf27f0)", mc2vr::shaders::PgDiffSpecNormFP_pl, 0, false},
+    {0x6c3879dbu, "PgDiffSpecNormFP_pl_li (shader3.bin@0xf4710)", mc2vr::shaders::PgDiffSpecNormFP_pl_li, 0, false},
+    {0xa157a03cu, "PgDiffSpecNormFP_pl_sl (shader3.bin@0xf5b10)", mc2vr::shaders::PgDiffSpecNormFP_pl_sl, 0, false},
+    {0x7899734bu, "PgDiffSpecNormFP_pl_sl_li (shader3.bin@0xf8a70)", mc2vr::shaders::PgDiffSpecNormFP_pl_sl_li, 0, false},
+    {0x41cb2e02u, "PgDiffSpecNormFP_sl (shader3.bin@0xfa7d0)", mc2vr::shaders::PgDiffSpecNormFP_sl, 0, false},
+    {0x1881c562u, "PgDiffSpecNormFP_sl_li (shader3.bin@0xfc3f0)", mc2vr::shaders::PgDiffSpecNormFP_sl_li, 0, false},
+    {0xa27d6bfau, "PgDiffSpecMetalNormFP (shader3.bin@0xb5270)", mc2vr::shaders::PgDiffSpecMetalNormFP, 0, false},
+    {0x278e01a2u, "PgDiffSpecMetalNormFP_pl (shader3.bin@0xb5fc0)", mc2vr::shaders::PgDiffSpecMetalNormFP_pl, 0, false},
+    {0x34dc487eu, "PgDiffSpecMetalNormFP_pl_li (shader3.bin@0xb8020)", mc2vr::shaders::PgDiffSpecMetalNormFP_pl_li, 0, false},
+    {0x60dbcb70u, "PgDiffSpecMetalNormFP_pl_sl (shader3.bin@0xb9540)", mc2vr::shaders::PgDiffSpecMetalNormFP_pl_sl, 0, false},
+    {0x065fb9a4u, "PgDiffSpecMetalNormFP_pl_sl_li (shader3.bin@0xbc5e0)", mc2vr::shaders::PgDiffSpecMetalNormFP_pl_sl_li, 0, false},
+    {0x483bd668u, "PgDiffSpecMetalNormFP_sl (shader3.bin@0xbe480)", mc2vr::shaders::PgDiffSpecMetalNormFP_sl, 0, false},
+    {0xb7e6aafdu, "PgDiffSpecMetalNormFP_sl_li (shader3.bin@0xc01e0)", mc2vr::shaders::PgDiffSpecMetalNormFP_sl_li, 0, false},
     {0x3e76835cu, "PgFastFP (shader3.bin@0x1d6370)", mc2vr::shaders::PgFastFP, 0, false},
     {0x1055364cu, "PgFastFP_pl (shader3.bin@0x1d6930)", mc2vr::shaders::PgFastFP_pl, 0, false},
     {0x19b8861cu, "PgFastFP_pl_li (shader3.bin@0x1d7920)", mc2vr::shaders::PgFastFP_pl_li, 0, false},

@@ -30,12 +30,20 @@ Per trial, identical for both shaders:
     Consequence: the shadow-map uv (cascade u/v rows, tap offsets, the
     9-tap's bilinear weights) is NOT checked; the cascade choice and the
     compared depth are (via the random-depth trials).
+    Except where the ORIGINAL already takes the 9-tap filter (>= 9 taps of
+    globalDirLightShadowMap, e.g. the PgDiff* families) and ours must match
+    it tap for tap: there the random-depth trials add per-texel noise in
+    [-1,1] (a hash of the point-sampled texel of the stock 1024x4096 atlas),
+    so the uv side is checked too;
 Trials run as SIMD lanes (numpy, float64), with per-lane masks for
 if/else/loops/break/predication, as a GPU would.
 
 Usage: shader_equiv.py <container shader3.bin> [registry.cpp] [generated dir]
            [--trials N] [--seed S] [--tol T] [--only <hash|symbol>]
            [--self]             compare each original with itself (self-test)
+           [--shadow lit]       shadow map fully lit or fully shadowed per trial
+                                (for deliberate changes to the cascade lookup,
+                                e.g. the blend band: everything else compared)
            [--perturb neg|def[:K]]  alter OURS in memory to show a difference
                                 is caught: neg = negate src0 of the last
                                 instruction writing oC0; def[:K] = add 0.01 to
@@ -156,6 +164,32 @@ def mock_params(name):
     return k, rng.uniform(0, 2 * np.pi, 4)
 
 
+SHADOW_ATLAS = (1024, 4096)  # stock atlas size (shader_iface.py checks the stock-size bytecode)
+
+
+def shadow_texel_noise(coord):
+    """[-1,1] per point-sampled atlas texel of the (projected) uv."""
+    with np.errstate(all="ignore"):
+        ix = np.floor(coord[:, 0] * SHADOW_ATLAS[0])
+        iy = np.floor(coord[:, 1] * SHADOW_ATLAS[1])
+    ok = np.isfinite(ix) & np.isfinite(iy) & (np.abs(ix) < 2**40) & (np.abs(iy) < 2**40)
+    ix = np.where(ok, ix, 0).astype(np.int64)
+    iy = np.where(ok, iy, 0).astype(np.int64)
+    h = (ix * 73856093) ^ (iy * 19349663)
+    h = (h ^ (h >> 13)) * 1274126177
+    return np.where(ok, ((h >> 8) & 0xFFFF) / 32767.5 - 1.0, 0.0)
+
+
+def shadow_taps(words):
+    """Texture lookups of the sun shadow map in a shader."""
+    prog, _, _, ctab = decode(words)
+    if not ctab or SHADOW_SAMPLER not in ctab:
+        return 0
+    reg = ctab[SHADOW_SAMPLER][1]
+    return sum(1 for ins in prog if ins.name in ("texld", "texldl", "texldd")
+               and (ins.srcs[1][0] & 0x7FF) == reg)
+
+
 class Trials:
     """Per-trial inputs, shared by both shaders."""
 
@@ -171,6 +205,7 @@ class Trials:
         self.b = rng.random((n, NUM_B)) < 0.5
         mode = rng.integers(0, 4, n)
         self.shadow = np.where(mode == 0, 1e9, np.where(mode == 1, -1e9, rng.uniform(-2, 2, n)))
+        self.shadow_texels = False  # per-texel noise on the random-depth trials (9-tap originals)
         self.vpos = np.stack([rng.uniform(0, 2048, n), rng.uniform(0, 2048, n), np.zeros(n), np.zeros(n)], 1)
         self.vface = rng.choice([-1.0, 1.0], n)
         self.inputs = {}
@@ -417,7 +452,10 @@ class Machine:
             self.fail(ins, "undeclared sampler s%d" % s)
         name, stype, (k, phase) = self.samplers[s]
         if name == SHADOW_SAMPLER:
-            out = np.repeat(self.t.shadow[:, None], 4, 1)
+            depth = self.t.shadow
+            if self.t.shadow_texels:
+                depth = np.where(np.abs(depth) < 1e9, depth + shadow_texel_noise(coord), depth)
+            out = np.repeat(depth[:, None], 4, 1)
         else:
             if stype == 2:
                 x = coord[:, :2]
@@ -700,7 +738,7 @@ def perturb(words, how):
 
 def main():
     argv = sys.argv[1:]
-    opts = {"--trials": "1000", "--seed": "1", "--tol": "1e-4", "--only": None, "--perturb": None}
+    opts = {"--trials": "1000", "--seed": "1", "--tol": "1e-4", "--only": None, "--perturb": None, "--shadow": None}
     self_test = False
     pos = []
     k = 0
@@ -753,6 +791,17 @@ def main():
                 note = "  [perturbed: %s]" % note
             # Same seed per entry for both shaders; distinct per entry.
             trials = Trials(ntrials, np.random.default_rng([int(opts["--seed"]), idx]), decode(orig)[3])
+            if opts["--shadow"] == "lit":
+                # Fully lit or fully shadowed only: every cascade agrees, so a
+                # deliberate change in which cascades are looked up and how
+                # they're mixed (the cascade blend band) can't change the
+                # result, and everything else is still compared.
+                trials.shadow = np.where(trials.shadow > 0, 1e9, -1e9)
+                note += "  [shadow lit/dark]"
+            else:
+                trials.shadow_texels = shadow_taps(orig) >= 9
+                if trials.shadow_texels:
+                    note += "  [9-tap: texel shadow]"
             ro = Machine(orig, trials, "orig " + sym).run()
             rn = Machine(ours, trials, "ours " + sym).run()
         except EmuError as e:

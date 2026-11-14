@@ -44,5 +44,6 @@ Not Proton's built-in `d3dcompiler_47`: that is Wine's, backed by vkd3d-shader, 
 - `tools/test/test_game_entry.cpp` — the entry for replacements under Wine ([reimpl.md](reimpl.md#tests)).
 - `tools/test/test_hlsl.cpp` — the build-time HLSL pipeline under Wine (above).
 - `tools/shader_iface.py <shader3.bin>` — reimplemented shaders against the originals' interfaces ([shaders.md](shaders.md)).
+- `tools/ps_census_families.py <ps_census.csv> <shader3.bin>` — a `debug_ps_census=all` run's shaders ranked by family. Each hash is mapped to its original name (or to our reimplementation), grouped without the light-variant suffixes, with its share of pixels and its shadow taps ([shaders.md](shaders.md)). Run the census with `shadow_resolution=1024`, so the receivers' hashes match the container.
 - `tools/shader_equiv.py <shader3.bin>` — the same, numerically: original and ours emulated on random inputs ([shaders.md](shaders.md)).
 - `tools/diagrams/render_pipeline.py` → `docs/render_pipeline.svg`: one frame end to end, for people (publishing), not for agents. It's ~70 KB of layout; the facts it shows are in the notes. Re-run it after notes change what it shows.

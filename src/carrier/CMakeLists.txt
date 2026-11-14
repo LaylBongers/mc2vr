@@ -86,16 +86,33 @@ mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgWaterFP.hlsl ENTRY main PROFILE ps_3_0
 # the originals' .sho files: <suffix>:<point lights 0|1>:<spot lights 0|1>:<_li 0|1>.
 set(MC2VR_LIGHT_VARIANTS
     ":0:0:0" "_pl:1:0:0" "_pl_li:1:0:1" "_pl_sl:1:1:0" "_pl_sl_li:1:1:1" "_sl:0:1:0" "_sl_li:0:1:1")
-foreach(family IN ITEMS PgFastFP PgScrubLightFP PgDecal2FP)
+# A family is <name> (source <name>.hlsl) or <name>:<source>:<defines,...>
+# (one source built per family with feature defines, e.g. PgDiff.hlsl).
+set(MC2VR_LIGHT_FAMILIES
+    PgFastFP PgScrubLightFP PgDecal2FP
+    "PgDiffSpecNormAmbOccFP:PgDiff:MC2VR_PGDIFF_SPEC=1,MC2VR_PGDIFF_NORM=1,MC2VR_PGDIFF_AMBOCC=1"
+    "PgDiffSpecNormFP:PgDiff:MC2VR_PGDIFF_SPEC=1,MC2VR_PGDIFF_NORM=1"
+    "PgDiffSpecMetalNormFP:PgDiff:MC2VR_PGDIFF_SPEC=1,MC2VR_PGDIFF_NORM=1,MC2VR_PGDIFF_METAL=1")
+foreach(entry IN LISTS MC2VR_LIGHT_FAMILIES)
+    string(REPLACE ":" ";" f "${entry}")
+    list(GET f 0 family)
+    set(source ${family})
+    set(features "")
+    list(LENGTH f nf)
+    if(nf GREATER 1)
+        list(GET f 1 source)
+        list(GET f 2 features)
+        string(REPLACE "," ";" features "${features}")
+    endif()
     foreach(variant IN LISTS MC2VR_LIGHT_VARIANTS)
         string(REPLACE ":" ";" v "${variant}")
         list(GET v 0 suffix)
         list(GET v 1 point)
         list(GET v 2 spot)
         list(GET v 3 li)
-        mc2vr_hlsl(mc2vr_carrier reimpl/shaders/${family}.hlsl ENTRY main PROFILE ps_3_0
+        mc2vr_hlsl(mc2vr_carrier reimpl/shaders/${source}.hlsl ENTRY main PROFILE ps_3_0
                    SYMBOL ${family}${suffix}
-                   DEFINES MC2VR_POINT_LIGHTS=${point} MC2VR_SPOT_LIGHTS=${spot} MC2VR_LIGHTS_LI=${li})
+                   DEFINES ${features} MC2VR_POINT_LIGHTS=${point} MC2VR_SPOT_LIGHTS=${spot} MC2VR_LIGHTS_LI=${li})
     endforeach()
 endforeach()
 

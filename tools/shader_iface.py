@@ -13,7 +13,9 @@ with the original in the container:
   - the original's hash (the registry's key) against the container's bytes.
 Reports the shadow-map taps (texld* on s15) and token counts for information.
 
-Usage: shader_iface.py <container shader3.bin> [registry.cpp] [generated dir]
+Usage: shader_iface.py <container shader3.bin> [registry.cpp] [generated dir] [--shadow-band]
+  --shadow-band: accept one extra innermost dynamic branch (`ifc ... endif`)
+  in ours: the cascade blend band (reimpl/shaders/shadow.hlsli).
 Exit 1 if any interface differs.
 """
 
@@ -131,6 +133,17 @@ def static_structure(branches):
     return out
 
 
+def without_one_leaf_ifc(branches):
+    """Each way of dropping one innermost `ifc ... endif` (no branch inside)."""
+    out = []
+    for i, b in enumerate(branches):
+        if b == "ifc":
+            j = i + 1
+            if j < len(branches) and branches[j] == "endif":
+                out.append(branches[:i] + branches[j + 1:])
+    return out
+
+
 def load_generated(path):
     text = open(path).read()
     body = text.split("{", 2)[-1]
@@ -141,6 +154,8 @@ def main():
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
+    shadow_band = "--shadow-band" in sys.argv
+    sys.argv = [a for a in sys.argv if a != "--shadow-band"]
     container = open(sys.argv[1], "rb").read()
     registry = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
         ROOT, "src/carrier/hooks/shader_reimpl.cpp")
@@ -165,7 +180,8 @@ def main():
         if oc != nc:
             diff = {k: (nc.get(k), oc.get(k)) for k in set(oc) | set(nc) if nc.get(k) != oc.get(k)}
             problems.append("constant table differs (ours, orig): %s" % diff)
-        if static_structure(ob) != static_structure(nb):
+        if static_structure(ob) != static_structure(nb) and not (
+                shadow_band and any(static_structure(ob) == static_structure(v) for v in without_one_leaf_ifc(nb))):
             problems.append("branches differ:\n      ours %s\n      orig %s" % (" ".join(nb), " ".join(ob)))
         status = "ok " if not problems else "BAD"
         print("%s %s %-38s taps %d->%d  tokens %d->%d" % (status, h, sym, ot, nt, len(orig), len(ours)))

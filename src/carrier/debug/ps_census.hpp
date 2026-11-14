@@ -1,4 +1,5 @@
-// debug_ps_census=on: per-pixel-shader GPU cost and pixel counts.
+// debug_ps_census=on|all: per-pixel-shader GPU cost and pixel counts (all: plus
+// every drawing shader's run totals in ps_census.csv next to the carrier).
 //   - One frame in kSampleEvery is measured (pass-1 start to the next pass-1
 //     start). Inside it, every pixel-shader change (and every render-target
 //     category / pass change) starts a segment.

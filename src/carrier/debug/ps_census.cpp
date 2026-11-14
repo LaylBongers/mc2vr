@@ -4,6 +4,7 @@
 #include <d3d9.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -51,12 +52,46 @@ struct Shader {
     uint64_t pix[kPasses];
     uint64_t draws[kPasses];
     uint8_t cat;
+    // debug_ps_census=all: run totals (both eye passes)
+    double tot_gpu;
+    uint64_t tot_pix, tot_draws;
 };
 constexpr int kShaders = 2048;
 Shader g_sh[kShaders];
 int g_sh_n = 0;
 uint64_t w_frames = 0, w_unread = 0, w_overflow = 0;
 double w_gpu_total[kPasses] = {};
+// debug_ps_census=all: every drawing shader's run totals, rewritten each
+// window to ps_census.csv next to the carrier.
+bool g_all = false;
+uint64_t g_tot_frames = 0;
+
+void write_all_csv()
+{
+    wchar_t path[MAX_PATH];
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCWSTR)&write_all_csv, &self) ||
+        !GetModuleFileNameW(self, path, MAX_PATH)) {
+        return;
+    }
+    wchar_t *slash = wcsrchr(path, L'\\');
+    if (slash == nullptr) return;
+    wcscpy(slash + 1, L"ps_census.csv");
+    FILE *f = _wfopen(path, L"w");
+    if (f == nullptr) return;
+    const double n = g_tot_frames > 0 ? (double)g_tot_frames : 1.0;
+    std::fprintf(f, "hash,size,category,sampled_frames,gpu_ms_per_frame,mpix_per_frame,draws_per_frame\n");
+    for (int i = 0; i < g_sh_n; i++) {
+        const Shader &s = g_sh[i];
+        if (s.tot_draws == 0) continue;
+        std::fprintf(f, "%08x,%u,%s,%llu,%.4f,%.4f,%.2f\n", s.hash, s.size, kCat[s.cat],
+                     (unsigned long long)g_tot_frames, s.tot_gpu / n, (double)s.tot_pix / n / 1e6,
+                     (double)s.tot_draws / n);
+    }
+    std::fclose(f);
+}
+
 // debug_ps_census_watch: hashes reported every window whatever their rank.
 constexpr int kWatch = 64;
 uint32_t g_watch[kWatch];
@@ -218,7 +253,8 @@ void open_frame()
 
 bool set_enabled(const char *value)
 {
-    if (strcmp(value, "on") == 0) g_enabled = true;
+    if (strcmp(value, "all") == 0) g_enabled = g_all = true;
+    else if (strcmp(value, "on") == 0) g_enabled = true;
     else if (strcmp(value, "off") == 0) g_enabled = false;
     else return false;
     MC2VR_LOG("ps: debug_ps_census=%s", value);
@@ -359,6 +395,17 @@ void report_window()
         }
         MC2VR_LOG("ps:   watch %08x objs=%d | GPU %.3f ms | Mpix %.3f | draws %.1f (per frame, both passes)",
                   g_watch[w], objs, gpu / n, pix / n / 1e6, draws / n);
+    }
+    if (g_all) {
+        g_tot_frames += w_frames;
+        for (int i = 0; i < g_sh_n; i++) {
+            Shader &s = g_sh[i];
+            s.tot_gpu += s.gpu[1] + s.gpu[2];
+            s.tot_pix += s.pix[1] + s.pix[2];
+            s.tot_draws += s.draws[1] + s.draws[2];
+        }
+        write_all_csv();
+        MC2VR_LOG("ps: all: run totals over %llu sampled frames -> ps_census.csv", (unsigned long long)g_tot_frames);
     }
     for (int i = 0; i < g_sh_n; i++) {
         memset(g_sh[i].gpu, 0, sizeof g_sh[i].gpu);

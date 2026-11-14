@@ -19,10 +19,11 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
   - **Math:** `tools/shader_equiv.py <game>/data/shader3.bin` checks the math. It emulates each original and ours, as SM3 bytecode in numpy, on 1000 random trials, and compares the outputs to 1e-4.
     - **Inputs:** random inputs, constants and bools, so every light-count branch gets covered. The light constants are drawn in plausible ranges.
     - **Samplers:** each mocked as a smooth function of its UV. The sun shadow map is mocked as one constant depth per trial, so the 1-tap and 9-tap lookups agree and any difference is a porting error.
-    - **Blind spots:** the shadow-map UV side (cascade u/v rows, tap offsets, the 9-tap's bilinear weights), constants that never reach the output (the 30000 clamp), and real screen-space derivatives (`dsx`/`dsy` are mocked). Those need checking in game.
+    - **Shadow UV side:** for originals that already take 9 shadow taps (the PgDiff families), the random-depth trials add noise per atlas texel, so the tap offsets, bilinear weights and cascade rows are compared too. A tap moved by half a texel in `shadow.hlsli` was caught (2026-11-15).
+    - **Blind spots:** for the single-tap originals, the shadow-map UV side (cascade u/v rows, tap offsets, the 9-tap's bilinear weights), constants that never reach the output (the 30000 clamp), and real screen-space derivatives (`dsx`/`dsy` are mocked). Those need checking in game.
     - **Options:** `--self` compares each original with itself; `--perturb neg|def[:K]` corrupts ours, to show it gets caught.
     - **Tested (2026-11-13):** a deliberate reflection-weight × 0.9 and a shoreline factor of 0.95 → 0.96 in PgWaterFPDWE were both caught.
-    - Run both tools after every shader change. Each takes well under a second.
+    - Run both tools after every shader change. Each takes well under a second. Since the cascade blend band ([shadows.md](shadows.md)), run them as `shader_iface.py --shadow-band` and `shader_equiv.py --shadow lit`. The band is a deliberate difference from every original.
 - **Debug tools:** tools that hash the bound shader (`ps_census`, `camera_census`) see our bytecode's hash for replaced shaders, not the original's.
 - **Always on:** the `shader_reimpl=on|off` A/B was removed (2026-11-14). Compare against an older build if a shader is ever in doubt.
 - **Atlas size:** at a non-stock `shadow_resolution`, every 9-tap receiver's atlas texel `def` constants are rescaled at creation, ours and the game's 315 alike ([shadows.md](shadows.md)). `tools/shader_iface.py` and `shader_equiv.py` check the stock-size bytecode.
@@ -36,6 +37,7 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
 |---|---|---|
 | **PgFastFP** (vegetation and other cheap meshes), 7 variants (`shader3.bin@0x1d6370`–`@0x1dc250`): `3e76835c`, `1055364c`, `19b8861c`, `2aa895fb`, `7d01c4f5`, `8d347471`, `5fa41029` | `PgFastFP.hlsl` | the game's 9-tap sun-shadow filter instead of one binary tap ([shadows.md](shadows.md)) |
 | **PgScrubLightFP** (scrub/brush vegetation), 7 variants (`@0x2004c0`–`@0x206340`): `765f3420`, `523d88a3`, `4249bd13`, `788c2fdd`, `59ca705e`, `9de607f6`, `307dcccd` | `PgScrubLightFP.hlsl` | the same |
+| **PgDiffSpecNormAmbOccFP**, **PgDiffSpecNormFP**, **PgDiffSpecMetalNormFP**, 7 variants each (`shader3.bin@0xd9c70`…, `@0xf1bf0`…, `@0xb5270`…) | `PgDiff.hlsl`: one source, features by define (below) | none yet. These already used the game's 9-tap filter. Taken over so the cascade blend band can be added in `shadow.hlsli` ([shadows.md](shadows.md)); the math is identical to the originals, the shadow kernel included |
 | **PgDecal2FP** (decals), 7 variants (`@0xa2a0`–`@0x10070`): `deef11a9`, `8360631b`, `e40c452e`, `6751d4d3`, `4552f636`, `15cf77ad`, `e651a6c7` | `PgDecal2FP.hlsl` | the same. No material constants: ambient cube + (sun + local lights), on the raw normal, unsaturated |
 | **PgBillboardTreeFP** / `_fade` (billboard trees; one bytecode, `@0x2ff0`/`@0x3790`): `eacf64f8` | `PgBillboardTreeFP.hlsl` | the same. The two billboard views' normal-map lookups are rotated about Y and blended; ambient cube |
 | **PgUnderwaterFP** (`@0x24f4d0`): `edb3eaee` | `PgUnderwaterFP.hlsl` | the same. Wake-masked (`texkill`) surface seen from below: Blinn-Phong specular, and a Fresnel blend with a projected refraction offset by the normal |
@@ -47,6 +49,13 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
 - `lights.hlsli`: the local lights.
   - **Point light** (3 registers: position, colour, attenuation): `saturate(dist·x + z) · colour · N·L`.
   - **Spot light** (4 registers): a distance falloff and a cone falloff, each a `pow` by the light's exponent, zero behind the light, times N·L.
+- **`PgDiff.hlsl`**, the game's material shaders. The names combine features (Diff, Spec, Norm, AmbOcc, Refl, Metal, Emis, Rim, SSS), so one source takes a define per feature. A CMake family entry `<name>:<source>:<defines>` builds each family in its 7 light variants. The features ported so far:
+  - **`MC2VR_PGDIFF_SPEC`:** `specularMap`, and Blinn-Phong from the sun and the local lights. The sun's highlight is scaled by `max(0.25, visibility)`. The specular luminance can raise the alpha.
+  - **`MC2VR_PGDIFF_NORM`:** a tangent-space normal map (x in alpha, y in green; frame from `TEXCOORD1`–`3`). The originals rebuild z as `sqrt(1 − x² − 2y)`, a linear y term that looks like a slip in the game's source. It's kept, to stay identical.
+  - **`MC2VR_PGDIFF_AMBOCC`:** `COLOR0` multiplies the lit colour and the alpha.
+  - **`MC2VR_PGDIFF_METAL`:** a `reflectionMap` cube at `reflect(−V, N)`, tinted by the specular map, weighted by Fresnel⁵ · `materialData[5].x`.
+  - Families without Spec or Norm stop with an `#error` until their input layout is ported.
+  - `lights.hlsli` now also gives the local lights' Blinn-Phong specular (`local_lights_spec`). `local_lights` keeps the diffuse-only form the other families use.
 - **Variants:** each family comes in 7, built from one source with defines (`src/carrier/CMakeLists.txt`). The generated symbols carry the originals' file names: `PgFastFP`, `PgFastFP_pl`, `_pl_li`, `_pl_sl`, `_pl_sl_li`, `_sl`, `_sl_li`. They are no local lights, or point and/or spot lights in one of two counting schemes:
   - **plain** (`_pl`, `_sl`, `_pl_sl`): the highest set bool picks the count. Points take 8/4/2/1 by `b3`/`b2`/`b1`/`b0`; spots take 4/2/1 by `b6`/`b5`/`b4`.
   - **`_li`** (`MC2VR_LIGHTS_LI=1`): 2 lights always, +2 if `b2` (points) or `b6` (spots), and points +2 more if `b3` is also set.
@@ -71,8 +80,14 @@ A/B in one spot (2026-11-13, HMD, gameplay, last ~30 s of each run; per frame, b
   - They substituted at load: vegetation 13 creations, distant 5. No errors.
   - Vegetation shadows look better, and nothing came out unlit. So the `float4`-typed constant arrays (the originals' CTAB says `void`) don't matter to the game.
 - **Live (2026-11-13), all 14 vegetation variants:** substituted at load with no errors, 90 Hz held, nothing visibly wrong. The 12 lit variants draw only near the game's point and spot lights. Those are hard to pin down in play, so the lit paths were not specifically observed: accepted as working, revisit if vegetation lighting looks wrong near fires or lamps. `tools/shader_equiv.py` has since verified the lit variants' math against the originals.
-- OPEN, live check (2026-11-13): PgBillboardTreeFP and the 7 PgDecal2FP variants pass the interface check but haven't run in game. Distant trees and decals should look unchanged apart from softer shadow edges. The decals draw rarely, at certain places: indoors at the start was one.
+- **Live (2026-11-13):** PgBillboardTreeFP and the 7 PgDecal2FP variants. All substituted, no visible issues. The decals draw rarely, at certain places: indoors at the start was one.
 - **Math, all 24 replacements (2026-11-13):** `shader_equiv.py` finds 0 differing, max error ~1e-16. That includes the 12 lit vegetation and 6 lit decal variants that couldn't be observed in game.
 - **All 27 single-tap receivers are reimplemented (2026-11-14):** both checks pass on every one. `shader_equiv.py` mocks `dsx`/`dsy` as an affine function, and enlarges the `Waves` footprint scales so the wave branches run.
-- OPEN, live check: the five water shaders (PgUnderwaterFP, PgWaterFPDWE, PgWaterFP, PgWaterFPbl, PgWaterFP_LI). Water should look unchanged apart from softer sun-shadow edges: waves, foam, wakes, shoreline and refraction.
+- **Live (2026-11-14):** the five water shaders (PgUnderwaterFP, PgWaterFPDWE, PgWaterFP, PgWaterFPbl, PgWaterFP_LI). All 27 substituted, no visual issues.
+- **Live (2026-11-15):** the 21 PgDiff variants (with the cascade blend band). All 48 substituted, no visible issues.
+- **Which original 9-tap families matter** (for the cascade blend band, [shadows.md](shadows.md)). `debug_ps_census=all` with `shadow_resolution=1024` writes the run's totals to `ps_census.csv`; `tools/ps_census_families.py` ranks them by family. First run (2026-11-14, ~7 min of gameplay), share of shadow-receiver pixels:
+  - **PgDiffSpecNormAmbOccFP** 67%; PgDiffSpecNormFP 9%; PgFastFP (ours) 6%; PgDiffSpecMetalNormFP 3%;
+  - the terrain set PgTerrainMeshFP + 1D–4D about 7% together; PgDiffFP 2%; PgDiffAmbOccFP, PgDiffSpecFP and PgDiffSpecReflNormAmbOccFP 1–2% each; the rest under 1%.
+  - Only the base and `_pl` variants drew.
+  - The `PgDiff*FP` names combine features (Spec, Norm, AmbOcc, Refl, Metal, Emis, Rim, SSS), most likely one uber-shader source with feature defines.
 - Names of the originals: [reverse_engineering/shader_containers.md](reverse_engineering/shader_containers.md). The light-variant suffixes are `_pl`/`_sl`/`_pl_sl`, plus `_li` versions.

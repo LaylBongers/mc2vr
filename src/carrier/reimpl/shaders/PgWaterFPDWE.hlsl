@@ -75,7 +75,7 @@ float4 main(Input i) : COLOR
     const float3 toEye = cameraPos - i.worldPos;
     const float3 r = reflect(-(toEye * rsqrt(dot(toEye, toEye))), n);
 
-    const float vis = lerp(1, shadow_9tap(shadow_coords(i.worldPos, i.depthFade.x)), clamp01(i.depthFade.y));
+    const float vis = lerp(1, sun_shadow(i.worldPos, i.depthFade.x), clamp01(i.depthFade.y));
     const float ndl = max(dot(n, -globalLightData[0].xyz), 0);
     const float3 light = (vis * globalLightData[1].rgb * ndl) * materialData[0].rgb + materialData[2].rgb * i.ambient.rgb;
     const float3 litDepth = depthColour.rgb * light;

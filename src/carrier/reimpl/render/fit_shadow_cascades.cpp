@@ -42,6 +42,12 @@ constexpr float kNegEighth = -0.125f;      // [0x00beac80]
 // The stabilized fit's parameters (docs/shadows.md).
 constexpr float kOriginQuantum = 256.0f;   // world units: light-space origin grid = N_i whole texels
 constexpr float kRescaleSlack = 0.05f;     // keep a texel size while it wastes at most this much
+// The receivers' cascade blend band (reimpl/shaders/shadow.hlsli
+// kCascadeBlendBand, the same fraction: change both): over the last this much
+// of cascade i's depth range they also look up cascade i + 1, so cascade
+// i + 1 must cover it. Fitted with a 10% margin (the shaders measure cascade
+// 0's range from 0, the slices from the near plane).
+constexpr float kCascadeBlendBand = 0.2f;
 constexpr float kPi = 3.14159265358979f;
 
 // Window counters (render thread writes, the report poller reads; racy like
@@ -247,7 +253,16 @@ void fit_stable(ViewContext *ctx, const uint8_t *shell, ViewState &st)
 
     // ---- per cascade: sphere fit, whole texels ----
     for (uint32_t i = 0; i < 4; i++) {
-        const Sphere s = slice_sphere(slice_corners(ctx, i));
+        // The slice, extended back over the previous cascade's blend band:
+        // its near quad moved to the band's start along the frustum edges.
+        float slice[24];
+        std::memcpy(slice, slice_corners(ctx, i), sizeof slice);
+        if (i > 0) {
+            const float *prev = slice_corners(ctx, i - 1);
+            const float t = 1.0f - kCascadeBlendBand * 1.1f;
+            for (uint32_t k = 0; k < 12; k++) slice[k] = prev[k] + (prev[12 + k] - prev[k]) * t;
+        }
+        const Sphere s = slice_sphere(slice);
         st.n[i] = pick_texel_count(st, st.n[i], 2.0f * s.r / cascade_texels());
         const float texel = kOriginQuantum / (float)st.n[i];
         const float half = texel * (0.5f * cascade_texels());  // the ortho half-extent

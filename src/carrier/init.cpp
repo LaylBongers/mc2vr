@@ -135,7 +135,7 @@ static void load_conf()
             // Per-pixel-shader GPU time + pixel counts (log-only;
             // debug/ps_census.hpp). Must precede CreateDevice.
             if (!ps_census::set_enabled(value)) {
-                MC2VR_LOG("conf: debug_ps_census=%s not recognized (use on|off)", value);
+                MC2VR_LOG("conf: debug_ps_census=%s not recognized (use on|all|off)", value);
             }
         } else if (strcmp(key, "hud_distance") == 0) {
             // HUD layer distance in metres (vr/hud.hpp, docs/hud.md).

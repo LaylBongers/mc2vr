@@ -167,7 +167,7 @@ float4 main(Input i) : COLOR
     const float3 r = reflect(-v, n);
 
     // The sun: diffuse, and a specular that keeps a quarter in shadow.
-    const float vis = lerp(1, shadow_9tap(shadow_coords(i.worldPos, i.depthFade.x)), clamp01(i.depthFade.y));
+    const float vis = lerp(1, sun_shadow(i.worldPos, i.depthFade.x), clamp01(i.depthFade.y));
     const float3 sun = vis * globalLightData[1].rgb;
     const float3 specularLight = max(vis, 0.25) * globalLightData[1].rgb;
     const float3 l = -globalLightData[0].xyz;
