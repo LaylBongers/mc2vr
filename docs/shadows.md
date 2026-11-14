@@ -40,19 +40,18 @@ VR makes it continuous and larger:
 
 ## OPEN: fixes (planned order)
 
-1. **Stabilize the fit:** implemented (2026-11-13) in `reimpl/render/fit_shadow_cascades.cpp`, conf `shadow_fit=stable|stock` (default `stable`). Not yet live-verified.
+1. **Stabilize the fit:** done (2026-11-13) in `reimpl/render/fit_shadow_cascades.cpp`. Always on: the `shadow_fit=stable|stock` A/B and the stock transcription were removed on 2026-11-14 after the runs below.
    - **Light view:** rotation only, aimed along the game's sun direction exactly. Its origin is snapped to a 256-unit grid near the camera.
    - **Cascades:** each is the bounding sphere of its slice. The centre lies on the slice axis, and the radius depends only on the slice's shape, so it doesn't change with rotation.
    - **Texels:** the size is T = 256 / N for an integer N, kept while it wastes at most 5%. The cascade centre is snapped to whole T. Since every origin step is a whole number of texels, the texel grid is fixed in the world.
    - **Depth:** from a bounding sphere of the whole shadow range, with the same 300-unit caster pull-back, so its scale doesn't change with rotation.
    - **Live checks:**
-     - `shadowfit: selfcheck vs original: … bad=0`: the stock path matches the original bit for bit.
      - The `shadowfit: window:` line: `rescales=0`, and each cascade's texel min = max while the FOV holds (ADS zoom may rescale).
      - `sunDriftMax`: whether the sun moves at all.
-     - In the HMD: shadow edges static under head motion. A/B with `shadow_fit=stock`.
+     - In the HMD: shadow edges static under head motion.
    - **First live run** (2026-11-13, gameplay, HMD):
      - A significant visible improvement.
-     - `selfcheck fits=240 bad=0`.
+     - `selfcheck fits=240 bad=0`: the stock transcription (since removed) matched the original bit for bit.
      - Four fits per frame (~360/s).
      - OPEN: `rescales` were 7–25 per 10 s, cause unknown. The window line now breaks fits down per view (`shadowfit:   view` lines: grow/shrink, near plane and tanH ranges), because that run's texel ranges mixed the views.
      - The sun moved: two one-off jumps (65°, 49°) and a ~30 s stretch of 0.1–0.16° steps per fit. Cause, observed in game: **environment regions**. Crossing into one blends the sun direction, along with the lighting, the clouds and possibly the tone mapping; the shadows visibly move. The first build re-aimed the light only after 0.1° of drift, which turned a blend into steps every few frames. It now tracks the sun exactly: a still sun gives bit-identical matrices (the calm windows had `sunDriftMax=0.000°`), and a blend moves the shadows smoothly. Texel crawl is now confined to the blends, as the game intends the shadows to move then.
@@ -67,7 +66,9 @@ VR makes it continuous and larger:
        - It was perfectly still for the whole 2.5-minute drive.
      - OPEN: whether those 85 s were a blend or jitter. `sunPath`/`sunNet` per window settle it: path ≈ net is a blend; path ≫ net is jitter, which would want an angular snap.
    - **Cost:** a sphere wastes texels against the tight box, which loses resolution near the camera (estimate, cascade 0: ~1.7 cm stock FOV, ~4 cm VR union). Step 2 recovers it.
-2. **Resolution:** implemented (2026-11-14), conf `shadow_resolution=1024|2048|4096`, the edge of each cascade (default 1024, stock). Not yet live-verified.
+2. **Resolution:** implemented (2026-11-14), conf `shadow_resolution=1024|2048|4096`, the edge of each cascade. The default is **2048**; 1024 is stock.
+   - **Live, 2048 (2026-11-14):** clearly sharper, no artifacts. The atlas costs ~0.68 ms GPU per frame (both eye passes) against ~0.54 ms at 1024. 4096 was judged not worth it.
+   - **What remains is the cascade transition**, mainly c0 → c1. Each cascade's texel size and the 9-tap filter's width jump about 4× at its boundary. The fix is a blend band in the receivers (OPEN). The game's 315 9-tap originals switch hard too, so a band needs the drawing families among them reimplemented.
    - **Split retuning was dropped.** With the stabilized fit and the HMD FOV, a cascade's texel size is set by its far distance (~0.41 cm per metre). For a 10 m first split, geometric spacing over 400 m gives ends of 10/34/117/400, and the stock 10/40/130/400 is already that. Other splits only trade one distance band against another.
    - **Estimated texels per cascade, HMD union FOV:**
 

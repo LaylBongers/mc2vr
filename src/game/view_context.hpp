@@ -153,8 +153,7 @@ inline constexpr Function<void(const float *splits, ViewContext *ctx, const Frus
                                    {EAX, STK, STK, STK, STK, STK, STK, STK, STK, STK, STK}};
 // The cascade fit, stdcall(ctx), `ret 4`. Reimplemented
 // (reimpl/render/fit_shadow_cascades.hpp); its only caller is the builder
-// reimplementation, so the original stays callable (the reimplementation's
-// self-check runs it on a copy of the ctx).
+// reimplementation, which calls ours directly (no entry).
 inline constexpr Function<void(ViewContext *ctx)> ViewContext_FitShadowCascades{
     "ViewContext_FitShadowCascades", 0x00859ad0u, {STK}};
 // Light/camera world matrix from eye and target: rows right, up, forward =

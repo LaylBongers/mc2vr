@@ -36,9 +36,7 @@
 #include "debug/wait_census.hpp"
 #include "vr/pacing.hpp"
 #include "vr/xr_session.hpp"
-#include "reimpl/render/fit_shadow_cascades.hpp"
 #include "reimpl/render/shadow_surfaces.hpp"
-#include "hooks/shader_reimpl.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -154,23 +152,11 @@ static void load_conf()
             if (!hud::set_size(value)) {
                 MC2VR_LOG("conf: hud_size=%s not recognized (degrees, 10-120)", value);
             }
-        } else if (strcmp(key, "shader_reimpl") == 0) {
-            // Reimplemented pixel shaders (hooks/shader_reimpl.hpp,
-            // docs/shaders.md): on (default) or off, for A/B.
-            if (!hooks::shader_reimpl::set_enabled(value)) {
-                MC2VR_LOG("conf: shader_reimpl=%s not recognized (use on|off)", value);
-            }
         } else if (strcmp(key, "shadow_resolution") == 0) {
             // Shadow atlas cascade edge (reimpl/render/shadow_surfaces.hpp,
             // docs/shadows.md): 1024 (stock), 2048 or 4096. Must precede device creation.
             if (!reimpl::set_shadow_resolution(value)) {
                 MC2VR_LOG("conf: shadow_resolution=%s not recognized (use 1024|2048|4096)", value);
-            }
-        } else if (strcmp(key, "shadow_fit") == 0) {
-            // Shadow cascade fit (reimpl/render/fit_shadow_cascades.hpp,
-            // docs/shadows.md): stable (default) or stock, for A/B.
-            if (!reimpl::set_shadow_fit(value)) {
-                MC2VR_LOG("conf: shadow_fit=%s not recognized (use stable|stock)", value);
             }
         } else if (strcmp(key, "msaa") == 0) {
             // Scene MSAA sample count (vr/msaa.hpp, docs/msaa.md). Must

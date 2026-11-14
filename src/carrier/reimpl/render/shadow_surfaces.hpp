@@ -20,7 +20,7 @@
 // become our log; the sizes come from shadow_cascade_size(); a failed texture
 // creation is not followed by GetSurfaceLevel on NULL (the original crashes).
 //
-// conf shadow_resolution = 1024 (stock, default) | 2048 | 4096: the edge of
+// conf shadow_resolution = 1024 (stock) | 2048 (default) | 4096: the edge of
 // each of the four cascades. The 9-tap receivers' texel constants follow
 // (hooks/shader_reimpl.cpp), and so does the stabilized fit
 // (fit_shadow_cascades.cpp). Larger costs VRAM (depth 64 / 256 MB) and

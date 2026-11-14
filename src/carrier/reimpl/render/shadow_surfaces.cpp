@@ -22,7 +22,7 @@ namespace {
 using namespace game;
 
 constexpr uint32_t kStockCascade = 0x400;  // the stock cascade edge (immediates throughout)
-uint32_t g_cascade = kStockCascade;
+uint32_t g_cascade = 2048;  // shadow_resolution default (stock: kStockCascade)
 
 // The original's .data tables, by cascade: D3DRS_DEPTHBIAS and
 // D3DRS_SLOPESCALEDEPTHBIAS (float bits; 2^-20 and 2.5 for every cascade).

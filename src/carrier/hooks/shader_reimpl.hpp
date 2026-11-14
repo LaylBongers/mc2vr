@@ -13,16 +13,11 @@
 //
 // Debug tools that hash bound shaders (ps_census, camera_census) see our
 // bytecode's hashes for replaced shaders.
-//
-// conf shader_reimpl = on (default) | off (the originals, for A/B; the
-// texel scaling for shadow_resolution applies either way).
 #pragma once
 
 #include <cstdint>
 
 namespace mc2vr::hooks::shader_reimpl {
-
-bool set_enabled(const char *value);
 
 // The bytecode to create instead of `original` (a CreatePixelShader
 // argument): ours when the original is reimplemented, else `original`. At a

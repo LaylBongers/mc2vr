@@ -24,8 +24,8 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
     - **Tested (2026-11-13):** a deliberate reflection-weight × 0.9 and a shoreline factor of 0.95 → 0.96 in PgWaterFPDWE were both caught.
     - Run both tools after every shader change. Each takes well under a second.
 - **Debug tools:** tools that hash the bound shader (`ps_census`, `camera_census`) see our bytecode's hash for replaced shaders, not the original's.
-- **Conf:** `shader_reimpl=on|off`, default on. Off gives the originals, for A/B.
-- **Atlas size:** at a non-stock `shadow_resolution`, every 9-tap receiver's atlas texel `def` constants are rescaled at creation, ours and the game's 315 alike, with `shader_reimpl` on or off ([shadows.md](shadows.md)). `tools/shader_iface.py` and `shader_equiv.py` check the stock-size bytecode.
+- **Always on:** the `shader_reimpl=on|off` A/B was removed (2026-11-14). Compare against an older build if a shader is ever in doubt.
+- **Atlas size:** at a non-stock `shadow_resolution`, every 9-tap receiver's atlas texel `def` constants are rescaled at creation, ours and the game's 315 alike ([shadows.md](shadows.md)). `tools/shader_iface.py` and `shader_equiv.py` check the stock-size bytecode.
 - **Log:**
   - `shaders: <hash> <name> -> reimplementation` at each substitution.
   - `shaders: window:` with the substitution counts per entry, logged only when shader creations happened.
@@ -70,7 +70,7 @@ A/B in one spot (2026-11-13, HMD, gameplay, last ~30 s of each run; per frame, b
 - **Live (2026-11-13), the two sun-only vegetation shaders:**
   - They substituted at load: vegetation 13 creations, distant 5. No errors.
   - Vegetation shadows look better, and nothing came out unlit. So the `float4`-typed constant arrays (the originals' CTAB says `void`) don't matter to the game.
-- **Live (2026-11-13), all 14 vegetation variants:** substituted at load with no errors, 90 Hz held, nothing visibly wrong. The 12 lit variants draw only near the game's point and spot lights. Those are hard to pin down in play, so the lit paths were not specifically observed: accepted as working, revisit if vegetation lighting looks wrong near fires or lamps (A/B with `shader_reimpl=off`).
+- **Live (2026-11-13), all 14 vegetation variants:** substituted at load with no errors, 90 Hz held, nothing visibly wrong. The 12 lit variants draw only near the game's point and spot lights. Those are hard to pin down in play, so the lit paths were not specifically observed: accepted as working, revisit if vegetation lighting looks wrong near fires or lamps. `tools/shader_equiv.py` has since verified the lit variants' math against the originals.
 - OPEN, live check (2026-11-13): PgBillboardTreeFP and the 7 PgDecal2FP variants pass the interface check but haven't run in game. Distant trees and decals should look unchanged apart from softer shadow edges. The decals draw rarely, at certain places: indoors at the start was one.
 - **Math, all 24 replacements (2026-11-13):** `shader_equiv.py` finds 0 differing, max error ~1e-16. That includes the 12 lit vegetation and 6 lit decal variants that couldn't be observed in game.
 - **All 27 single-tap receivers are reimplemented (2026-11-14):** both checks pass on every one. `shader_equiv.py` mocks `dsx`/`dsy` as an affine function, and enlarges the `Waves` footprint scales so the wave branches run.

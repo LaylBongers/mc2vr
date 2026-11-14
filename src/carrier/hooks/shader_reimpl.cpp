@@ -82,7 +82,6 @@ Entry g_entries[] = {
     {0xdcf34dbdu, "PgWaterFPbl (shader3.bin@0x24fe80)", mc2vr::shaders::PgWaterFPbl, 0, false},
 };
 
-bool g_enabled = true;
 uint32_t g_seen = 0, g_reported_seen = 0;  // CreatePixelShader calls
 
 // The bytecode's length in bytes: tokens up to and including the end token
@@ -112,15 +111,6 @@ uint32_t fnv1a(const uint8_t *p, uint32_t n)
 }
 
 } // namespace
-
-bool set_enabled(const char *value)
-{
-    if (std::strcmp(value, "on") == 0) g_enabled = true;
-    else if (std::strcmp(value, "off") == 0) g_enabled = false;
-    else return false;
-    MC2VR_LOG("shaders: shader_reimpl=%s", value);
-    return true;
-}
 
 namespace {
 
@@ -214,19 +204,17 @@ const uint32_t *substitute_pixel_shader(const uint32_t *original)
     if (original == nullptr) return original;
     const uint32_t size = bytecode_size(original);
     if (size == 0) return original;
-    if (g_enabled) {
-        const uint32_t hash = fnv1a(reinterpret_cast<const uint8_t *>(original), size);
-        for (Entry &e : g_entries) {
-            if (e.original != hash || e.failed) continue;
-            e.created++;
-            if (e.created == 1) {
-                MC2VR_LOG("shaders: %08x %s -> reimplementation (%u bytes; later creations counted in the window "
-                          "line)",
-                          hash, e.name, bytecode_size(e.code));
-            }
-            e.last_used = texel_scaled(e.code);
-            return e.last_used;
+    const uint32_t hash = fnv1a(reinterpret_cast<const uint8_t *>(original), size);
+    for (Entry &e : g_entries) {
+        if (e.original != hash || e.failed) continue;
+        e.created++;
+        if (e.created == 1) {
+            MC2VR_LOG("shaders: %08x %s -> reimplementation (%u bytes; later creations counted in the window "
+                      "line)",
+                      hash, e.name, bytecode_size(e.code));
         }
+        e.last_used = texel_scaled(e.code);
+        return e.last_used;
     }
     return texel_scaled(original);
 }
@@ -256,8 +244,8 @@ void report_window()
                            e.failed ? "(failed)" : "");
         if (n >= (int)sizeof line) break;
     }
-    MC2VR_LOG("shaders: window: %s CreatePixelShader calls=%u texelScaled=%u | substituted:%s",
-              g_enabled ? "on" : "off", g_seen, g_scaled_count, line);
+    MC2VR_LOG("shaders: window: CreatePixelShader calls=%u texelScaled=%u | substituted:%s", g_seen,
+              g_scaled_count, line);
 }
 
 } // namespace mc2vr::hooks::shader_reimpl

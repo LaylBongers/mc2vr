@@ -1,13 +1,12 @@
-// ViewContext_FitShadowCascades — see fit_shadow_cascades.hpp. The stock path
-// follows the original (0x00859ad0-0x0085a3ee) block by block, in its float
-// operation order; deviations: the Matrix_Copy3x4 copies are dropped (the
-// original copies the look-at result in, inverts it and copies it back:
-// the net effect is the inverse) and the output copies are direct writes.
+// ViewContext_FitShadowCascades — see fit_shadow_cascades.hpp. Produces the
+// original's outputs (0x00859ad0-0x0085a3ee: the light view, the base ortho,
+// per cascade the render VP, atlas scale/bias and world -> atlas matrix) from
+// a fit stabilized against camera motion. The original's constants keep their
+// .rdata addresses for reference.
 
 #include "reimpl/render/fit_shadow_cascades.hpp"
 
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -35,7 +34,6 @@ constexpr float kCasterPullback = 300.0f;  // [0x00bad260] light-space z near = 
 constexpr float kOne = 1.0f;               // [0x00b9b664]
 constexpr float kTwo = 2.0f;               // [0x00b92874]
 constexpr float kNegZero = -0.0f;          // [0x00bea764]: `-0.0 - x` negates
-constexpr float kNegOne = -1.0f;           // [0x00dfcb5c]
 constexpr float kHalf = 0.5f;              // [0x00bbb98c]
 constexpr float kQuarter = 0.25f;          // [0x00bbc7dc]
 constexpr float kEighth = 0.125f;          // [0x00ba904c]
@@ -46,9 +44,6 @@ constexpr float kOriginQuantum = 256.0f;   // world units: light-space origin gr
 constexpr float kRescaleSlack = 0.05f;     // keep a texel size while it wastes at most this much
 constexpr float kPi = 3.14159265358979f;
 
-enum class Mode { Stable, Stock };
-Mode g_mode = Mode::Stable;
-
 // Window counters (render thread writes, the report poller reads; racy like
 // the other window reports).
 uint32_t g_fits = 0;
@@ -58,14 +53,6 @@ float g_sun_path = 0.0f;       // degrees, sum of the per-fit changes (path ~ ne
 float g_sun_window_start[3];   // the window's first sun, for the net change
 bool g_sun_window_started = false;
 uint32_t g_rescales = 0;
-// Self-check against the original (first kSelfChecks fits, whatever the mode).
-constexpr uint32_t kSelfChecks = 240;
-uint32_t g_checks = 0;
-uint32_t g_check_bad = 0;      // fits with any output bit different
-uint32_t g_check_bad_off = 0;  // first differing ctx offset of the last bad fit
-float g_check_bad_ours = 0.0f, g_check_bad_orig = 0.0f;
-bool g_check_reported = false;
-
 float take_min(float p, float m) { return (p > m) ? m : p; }  // comiss p,m; ja keep
 float take_max(float p, float m) { return (m > p) ? m : p; }  // comiss m,p; ja keep
 
@@ -80,9 +67,9 @@ const float *slice_corners(const ViewContext *ctx, uint32_t i)
                                            game::kCascadeFrustumCorners);
 }
 
-// Per-view state: the stable fit's texel counts and depth range (kept while
-// they still fit, so float noise in the radii never rescales a cascade), and
-// the view's window stats (both modes).
+// Per-view state: the texel counts and depth range (kept while they still
+// fit, so float noise in the radii never rescales a cascade), and the view's
+// window stats.
 struct ViewState {
     const ViewContext *ctx;
     uint32_t n[4];   // texel size = kOriginQuantum / n
@@ -120,109 +107,11 @@ ViewState &view_state(const ViewContext *ctx)
     return v;
 }
 
-void note_texel(ViewState *v, uint32_t i, float world_texel)
+void note_texel(ViewState &v, uint32_t i, float world_texel)
 {
-    if (v == nullptr) return;
-    if (world_texel < v->texMin[i]) v->texMin[i] = world_texel;
-    if (world_texel > v->texMax[i]) v->texMax[i] = world_texel;
+    if (world_texel < v.texMin[i]) v.texMin[i] = world_texel;
+    if (world_texel > v.texMax[i]) v.texMax[i] = world_texel;
 }
-
-// ---- the original ---------------------------------------------------------------------
-
-// stats = the view's window stats (null for the self-check's copy).
-void fit_stock(ViewContext *ctx, const uint8_t *shell, ViewState *stats)
-{
-    // ---- light view 0x859ae5-0x859b7b ----
-    float sun[3];
-    std::memcpy(sun, shell + game::kShellSunDirNeg, sizeof sun);
-    const float eye[3] = {ctx->cameraWorld[12], ctx->cameraWorld[13], ctx->cameraWorld[14]};
-    float target[3];
-    target[0] = eye[0] + sun[0];
-    target[1] = sun[1] + eye[1];
-    target[2] = sun[2] + eye[2];
-    float world[16];
-    game::Matrix_LookAtToWorld(target, world, eye);
-    float lv[16];
-    game::Matrix_Inverse4x4(world, lv);
-
-    // ---- whole shadow range: light-space AABB 0x859b80-0x859c74 ----
-    float mnx = kFltMax, mny = kFltMax, mnz = kFltMax;
-    float mxx = kFltLow, mxy = kFltLow, mxz = kFltLow;
-    for (uint32_t k = 0; k < 8; k++) {
-        float p[3];
-        transform(p, ctx->frustumShadow.corners[k], lv);
-        mnx = take_min(p[0], mnx);
-        mny = take_min(p[1], mny);
-        mnz = take_min(p[2], mnz);
-        mxx = take_max(p[0], mxx);
-        mxy = take_max(p[1], mxy);
-        mxz = take_max(p[2], mxz);
-    }
-
-    // ---- base ortho 0x859c7a-0x859d99 ----
-    const float zn = mnz - kCasterPullback;
-    float o[16] = {};
-    const float dx = mxx - mnx;
-    o[0] = kTwo / dx;
-    o[12] = kNegZero - (mxx + mnx) / dx;
-    const float dy = mxy - mny;
-    o[5] = kTwo / dy;
-    o[13] = kNegZero - (mxy + mny) / dy;
-    const float dz = mxz - zn;
-    o[10] = kOne / dz;
-    o[14] = (kNegOne / dz) * zn;
-    o[15] = kOne;
-    float base[16];
-    game::D3DXMatrixMultiply(base, lv, o);
-
-    // ---- per cascade 0x859dae-0x85a2d0 ----
-    for (uint32_t i = 0; i < 4; i++) {
-        const float *c = slice_corners(ctx, i);
-        float cnx = kFltMax, cny = kFltMax, cxx = kFltLow, cxy = kFltLow;
-        for (uint32_t k = 0; k < 8; k++) {
-            float p[3];
-            transform(p, c + 3 * k, base);
-            cnx = take_min(p[0], cnx);
-            cny = take_min(p[1], cny);
-            cxx = take_max(p[0], cxx);
-            cxy = take_max(p[1], cxy);
-        }
-        const float fi = (float)i * kQuarter;
-        const float ddy = cxy - cny;
-        const float ddx = cxx - cnx;
-        const float oyq = (cxy + cny) / ddy;
-        const float oxq = (cxx + cnx) / ddx;
-        const float sx = kTwo / ddx;
-        const float ox = kNegZero - oxq;
-        const float oy = kNegZero - oyq;
-        const float sy = kTwo / ddy;
-        note_texel(stats, i, ddx / o[0] / cascade_texels());  // light-space units (not in the original)
-        float *const sb = ctx->cascadeScaleBias[i];
-        sb[0] = sx * kHalf;
-        sb[1] = sy * kNegEighth;
-        sb[2] = (ox + kOne) * kHalf;
-        sb[3] = (fi - oy * kEighth) + kEighth;
-        float cm[16] = {};
-        cm[0] = sx;
-        cm[5] = sy;
-        cm[10] = kOne;
-        cm[12] = ox;
-        cm[13] = oy;
-        cm[15] = kOne;
-        float am[16] = {};
-        am[0] = sb[0];
-        am[5] = sb[1];
-        am[10] = kOne;
-        am[12] = sb[2];
-        am[13] = sb[3];
-        am[15] = kOne;
-        game::D3DXMatrixMultiply(ctx->cascadeViewProj[i], base, cm);
-        game::D3DXMatrixMultiply(ctx->cascadeAtlas[i], base, am);
-    }
-    std::memcpy(ctx->shadowBase, base, sizeof base);
-}
-
-// ---- the stabilized fit ---------------------------------------------------------------
 
 struct Sphere {
     float c[3];
@@ -366,7 +255,7 @@ void fit_stable(ViewContext *ctx, const uint8_t *shell, ViewState &st)
         transform(c, s.c, lv);
         const float cx = texel * std::nearbyint(c[0] / texel);
         const float cy = texel * std::nearbyint(c[1] / texel);
-        note_texel(&st, i, texel);
+        note_texel(st, i, texel);
 
         float cm[16] = {};  // light space -> cascade clip
         cm[0] = kOne / half;
@@ -402,74 +291,29 @@ void fit_stable(ViewContext *ctx, const uint8_t *shell, ViewState &st)
     std::memcpy(ctx->shadowBase, base, sizeof base);
 }
 
-// Runs the original and the stock path on copies of the ctx and compares
-// every output bit.
-void self_check(const ViewContext *ctx, const uint8_t *shell)
-{
-    static ViewContext orig, ours;  // ~3.7 KB each; render thread only
-    std::memcpy(&orig, ctx, sizeof orig);
-    std::memcpy(&ours, ctx, sizeof ours);
-    game::ViewContext_FitShadowCascades(&orig);
-    fit_stock(&ours, shell, nullptr);
-    const auto *a = reinterpret_cast<const uint8_t *>(&ours);
-    const auto *b = reinterpret_cast<const uint8_t *>(&orig);
-    constexpr uint32_t lo = offsetof(ViewContext, cascadeViewProj), hi = offsetof(ViewContext, re70);
-    for (uint32_t off = lo; off < hi; off += 4) {
-        if (std::memcmp(a + off, b + off, 4) != 0) {
-            g_check_bad++;
-            g_check_bad_off = off;
-            std::memcpy(&g_check_bad_ours, a + off, 4);
-            std::memcpy(&g_check_bad_orig, b + off, 4);
-            break;
-        }
-    }
-    g_checks++;
-}
-
 } // namespace
-
-bool set_shadow_fit(const char *value)
-{
-    if (std::strcmp(value, "stable") == 0) g_mode = Mode::Stable;
-    else if (std::strcmp(value, "stock") == 0) g_mode = Mode::Stock;
-    else return false;
-    MC2VR_LOG("shadowfit: shadow_fit=%s", value);
-    return true;
-}
 
 void ViewContext_FitShadowCascades(game::ViewContext *ctx)
 {
     const uint8_t *const shell = game::g_RenderShellPtrB::get();
-    if (g_checks < kSelfChecks) self_check(ctx, shell);
     ViewState &st = view_state(ctx);
     st.fits++;
     st.nearMin = std::fmin(st.nearMin, ctx->frustum.nearZ);
     st.nearMax = std::fmax(st.nearMax, ctx->frustum.nearZ);
     st.thMin = std::fmin(st.thMin, std::fabs(ctx->tanH));
     st.thMax = std::fmax(st.thMax, std::fabs(ctx->tanH));
-    if (g_mode == Mode::Stock) {
-        fit_stock(ctx, shell, &st);
-    } else {
-        fit_stable(ctx, shell, st);
-    }
+    fit_stable(ctx, shell, st);
     g_fits++;
 }
 
 void shadow_fit_report_window()
 {
-    if (g_checks >= kSelfChecks && !g_check_reported) {
-        // Oracle: bad=0 — the stock path reproduces the original bit for bit.
-        MC2VR_LOG("shadowfit: selfcheck vs original: fits=%u bad=%u (last bad: ctx+0x%03x ours=%.9g orig=%.9g)",
-                  g_checks, g_check_bad, g_check_bad_off, (double)g_check_bad_ours, (double)g_check_bad_orig);
-        g_check_reported = true;
-    }
     if (g_fits == 0) return;
-    // Oracles (stable): per view, grow/shrink = 0 and each cascade's texel
+    // Oracles: per view, grow/shrink = 0 and each cascade's texel
     // min = max while its near plane and tanH hold (ADS zoom and the camera's
     // near plane change the slices); sunUpdates counts the fits whose sun
     // changed (region blends; sunDriftMax = the largest step between fits,
-    // sunDev per view: whether views disagree on it). Stock: the texel ranges show how much the original's
-    // fit breathes.
+    // sunDev per view: whether views disagree on it).
     float sun_net = 0.0f;
     {
         const float *a = g_sun_window_start, *b = g_sun_last;
@@ -480,9 +324,8 @@ void shadow_fit_report_window()
             sun_net = std::acos(std::fmin(d, 1.0f)) * (180.0f / kPi);
         }
     }
-    MC2VR_LOG("shadowfit: window: mode=%s fits=%u sunUpdates=%u sunDriftMax=%.3f° sunPath=%.2f° sunNet=%.2f° "
-              "rescales=%u",
-              g_mode == Mode::Stable ? "stable" : "stock", g_fits, g_sun_updates, (double)g_sun_drift_max,
+    MC2VR_LOG("shadowfit: window: fits=%u sunUpdates=%u sunDriftMax=%.3f° sunPath=%.2f° sunNet=%.2f° rescales=%u",
+              g_fits, g_sun_updates, (double)g_sun_drift_max,
               (double)g_sun_path, (double)sun_net, g_rescales);
     for (ViewState &v : g_views) {
         if (v.ctx == nullptr || v.fits == 0) continue;
