@@ -37,6 +37,7 @@
 #include "vr/pacing.hpp"
 #include "vr/xr_session.hpp"
 #include "reimpl/render/fit_shadow_cascades.hpp"
+#include "reimpl/render/shadow_surfaces.hpp"
 #include "hooks/shader_reimpl.hpp"
 
 #include <cstdio>
@@ -158,6 +159,12 @@ static void load_conf()
             // docs/shaders.md): on (default) or off, for A/B.
             if (!hooks::shader_reimpl::set_enabled(value)) {
                 MC2VR_LOG("conf: shader_reimpl=%s not recognized (use on|off)", value);
+            }
+        } else if (strcmp(key, "shadow_resolution") == 0) {
+            // Shadow atlas cascade edge (reimpl/render/shadow_surfaces.hpp,
+            // docs/shadows.md): 1024 (stock), 2048 or 4096. Must precede device creation.
+            if (!reimpl::set_shadow_resolution(value)) {
+                MC2VR_LOG("conf: shadow_resolution=%s not recognized (use 1024|2048|4096)", value);
             }
         } else if (strcmp(key, "shadow_fit") == 0) {
             // Shadow cascade fit (reimpl/render/fit_shadow_cascades.hpp,

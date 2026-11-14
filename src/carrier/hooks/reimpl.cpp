@@ -21,6 +21,7 @@
 #include "reimpl/render/end_sub_view.hpp"
 #include "reimpl/render/render_cmd.hpp"
 #include "reimpl/render/setup_viewports.hpp"
+#include "reimpl/render/shadow_surfaces.hpp"
 #include "reimpl/render/submit_to_gpu.hpp"
 
 namespace mc2vr::hooks {
@@ -46,6 +47,7 @@ const std::array kReplacements = {
     replace<game::PgLtiBloom_EmitPasses, &reimpl::PgLtiBloom_EmitPasses>(0x00750b77u),
     replace<game::PgClouds_EmitCloudRender1, &reimpl::PgClouds_EmitCloudRender1>(0x0047e8b1u),
     replace<game::PgClouds_EmitCloudRender2, &reimpl::PgClouds_EmitCloudRender2>(0x0047f089u),
+    replace<game::PgLtiShadow_CreateSurfaces, &reimpl::PgLtiShadow_CreateSurfaces>(0x00756388u),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;

@@ -391,8 +391,8 @@ HRESULT __stdcall createps_hook(IDirect3DDevice9 *self, const DWORD *function, I
     const uint32_t *use = hooks::shader_reimpl::substitute_pixel_shader(original);
     HRESULT hr = g_createps_hook->stdcall<HRESULT>(self, reinterpret_cast<const DWORD *>(use), shader);
     if (FAILED(hr) && use != original) {
-        hooks::shader_reimpl::on_substitute_failed(use, (long)hr);
-        hr = g_createps_hook->stdcall<HRESULT>(self, function, shader);
+        const uint32_t *retry = hooks::shader_reimpl::on_substitute_failed(original, use, (long)hr);
+        hr = g_createps_hook->stdcall<HRESULT>(self, reinterpret_cast<const DWORD *>(retry), shader);
     }
     return hr;
 }

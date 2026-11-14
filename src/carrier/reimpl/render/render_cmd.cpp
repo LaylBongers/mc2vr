@@ -10,6 +10,7 @@
 //     RenderCmd_StretchRectFromGlobal).
 
 #include "reimpl/render/render_cmd.hpp"
+#include "reimpl/render/shadow_surfaces.hpp"
 
 #include "game/dx9.hpp"
 #include "game/render_cmd.hpp"
@@ -145,7 +146,7 @@ void RenderCmd_ExecuteStream(const uint32_t *stream, void *vs_ctx, void *ps_ctx)
         case RenderCmdOp::BeginSurfacePass: {
             const auto &cmd = as<rcmd::SurfacePass>(c);
             if (cmd.gate == 1 || cmd.gate == 2) {
-                RenderCmd_BeginSurfacePass(cmd.a1, cmd.a2, cmd.a3);
+                reimpl::RenderCmd_BeginSurfacePass(cmd.a1, cmd.a2, cmd.a3);  // reimplemented (atlas size)
             }
             break;
         }

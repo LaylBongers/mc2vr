@@ -14,7 +14,8 @@
 // Debug tools that hash bound shaders (ps_census, camera_census) see our
 // bytecode's hashes for replaced shaders.
 //
-// conf shader_reimpl = on (default) | off (the originals, for A/B).
+// conf shader_reimpl = on (default) | off (the originals, for A/B; the
+// texel scaling for shadow_resolution applies either way).
 #pragma once
 
 #include <cstdint>
@@ -24,12 +25,15 @@ namespace mc2vr::hooks::shader_reimpl {
 bool set_enabled(const char *value);
 
 // The bytecode to create instead of `original` (a CreatePixelShader
-// argument): ours when the original is reimplemented, else `original`.
+// argument): ours when the original is reimplemented, else `original`. At a
+// non-stock shadow_resolution the 9-tap receivers' atlas texel constants are
+// scaled, the originals' too (reimpl/render/shadow_surfaces.hpp).
 const uint32_t *substitute_pixel_shader(const uint32_t *original);
 
-// CreatePixelShader failed with our bytecode for `original` (the hook then
-// creates the original): logged, and that entry is disabled.
-void on_substitute_failed(const uint32_t *ours, long hr);
+// CreatePixelShader failed with `used` (what substitute_pixel_shader
+// returned for `original`): logged; a reimplementation's entry is disabled.
+// Returns what to create instead (the original, texel-scaled as needed).
+const uint32_t *on_substitute_failed(const uint32_t *original, const uint32_t *used, long hr);
 
 // 10 s window report; logs only when something changed.
 void report_window();

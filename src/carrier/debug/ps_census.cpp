@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "log.hpp"
+#include "reimpl/render/shadow_surfaces.hpp"
 #include "vr/render_outputs.hpp"
 #include "vr/view_rewrite.hpp"
 
@@ -265,7 +266,7 @@ void on_set_rt(uint32_t w, uint32_t h)
 {
     if (!g_enabled) return;
     const uint8_t c = view_rewrite::is_main_size(w, h) ? CAT_MAIN
-                      : (w == 1024 && h == 4096)      ? CAT_ATLAS
+                      : (w == reimpl::shadow_cascade_size() && h == 4 * reimpl::shadow_cascade_size())      ? CAT_ATLAS
                       : (w == h)                      ? CAT_SQUARE
                                                       : CAT_OTHER;
     if (c == g_cat) return;

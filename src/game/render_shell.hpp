@@ -135,6 +135,28 @@ constexpr uintptr_t kRenderShellSubViewCount = 0x2b90;    // u16
 constexpr uintptr_t kRenderShellSubView = 0x2b92;         // u16, current sub-view (block at +0x10 + n * 0xe80)
 constexpr uintptr_t kRenderShellSaturation = 0x2bd8;      // float -> composite imageParams.z (role inferred)
 constexpr uintptr_t kRenderShellSkipClear = 0x4448;       // u32; nonzero = BeginSubmit does not clear
+// The sun shadow atlas (PgLtiShadow_CreateSurfaces, RenderCmd_BeginSurfacePass;
+// docs/shadows.md): four square cascades stacked vertically.
+constexpr uintptr_t kRenderShellSavedViewport = 0x3f8c;        // D3DVIEWPORT9, saved by the first cascade's pass
+constexpr uintptr_t kRenderShellShadowTexture = 0x43f4;        // IDirect3DTexture9 * depth (NULL with the surface fallback)
+constexpr uintptr_t kRenderShellShadowSurface = 0x43f8;        // IDirect3DSurface9 * its level 0, or the fallback
+constexpr uintptr_t kRenderShellShadowColorTexture = 0x43fc;   // IDirect3DTexture9 * dummy RT0 (colour writes off)
+constexpr uintptr_t kRenderShellShadowColorSurface = 0x4400;   // IDirect3DSurface9 * its level 0
+constexpr uintptr_t kRenderShellShadowCombined = 0x4404;       // IDirect3DSurface9 *, never used after creation
+constexpr uintptr_t kRenderShellShadowRects = 0x4408;          // RECT[4], cascade i's quarter of the atlas
+// The LtiRenderer's fields the shadow surfaces read (g_LtiRenderer).
+constexpr uintptr_t kLtiFormatTable = 0x5e0;                   // -> +0x28 list of {next +4, D3DFORMAT +0x10, flags +0x18}
+constexpr uintptr_t kLtiDepthTextureD24 = 0x5e8;               // u8: create the shadow depth as a D24S8 texture (else DF24)
+// The engine's resource registries (by name hash): surfaces and textures.
+using g_SurfaceRegistryPtrB = Global<void *, 0x00cfca0cu>;     // surfaces
+using g_SurfaceRegistryPtrA = Global<void *, 0x00cfca08u>;     // textures
+// Registry vtable slot 7: register(name hash, object, 3), thiscall.
+inline constexpr Method<void(void *registry, uint32_t hash, void *object, uint32_t kind)> Registry_Register{
+    "Registry_Register", 0x1c, {ECX, STK, STK, STK}};
+// The atlas's creation, thiscall(RenderShell); called from RenderSystem_CheckDevice.
+// Reimplemented (reimpl/render/shadow_surfaces.hpp); this declares its entry.
+inline constexpr Function<void(uint8_t *shell)> PgLtiShadow_CreateSurfaces{"PgLtiShadow_CreateSurfaces", 0x00755f80u,
+                                                                         {ECX}};
 // Render-target textures (IDirect3DTexture9 *, from SetupRenderTargets' tail).
 constexpr uintptr_t kRenderShellMainTexture = 0x43f0;        // "ColorBuffer", fp16; level 0 = +0x3e90
 constexpr uintptr_t kRenderShellColorCopyTexture = 0x3fa4;   // "ColorBufferCopy", fp16 (op 12 destination)

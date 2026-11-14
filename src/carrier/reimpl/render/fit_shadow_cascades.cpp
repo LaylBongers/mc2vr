@@ -14,12 +14,19 @@
 #include "game/render_shell.hpp"
 #include "game/view_context.hpp"
 #include "log.hpp"
+#include "reimpl/render/shadow_surfaces.hpp"
 
 namespace mc2vr::reimpl {
 
 namespace {
 
 using game::ViewContext;
+
+// Each cascade's atlas quarter is N² texels, N = shadow_resolution (1024 stock).
+float cascade_texels()
+{
+    return (float)shadow_cascade_size();
+}
 
 // The original's constants (.rdata).
 constexpr float kFltMax = 3.4028235e38f;   // [0x00bea6e4] min-search start
@@ -35,7 +42,6 @@ constexpr float kEighth = 0.125f;          // [0x00ba904c]
 constexpr float kNegEighth = -0.125f;      // [0x00beac80]
 
 // The stabilized fit's parameters (docs/shadows.md).
-constexpr float kCascadeTexels = 1024.0f;  // each cascade's atlas quarter is 1024²
 constexpr float kOriginQuantum = 256.0f;   // world units: light-space origin grid = N_i whole texels
 constexpr float kRescaleSlack = 0.05f;     // keep a texel size while it wastes at most this much
 constexpr float kPi = 3.14159265358979f;
@@ -190,7 +196,7 @@ void fit_stock(ViewContext *ctx, const uint8_t *shell, ViewState *stats)
         const float ox = kNegZero - oxq;
         const float oy = kNegZero - oyq;
         const float sy = kTwo / ddy;
-        note_texel(stats, i, ddx / o[0] / kCascadeTexels);  // light-space units (not in the original)
+        note_texel(stats, i, ddx / o[0] / cascade_texels());  // light-space units (not in the original)
         float *const sb = ctx->cascadeScaleBias[i];
         sb[0] = sx * kHalf;
         sb[1] = sy * kNegEighth;
@@ -353,9 +359,9 @@ void fit_stable(ViewContext *ctx, const uint8_t *shell, ViewState &st)
     // ---- per cascade: sphere fit, whole texels ----
     for (uint32_t i = 0; i < 4; i++) {
         const Sphere s = slice_sphere(slice_corners(ctx, i));
-        st.n[i] = pick_texel_count(st, st.n[i], 2.0f * s.r / kCascadeTexels);
+        st.n[i] = pick_texel_count(st, st.n[i], 2.0f * s.r / cascade_texels());
         const float texel = kOriginQuantum / (float)st.n[i];
-        const float half = texel * (0.5f * kCascadeTexels);  // the ortho half-extent
+        const float half = texel * (0.5f * cascade_texels());  // the ortho half-extent
         float c[3];
         transform(c, s.c, lv);
         const float cx = texel * std::nearbyint(c[0] / texel);

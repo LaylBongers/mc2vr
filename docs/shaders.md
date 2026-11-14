@@ -25,6 +25,7 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
     - Run both tools after every shader change. Each takes well under a second.
 - **Debug tools:** tools that hash the bound shader (`ps_census`, `camera_census`) see our bytecode's hash for replaced shaders, not the original's.
 - **Conf:** `shader_reimpl=on|off`, default on. Off gives the originals, for A/B.
+- **Atlas size:** at a non-stock `shadow_resolution`, every 9-tap receiver's atlas texel `def` constants are rescaled at creation, ours and the game's 315 alike, with `shader_reimpl` on or off ([shadows.md](shadows.md)). `tools/shader_iface.py` and `shader_equiv.py` check the stock-size bytecode.
 - **Log:**
   - `shaders: <hash> <name> -> reimplementation` at each substitution.
   - `shaders: window:` with the substitution counts per entry, logged only when shader creations happened.

@@ -4,7 +4,7 @@ Game-side facts from a static read (2026-11-13). Per-address detail is in the Gh
 
 ## Pipeline
 
-- **Atlas:** `PgLtiShadow_CreateSurfaces` creates a 1024×4096 depth texture (`ShadowMapTex`, renderer+0x43f4) holding four 1024² cascades stacked vertically (viewport rects at renderer+0x4408..0x4444), plus a dummy R5G6B5 colour target. The format is `D24S8` when the byte at `[g_LtiRenderer]+0x5e8` is set (set by `FUN_00755570` from a format-cap flag 0x400), and `DF24` otherwise. Which one runs under DXVK is unchecked (OPEN, live). Fixed size: [reverse_engineering/rt_dims_source.md](reverse_engineering/rt_dims_source.md).
+- **Atlas:** `PgLtiShadow_CreateSurfaces` creates a 1024×4096 depth texture (`ShadowMapTex`, renderer+0x43f4) holding four 1024² cascades stacked vertically (viewport rects at renderer+0x4408..0x4444), plus a dummy R5G6B5 colour target. The format is `D24S8` when the byte at `[g_LtiRenderer]+0x5e8` is set (set by `FUN_00755570` from a format-cap flag 0x400), and `DF24` otherwise. Under DXVK it is **D24S8** (live, 2026-11-14: `shadow: atlas 1024x4096: depth D24S8`), the hardware-shadow-map path. Fixed size: [reverse_engineering/rt_dims_source.md](reverse_engineering/rt_dims_source.md).
 - **Fit:** `ViewContext_FitShadowCascades` (`0x00859ad0`) runs at the end of `ViewContext_BuildCameraConstants` (reimplemented, [culling.md](culling.md)). It is plain `.text`, not protected code.
   - The light view is a look-at from the camera position along the sun direction (shell+0x2bb0), up = world Y.
   - The base ortho is the tight light-space AABB of the whole shadow range, with z near pulled back 300 units for casters.
@@ -67,7 +67,28 @@ VR makes it continuous and larger:
        - It was perfectly still for the whole 2.5-minute drive.
      - OPEN: whether those 85 s were a blend or jitter. `sunPath`/`sunNet` per window settle it: path ≈ net is a blend; path ≫ net is jitter, which would want an angular snap.
    - **Cost:** a sphere wastes texels against the tight box, which loses resolution near the camera (estimate, cascade 0: ~1.7 cm stock FOV, ~4 cm VR union). Step 2 recovers it.
-2. **Recover resolution:** retune the splits for the HMD (base distance and/or a practical-split scheme in `ViewContext_BuildCascadeFrusta`), and/or a 2048×8192 atlas. The atlas change touches the creation size, the cascade viewport table and the 9-tap shaders' texel `def` constants, which would be patched at `CreatePixelShader`.
+2. **Resolution:** implemented (2026-11-14), conf `shadow_resolution=1024|2048|4096`, the edge of each cascade (default 1024, stock). Not yet live-verified.
+   - **Split retuning was dropped.** With the stabilized fit and the HMD FOV, a cascade's texel size is set by its far distance (~0.41 cm per metre). For a 10 m first split, geometric spacing over 400 m gives ends of 10/34/117/400, and the stock 10/40/130/400 is already that. Other splits only trade one distance band against another.
+   - **Estimated texels per cascade, HMD union FOV:**
+
+     | Resolution | c0 | c1 | c2 | c3 | Depth atlas |
+     |---|---|---|---|---|---|
+     | 1024 | 4.6 cm | 17 cm | 55 cm | 167 cm | 16 MB |
+     | 2048 | 2.3 cm | 8.5 cm | 27 cm | 84 cm | 64 MB |
+     | 4096 | 1.2 cm | 4.2 cm | 14 cm | 42 cm | 256 MB |
+
+     The colour RT0 adds half as much again. The cost is mostly shadow-pass fill rate.
+   - **What depends on the size** (survey 2026-11-14):
+     - `PgLtiShadow_CreateSurfaces` creates the surfaces (push immediates) and the cascade table, which holds RECTs (left, top, right, bottom). Reimplemented, with the size from the conf: [reimpl/render/shadow_surfaces.hpp](../src/carrier/reimpl/render/shadow_surfaces.hpp).
+     - `RenderCmd_BeginSurfacePass` hard-codes the 1024 viewport. Reimplemented and called directly from our `RenderCmd_ExecuteStream`, its only caller.
+     - The 315 9-tap receivers and our 27 hold the texel size as `def` constants: ±0.5/1024, ±1.5/1024, ±0.5/4096, ±1.5/4096, 1024, 4096. No other shader uses those values. They are rescaled at `CreatePixelShader` by exact float bits, only in shaders with both half-texel signatures ([shaders.md](shaders.md)). An offline simulation at 2× and 4× changes exactly the 315 + 27 shaders.
+     - Our stabilized fit takes its texel count from the conf.
+   - **Safe at any size:** the depth bias (constant in depth units; the slope bias scales with the texel); `ShadowMapCombined` (never used after creation, so kept at the stock size); our view rewrite, MSAA and output code (keyed on the render size, not the atlas). The debug censuses' "atlas" category now follows the size.
+   - **Limits:** DXVK's maximum texture size is 16384, so 4096 is the top setting. Nothing in the engine validates the size. A failed creation is logged as `shadow: ERROR` (the original would crash calling `GetSurfaceLevel` on it), and you need to pick a lower resolution.
+   - **Live, 1024 (2026-11-14):** the reimplemented path behaves as stock: no visible change, `texelScaled=0`, no errors.
+   - **OPEN, optimization:** the atlas is rendered in **both** eye passes, 1027 draws each (`debug_gpu_census`: 0.37 ms GPU in pass 1, 0.17 ms in pass 2, plus ~0.3 ms CPU each). It is eye-invariant (one fit per frame), so pass 2 could reuse pass 1's. The cost grows with `shadow_resolution`.
+   - **Checks:** `shadow: atlas WxH: depth D24S8|DF24|surface` at device creation; `texelScaled=` in the `shaders: window:` line (≈340 at 2048/4096, 0 at 1024); shadows still in place at every setting, sharper at higher ones. Cost: `debug_gpu_census` per-pass times, 1024 against 2048 against 4096.
+
 3. **Filtering** (all 27 single-tap receivers reimplemented with the 9-tap kernel, [shaders.md](shaders.md)):
    - Give the 1-tap (foliage/billboard) family the 9-tap kernel or better.
    - Optionally move every receiver to hardware PCF (`D24S8` + LINEAR, with the manual compare removed).

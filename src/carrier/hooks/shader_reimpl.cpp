@@ -5,8 +5,10 @@
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "log.hpp"
+#include "reimpl/render/shadow_surfaces.hpp"
 #include "shaders/PgBillboardTreeFP.h"
 #include "shaders/PgDecal2FP.h"
 #include "shaders/PgDecal2FP_pl.h"
@@ -45,6 +47,7 @@ struct Entry {
     const uint32_t *code;  // ours
     uint32_t created;      // substitutions so far
     bool failed;           // the device refused ours
+    const uint32_t *last_used = nullptr;  // what was created for it last (ours, maybe texel-scaled)
 };
 
 // One line per reimplemented shader; docs/shaders.md lists them.
@@ -119,32 +122,125 @@ bool set_enabled(const char *value)
     return true;
 }
 
+namespace {
+
+// ---- shadow_resolution: the 9-tap receivers' atlas texel constants ----------------
+//
+// Every shadow receiver with the 9-tap kernel (the game's 315 and ours) holds
+// the atlas texel size in `def` constants: +-0.5/1024, +-1.5/1024, +-0.5/4096,
+// +-1.5/4096 (tap offsets) and 1024, 4096 (the bilinear weights' scale), and
+// no other shader in shader3.bin uses those values (docs/shadows.md). At a
+// cascade edge of k * 1024 the offsets scale by 1/k and the sizes by k (exact:
+// powers of two). Matched by exact float bits; a shader qualifies only with
+// both half-texel signatures.
+std::vector<std::vector<uint32_t> *> g_scaled;  // kept for the device's lifetime (leaked by design)
+uint32_t g_scaled_count = 0;
+
+uint32_t f32_bits(float f)
+{
+    uint32_t u;
+    std::memcpy(&u, &f, 4);
+    return u;
+}
+
+// `code` with its texel constants scaled, or `code` if none qualify.
+const uint32_t *texel_scaled(const uint32_t *code)
+{
+    const uint32_t cascade = reimpl::shadow_cascade_size();
+    if (cascade == 1024 || code == nullptr) return code;
+    const uint32_t size = bytecode_size(code);
+    if (size == 0) return code;
+    const float k = (float)cascade / 1024.0f;
+    const float offsets[] = {0.5f / 1024, 1.5f / 1024, 0.5f / 4096, 1.5f / 4096, 1.0f / 1024, 1.0f / 4096};
+    const float sizes[] = {1024.0f, 4096.0f};
+    auto *out = new std::vector<uint32_t>(code, code + size / 4);
+    uint32_t *t = out->data();
+    bool sig1024 = false, sig4096 = false;
+    int changed = 0;
+    for (int pass = 0; pass < 2; pass++) {  // 0: find the signatures; 1: scale
+        for (uint32_t i = 1; i < size / 4;) {
+            const uint32_t op = t[i] & 0xffff;
+            if (t[i] == 0x0000ffffu) break;
+            if (op == 0xfffe) {
+                i += 1 + ((t[i] >> 16) & 0x7fff);
+                continue;
+            }
+            const uint32_t len = (t[i] >> 24) & 0xf;
+            if (op == 81 && len == 5) {  // def c#, x, y, z, w
+                for (uint32_t c = 0; c < 4; c++) {
+                    uint32_t &v = t[i + 2 + c];
+                    const uint32_t mag = v & 0x7fffffffu;
+                    if (pass == 0) {
+                        sig1024 |= mag == f32_bits(0.5f / 1024);
+                        sig4096 |= mag == f32_bits(0.5f / 4096);
+                        continue;
+                    }
+                    for (float o : offsets) {
+                        if (mag == f32_bits(o)) {
+                            v = (v & 0x80000000u) | f32_bits(o / k);
+                            changed++;
+                        }
+                    }
+                    for (float s : sizes) {
+                        if (v == f32_bits(s)) {
+                            v = f32_bits(s * k);
+                            changed++;
+                        }
+                    }
+                }
+            }
+            i += 1 + len;
+        }
+        if (pass == 0 && !(sig1024 && sig4096)) break;
+    }
+    if (changed == 0) {
+        delete out;
+        return code;
+    }
+    g_scaled.push_back(out);
+    g_scaled_count++;
+    if (g_scaled_count == 1) {
+        MC2VR_LOG("shaders: shadow_resolution=%u: scaling the 9-tap receivers' atlas texel constants "
+                  "(first: %d values; count in the window line)", cascade, changed);
+    }
+    return out->data();
+}
+
+} // namespace
+
 const uint32_t *substitute_pixel_shader(const uint32_t *original)
 {
     g_seen++;
-    if (!g_enabled || original == nullptr) return original;
+    if (original == nullptr) return original;
     const uint32_t size = bytecode_size(original);
     if (size == 0) return original;
-    const uint32_t hash = fnv1a(reinterpret_cast<const uint8_t *>(original), size);
-    for (Entry &e : g_entries) {
-        if (e.original != hash || e.failed) continue;
-        e.created++;
-        if (e.created == 1) MC2VR_LOG("shaders: %08x %s -> reimplementation (%u bytes; later creations counted in the window line)", hash,
-                                      e.name, bytecode_size(e.code));
-        return e.code;
+    if (g_enabled) {
+        const uint32_t hash = fnv1a(reinterpret_cast<const uint8_t *>(original), size);
+        for (Entry &e : g_entries) {
+            if (e.original != hash || e.failed) continue;
+            e.created++;
+            if (e.created == 1) {
+                MC2VR_LOG("shaders: %08x %s -> reimplementation (%u bytes; later creations counted in the window "
+                          "line)",
+                          hash, e.name, bytecode_size(e.code));
+            }
+            e.last_used = texel_scaled(e.code);
+            return e.last_used;
+        }
     }
-    return original;
+    return texel_scaled(original);
 }
 
-void on_substitute_failed(const uint32_t *ours, long hr)
+const uint32_t *on_substitute_failed(const uint32_t *original, const uint32_t *used, long hr)
 {
     for (Entry &e : g_entries) {
-        if (e.code != ours) continue;
+        if (e.last_used != used || used == nullptr) continue;
         e.failed = true;
         MC2VR_LOG("shaders: ERROR — the device refused the reimplementation of %08x %s (hr=0x%08lx); "
                   "the original is used",
                   e.original, e.name, (unsigned long)hr);
     }
+    return texel_scaled(original);
 }
 
 void report_window()
@@ -153,15 +249,15 @@ void report_window()
     // the game (on load); created=0 for a shader the game never created.
     if (g_seen == g_reported_seen) return;
     g_reported_seen = g_seen;
-    char line[256];
+    char line[1024];  // 27+ entries of " xxxxxxxx=n"
     int n = 0;
     for (const Entry &e : g_entries) {
         n += std::snprintf(line + n, sizeof line - (size_t)n, " %08x=%u%s", e.original, e.created,
                            e.failed ? "(failed)" : "");
         if (n >= (int)sizeof line) break;
     }
-    MC2VR_LOG("shaders: window: %s CreatePixelShader calls=%u | substituted:%s",
-              g_enabled ? "on" : "off", g_seen, line);
+    MC2VR_LOG("shaders: window: %s CreatePixelShader calls=%u texelScaled=%u | substituted:%s",
+              g_enabled ? "on" : "off", g_seen, g_scaled_count, line);
 }
 
 } // namespace mc2vr::hooks::shader_reimpl
