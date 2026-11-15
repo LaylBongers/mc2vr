@@ -19,10 +19,17 @@
 
 namespace mc2vr::hooks::shader_reimpl {
 
+// conf `shading = classic | modern` (default classic): the PgDiff families'
+// shading. classic = the originals' math; modern = the physically based
+// `_modern` builds (reimpl/shaders/PgDiff.hlsl, MC2VR_SHADING_MODERN). Must
+// precede the shader creations. False if `value` isn't recognized.
+bool set_shading(const char *value);
+
 // The bytecode to create instead of `original` (a CreatePixelShader
-// argument): ours when the original is reimplemented, else `original`. At a
-// non-stock shadow_resolution the 9-tap receivers' atlas texel constants are
-// scaled, the originals' too (reimpl/render/shadow_surfaces.hpp).
+// argument): ours (in the current shading) when the original is
+// reimplemented, else `original`. At a non-stock shadow_resolution the 9-tap
+// receivers' atlas texel constants are scaled, the originals' too, whichever
+// shading (reimpl/render/shadow_surfaces.hpp).
 const uint32_t *substitute_pixel_shader(const uint32_t *original);
 
 // CreatePixelShader failed with `used` (what substitute_pixel_shader

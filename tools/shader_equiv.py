@@ -48,7 +48,26 @@ Usage: shader_equiv.py <container shader3.bin> [registry.cpp] [generated dir]
                                 is caught: neg = negate src0 of the last
                                 instruction writing oC0; def[:K] = add 0.01 to
                                 the K-th (default first) def constant
-Exit 1 if any entry differs, 2 on usage/emulation errors.
+           [--modern-finite]    instead, for the entries with a modern shading
+                                (the registry's second symbol, <name>_modern):
+                                emulate the original and the modern one on the
+                                same trials and report the fraction of trials
+                                where the original's outputs are all finite but
+                                the modern's aren't. Run with NaN propagating
+                                through max/min/_sat (a NaN in the colour would
+                                otherwise come out of the final clamps as a
+                                black pixel, a defect the plain semantics hide).
+                                Also the modern/classic mean output luminance
+                                ratio (oC0.rgb, Rec.601 weights), per entry and
+                                per family, from a second run with the plain
+                                semantics and the atmosphere neutral (PgDiff's
+                                TEXCOORD4 extinction 1, TEXCOORD5 inscatter 0,
+                                which would otherwise dominate), over the trials
+                                where both are finite and below the 30000
+                                clamp: a rough calibration aid only (the
+                                materials and lights are random).
+Exit 1 if any entry differs (--modern-finite: any modern-only non-finite
+trial), 2 on usage/emulation errors.
 """
 
 import os
@@ -295,8 +314,9 @@ COMPARE = {1: np.greater, 2: np.equal, 3: np.greater_equal, 4: np.less, 5: np.no
 
 
 class Machine:
-    def __init__(self, words, trials, label):
+    def __init__(self, words, trials, label, strict_nan=False):
         self.label = label
+        self.strict_nan = strict_nan  # max/min/_sat propagate NaN (--modern-finite)
         self.prog, defs, dcls, self.ctab = decode(words)
         self.match = match_blocks(self.prog)
         self.t = trials
@@ -419,8 +439,8 @@ class Machine:
             self.fail(ins, "relative destination addressing")
         rt, r = reg_type(tok), tok & 0x7FF
         wm = (tok >> 16) & 0xF
-        if (tok >> 20) & 1:  # _sat (NaN -> 0)
-            val = np.where(np.isnan(val), 0.0, np.clip(val, 0.0, 1.0))
+        if (tok >> 20) & 1:  # _sat (NaN -> 0; strict: NaN stays)
+            val = np.clip(val, 0.0, 1.0) if self.strict_nan else np.where(np.isnan(val), 0.0, np.clip(val, 0.0, 1.0))
         if val.ndim == 1:
             val = np.repeat(val[:, None], 4, 1)
         comps = np.array([(wm >> k) & 1 for k in range(4)], bool)
@@ -609,10 +629,10 @@ class Machine:
             v = a * (1.0 / np.sqrt((a[:, :3] * a[:, :3]).sum(1)))[:, None]
         elif name == "max":
             a, b = s(0), s(1)
-            v = np.where(a >= b, a, b)
+            v = np.maximum(a, b) if self.strict_nan else np.where(a >= b, a, b)
         elif name == "min":
             a, b = s(0), s(1)
-            v = np.where(a < b, a, b)
+            v = np.minimum(a, b) if self.strict_nan else np.where(a < b, a, b)
         elif name == "cmp":
             v = np.where(s(0) >= 0, s(1), s(2))
         elif name == "lrp":
@@ -736,10 +756,98 @@ def perturb(words, how):
     raise EmuError("nothing to perturb (%s)" % how)
 
 
+LUMA = np.array([0.299, 0.587, 0.114])
+LIGHT_SUFFIXES = ("_pl_sl_li", "_pl_sl", "_pl_li", "_sl_li", "_pl", "_sl")
+
+
+def all_finite(result):
+    out, written, killed = result
+    ok = np.ones(len(killed), bool)
+    for key, mask in written.items():
+        for comp in range(4):
+            if (mask >> comp) & 1:
+                ok &= np.isfinite(out[key][:, comp])
+    return ok | killed
+
+
+def modern_finite(container, registry, gen, opts):
+    """--modern-finite: see the docstring."""
+    entries = re.findall(r'\{0x([0-9a-f]{8})u, "[^"]*\(shader3\.bin@(0x[0-9a-f]+)\)", mc2vr::shaders::\w+, '
+                         r'mc2vr::shaders::(\w+)', open(registry).read())
+    if opts["--only"]:
+        entries = [e for e in entries if opts["--only"] in (e[0], e[2], e[2][:-len("_modern")])]
+    if not entries:
+        print("no registry entries with a modern symbol found in", registry)
+        return 2
+    ntrials = int(opts["--trials"])
+    bad = errors = degenerate = 0
+    families = {}
+    t0 = time.time()
+    for idx, (h, off, sym) in enumerate(entries):
+        orig = words_at(container, int(off, 16))
+        try:
+            path = os.path.join(gen, sym + ".h")
+            if not os.path.exists(path):
+                raise EmuError("no generated header %s (build first)" % path)
+            ours = load_generated(path)
+            trials = Trials(ntrials, np.random.default_rng([int(opts["--seed"]), idx]), decode(orig)[3])
+            if opts["--shadow"] == "lit":
+                trials.shadow = np.where(trials.shadow > 0, 1e9, -1e9)
+            ro = Machine(orig, trials, "orig " + sym, strict_nan=True).run()
+            rn = Machine(ours, trials, "modern " + sym, strict_nan=True).run()
+            fo, fn = all_finite(ro), all_finite(rn)
+            # The luminance run: same trials, the atmosphere neutral.
+            lum = Trials(ntrials, np.random.default_rng([int(opts["--seed"]), idx]), decode(orig)[3])
+            if opts["--shadow"] == "lit":
+                lum.shadow = np.where(lum.shadow > 0, 1e9, -1e9)
+            lum.inputs[(5, 4)] = np.ones((ntrials, 4))
+            lum.inputs[(5, 5)] = np.zeros((ntrials, 4))
+            lo_run = Machine(orig, lum, "orig " + sym).run()
+            ln_run = Machine(ours, lum, "modern " + sym).run()
+        except EmuError as e:
+            print("ERR %s %-44s %s" % (h, sym, e))
+            errors += 1
+            continue
+        lost = fo & ~fn
+        key = (R_COLOROUT, 0)
+        co, cn = lo_run[0][key][:, :3], ln_run[0][key][:, :3]
+        lo, ln = co @ LUMA, cn @ LUMA
+        both = all_finite(lo_run) & all_finite(ln_run) & ~(lo_run[2] | ln_run[2]) & \
+            (co.max(1) < 30000) & (cn.max(1) < 30000)
+        ratio = ln[both].mean() / lo[both].mean() if both.any() else float("nan")
+        family = sym[:-len("_modern")]
+        for suf in LIGHT_SUFFIXES:
+            if family.endswith(suf):
+                family = family[:-len(suf)]
+                break
+        f = families.setdefault(family, [0.0, 0.0])
+        f[0] += ln[both].sum()
+        f[1] += lo[both].sum()
+        # The degenerate trials: random (not PLAUSIBLE) light constants, whose
+        # spot ranges/cones come out as 0^-e = inf radiance (Trials.spot_lights).
+        lost_plausible = lost & trials.plausible
+        degenerate += int((lost & ~trials.plausible).sum())
+        print("%s %s %-44s modern-only non-finite %d/%d (plausible lights %d)  orig finite %d  lum ratio %.3f" % (
+            "ok " if not lost_plausible.any() else "BAD", h, sym, int(lost.sum()), ntrials,
+            int(lost_plausible.sum()), int(fo.sum()), ratio))
+        if lost.any():
+            lane = int(np.argmax(lost_plausible if lost_plausible.any() else lost))
+            print("    first: trial %d: %s" % (lane, trials.summary(lane)))
+        bad += bool(lost_plausible.any())
+    print("luminance ratio (modern / classic) per family:")
+    for family, (n, o) in sorted(families.items()):
+        print("    %-34s %.3f" % (family, n / o if o else float("nan")))
+    print("%d of %d modern entries with modern-only non-finite trials on plausible lights, %d errors; "
+          "%d more on random light constants (%d trials each, %.1f s)" % (
+              bad, len(entries), errors, degenerate, ntrials, time.time() - t0))
+    return 2 if errors else (1 if bad else 0)
+
+
 def main():
     argv = sys.argv[1:]
     opts = {"--trials": "1000", "--seed": "1", "--tol": "1e-4", "--only": None, "--perturb": None, "--shadow": None}
     self_test = False
+    finite = False
     pos = []
     k = 0
     while k < len(argv):
@@ -753,6 +861,8 @@ def main():
             continue
         if a == "--self":
             self_test = True
+        elif a == "--modern-finite":
+            finite = True
         elif a.startswith("-"):
             print(__doc__)
             return 2
@@ -765,6 +875,8 @@ def main():
     container = open(pos[0], "rb").read()
     registry = pos[1] if len(pos) > 1 else os.path.join(ROOT, "src/carrier/hooks/shader_reimpl.cpp")
     gen = pos[2] if len(pos) > 2 else os.path.join(ROOT, "build/win32/generated/shaders")
+    if finite:
+        return modern_finite(container, registry, gen, opts)
     entries = re.findall(r'\{0x([0-9a-f]{8})u, "[^"]*\(shader3\.bin@(0x[0-9a-f]+)\)", mc2vr::shaders::(\w+)',
                          open(registry).read())
     if opts["--only"]:

@@ -69,6 +69,35 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
   - **`_li`** (`MC2VR_LIGHTS_LI=1`): 2 lights always, +2 if `b2` (points) or `b6` (spots), and points +2 more if `b3` is also set.
   - The two families differ only in their inputs. The distant one doesn't normalize the normal or saturate the direct light; the near one saturates sun plus local lights.
 
+## Modern shading (optional)
+
+A deliberate look change for the 280 PgDiff materials only, selected by conf `shading=classic|modern` (default `classic`). Every PgDiff variant is also built with `MC2VR_SHADING_MODERN=1` as `<symbol>_modern`, and `hooks/shader_reimpl.cpp` picks the set at creation; the atlas texel scaling applies to either. Classic is the faithful set, verified against the originals. Terrain, vegetation, decals and water have no modern set.
+
+- **Direct light** (sun and every point/spot light, `lights.hlsli` `local_lights_pbr`):
+  - **Specular:** GGX · Smith height-correlated visibility · Schlick Fresnel · N·L · π. The π is because the game's units have no 1/π.
+  - **Diffuse:** Burley · (1 − F).
+  - **Shadow:** fully applied to the sun's specular, so the classic 25% leak is gone.
+- **Material** from the Blinn-Phong assets:
+  - α = clamp(√(2 / (n + 2)), 0.03, 1), with n = `materialData[5].z`.
+  - Tint = specular map × `materialData[1]`. Dielectric F0 = 0.04 + tint · `kSpecF0Scale` (0.25).
+  - **Metal families:** metalness = saturate(luminance(tint) / 0.5), so bright texels act as bare metal and dark ones stay dielectric.
+  - **Families without Spec:** F0 = 0.04, α = 0.6.
+  - The normal map's z uses the correct √(1 − x² − y²), where classic keeps the original's slip.
+- **Ambient and environment:**
+  - **Diffuse ambient** (ambient cube or vertex ambient): × (1 − EnvBRDF) × AO.
+  - **Specular ambient** for every material: the reflection cube with a roughness mip (Metal/Refl families), else the ambient cube along R (Norm families), else the vertex ambient. Weighted by Karis's `EnvBRDFApprox` × `kEnvStrength` (1.0) × AO.
+  - AO now darkens only ambient and environment, not direct light.
+- **Unchanged:** rim, SSS and emissive work as in classic. The alpha is raised by the modern specular's luminance.
+- **Compromises:**
+  - PgDiffFP, AmbOcc, Emis and EmisAmbOcc (28 shaders) have no `cameraPos` in their interface, so no view direction. They take V = N: no direct specular; Burley and the energy split only.
+  - Non-Norm families' environment has no direction.
+  - Shading stays in the game's gamma space.
+  - Light-heavy variants run about twice the instructions.
+- **Checks:**
+  - `shader_iface.py --modern`: inputs, samplers and constants within the original's interface, since the game sets nothing else.
+  - `shader_equiv.py --modern-finite`: no NaN or infinity where the original is finite, on plausible lights. It also gives each family's modern/classic luminance ratio as a calibration aid: about 0.55–0.9 for Metal/Refl, 0.76–0.87 for Spec without AmbOcc, 0.9–1.2 elsewhere.
+- **OPEN:** calibration in the HMD. `kSpecF0Scale`, `kEnvStrength` and `kMetalLumFull` are in `PgDiff.hlsl`.
+
 ## Cost
 
 A/B in one spot (2026-11-13, HMD, gameplay, last ~30 s of each run; per frame, both eye passes):

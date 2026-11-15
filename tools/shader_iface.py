@@ -13,10 +13,21 @@ with the original in the container:
   - the original's hash (the registry's key) against the container's bytes.
 Reports the shadow-map taps (texld* on s15) and token counts for information.
 
-Usage: shader_iface.py <container shader3.bin> [registry.cpp] [generated dir] [--shadow-band]
+Usage: shader_iface.py <container shader3.bin> [registry.cpp] [generated dir] [--shadow-band] [--modern]
   --shadow-band: accept one extra innermost dynamic branch (`ifc ... endif`)
   in ours: the cascade blend band (reimpl/shaders/shadow.hlsli).
-Exit 1 if any interface differs.
+  --modern: check instead the entries' modern shading (the registry's second
+  symbol, mc2vr::shaders::<name>_modern; shading=modern), which may use less
+  of the original's interface but nothing outside it (the game sets only
+  what the original declares):
+    - every input declaration (usage, index) is one of the original's, its
+      mask within the original's;
+    - every sampler is one of the original's (register, type);
+    - every constant-table entry is the original's (name, register set,
+      register), its count at most the original's.
+  The math is not compared (it differs by design; shader_equiv.py
+  --modern-finite checks it stays finite).
+Exit 1 if any interface differs (with --modern: any violation).
 """
 
 import os
@@ -144,6 +155,74 @@ def without_one_leaf_ifc(branches):
     return out
 
 
+def declarations(words):
+    """-> ({(usage, index): mask} of the inputs, {register: type} of the samplers)."""
+    inputs, samplers = {}, {}
+    i = 1
+    while i < len(words):
+        t = words[i]
+        op = t & 0xFFFF
+        if t == 0x0000FFFF:
+            break
+        n = ((t >> 16) & 0x7FFF) if op == OP_COMMENT else ((t >> 24) & 0xF)
+        if op == OP_DCL and n == 2:
+            usage, dst = words[i + 1:i + 3]
+            if reg_type(dst) == REG_SAMPLER:
+                samplers[dst & 0x7FF] = (usage >> 27) & 0xF
+            else:
+                key = (usage & 0x1F, (usage >> 16) & 0xF)
+                inputs[key] = inputs.get(key, 0) | ((dst >> 16) & 0xF)
+        i += 1 + n
+    return inputs, samplers
+
+
+def subset_problems(orig, ours):
+    """Where OURS uses anything outside ORIGINAL's interface (--modern)."""
+    problems = []
+    oi, os_ = declarations(orig)
+    ni, ns = declarations(ours)
+    for (usage, index), mask in sorted(ni.items()):
+        if (usage, index) not in oi:
+            problems.append("input usage%d.%d not in the original" % (usage, index))
+        elif mask & ~oi[(usage, index)]:
+            problems.append("input usage%d.%d mask %x outside the original's %x" % (
+                usage, index, mask, oi[(usage, index)]))
+    for reg, typ in sorted(ns.items()):
+        if os_.get(reg) != typ:
+            problems.append("sampler s%d type %d: the original's is %s" % (reg, typ, os_.get(reg)))
+    oc, nc = analyze(orig)[2], analyze(ours)[2]
+    for name, (rset, reg, count) in sorted(nc.items()):
+        o = oc.get(name)
+        if o is None:
+            problems.append("constant %s (%s%d[%d]) not in the original" % (name, rset, reg, count))
+        elif (o[0], o[1]) != (rset, reg) or count > o[2]:
+            problems.append("constant %s: ours %s%d[%d], the original's %s%d[%d]" % (
+                name, rset, reg, count, o[0], o[1], o[2]))
+    return problems
+
+
+def check_modern(container, registry, gen):
+    entries = re.findall(r'\{0x([0-9a-f]{8})u, "[^"]*\(shader3\.bin@(0x[0-9a-f]+)\)", mc2vr::shaders::\w+, '
+                         r'mc2vr::shaders::(\w+)', open(registry).read())
+    if not entries:
+        print("no registry entries with a modern symbol found in", registry)
+        return 2
+    bad = 0
+    for h, off, sym in entries:
+        orig = words_at(container, int(off, 16))
+        ours = load_generated(os.path.join(gen, sym + ".h"))
+        problems = subset_problems(orig, ours)
+        _, _, _, ot = analyze(orig)
+        _, _, _, nt = analyze(ours)
+        print("%s %s %-44s taps %d->%d  tokens %d->%d" % (
+            "ok " if not problems else "BAD", h, sym, ot, nt, len(orig), len(ours)))
+        for p in problems:
+            print("    " + p)
+        bad += bool(problems)
+    print("%d of %d modern entries outside the original's interface" % (bad, len(entries)))
+    return 1 if bad else 0
+
+
 def load_generated(path):
     text = open(path).read()
     body = text.split("{", 2)[-1]
@@ -155,11 +234,14 @@ def main():
         print(__doc__)
         return 2
     shadow_band = "--shadow-band" in sys.argv
-    sys.argv = [a for a in sys.argv if a != "--shadow-band"]
+    modern = "--modern" in sys.argv
+    sys.argv = [a for a in sys.argv if a not in ("--shadow-band", "--modern")]
     container = open(sys.argv[1], "rb").read()
     registry = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
         ROOT, "src/carrier/hooks/shader_reimpl.cpp")
     gen = sys.argv[3] if len(sys.argv) > 3 else os.path.join(ROOT, "build/win32/generated/shaders")
+    if modern:
+        return check_modern(container, registry, gen)
     entries = re.findall(r'\{0x([0-9a-f]{8})u, "[^"]*\(shader3\.bin@(0x[0-9a-f]+)\)", mc2vr::shaders::(\w+)',
                          open(registry).read())
     if not entries:

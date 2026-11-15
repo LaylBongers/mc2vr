@@ -155,6 +155,14 @@ foreach(entry IN LISTS MC2VR_LIGHT_FAMILIES)
         mc2vr_hlsl(mc2vr_carrier reimpl/shaders/${source}.hlsl ENTRY main PROFILE ps_3_0
                    SYMBOL ${family}${suffix}
                    DEFINES ${features} MC2VR_POINT_LIGHTS=${point} MC2VR_SPOT_LIGHTS=${spot} MC2VR_LIGHTS_LI=${li})
+        # The PgDiff families also in the modern shading (conf shading=modern):
+        # <family><suffix>_modern.
+        if(source STREQUAL "PgDiff")
+            mc2vr_hlsl(mc2vr_carrier reimpl/shaders/${source}.hlsl ENTRY main PROFILE ps_3_0
+                       SYMBOL ${family}${suffix}_modern
+                       DEFINES ${features} MC2VR_POINT_LIGHTS=${point} MC2VR_SPOT_LIGHTS=${spot} MC2VR_LIGHTS_LI=${li}
+                               MC2VR_SHADING_MODERN=1)
+        endif()
     endforeach()
 endforeach()
 

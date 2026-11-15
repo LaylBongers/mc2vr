@@ -10,6 +10,7 @@
 #include "vr/first_person.hpp"
 #include "hooks/frame_tick.hpp"
 #include "hooks/install.hpp"
+#include "hooks/shader_reimpl.hpp"
 #include "vr/device_params.hpp"
 #include "vr/eye_replay.hpp"
 #include "vr/render_outputs.hpp"
@@ -157,6 +158,13 @@ static void load_conf()
             // docs/shadows.md): 1024 (stock), 2048 or 4096. Must precede device creation.
             if (!reimpl::set_shadow_resolution(value)) {
                 MC2VR_LOG("conf: shadow_resolution=%s not recognized (use 1024|2048|4096)", value);
+            }
+        } else if (strcmp(key, "shading") == 0) {
+            // The PgDiff material shaders' shading (hooks/shader_reimpl.hpp,
+            // docs/shaders.md): classic (the originals') or modern (physically
+            // based). Must precede device creation.
+            if (!hooks::shader_reimpl::set_shading(value)) {
+                MC2VR_LOG("conf: shading=%s not recognized (use classic|modern)", value);
             }
         } else if (strcmp(key, "msaa") == 0) {
             // Scene MSAA sample count (vr/msaa.hpp, docs/msaa.md). Must

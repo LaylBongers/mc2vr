@@ -30,10 +30,18 @@
 // reflection is added before the occlusion multiplies, e.g.
 // PgDiffSpecMetalNormAmbOccFP, shader3.bin@0x9c230).
 //
+// MC2VR_SHADING_MODERN 0 | 1 (conf shading=classic|modern): 0 is the
+// originals' shading (below, `main` under !MC2VR_SHADING_MODERN); 1 a
+// physically based model in the originals' interface (the `_modern` symbols;
+// the model, the material derivation and the constants at the modern main).
+//
 // Unlike our other receivers' originals, these already take the game's 9-tap
 // sun-shadow filter: shadow.hlsli is theirs, so the math is the originals'
 // throughout. Owning the lookup is the point (a cascade blend band, docs/shadows.md).
 
+#ifndef MC2VR_SHADING_MODERN
+#define MC2VR_SHADING_MODERN 0
+#endif
 #ifndef MC2VR_PGDIFF_SPEC
 #define MC2VR_PGDIFF_SPEC 0
 #endif
@@ -115,10 +123,15 @@ struct Input {
 // (z reconstructed), applied in the interpolated tangent frame. The
 // originals' z is sqrt(1 - x² - 2y), y unsquared: a slip in the game's
 // source (meant: 1 - x² - y²), kept so the shading stays the originals'.
+// The modern shading reconstructs it properly.
 float3 mapped_normal(Input i)
 {
     const float2 xy = 2 * (tex2D(normalMap, i.uvDepthFade.xy).wy - 0.5);
+#if MC2VR_SHADING_MODERN
+    const float z = sqrt(saturate(1 - xy.x * xy.x - xy.y * xy.y));
+#else
     const float z = sqrt(1 - xy.x * xy.x - 2 * xy.y);
+#endif
     return normalize(xy.x * i.tangent + xy.y * i.binormal + z * i.normal);
 }
 #endif
@@ -154,6 +167,7 @@ float subsurface_band(float x)
 }
 #endif
 
+#if !MC2VR_SHADING_MODERN
 float4 main(Input i) : COLOR
 {
     const float2 uv = i.uvDepthFade.xy;
@@ -231,3 +245,142 @@ float4 main(Input i) : COLOR
 #endif
     return float4(min(max(colour, 1e-5), 30000), alpha);
 }
+#endif  // !MC2VR_SHADING_MODERN
+
+#if MC2VR_SHADING_MODERN
+// ---- The modern shading: physically based, in the originals' interface -------------
+//
+// Direct light (the sun and every local light): GGX specular and Burley
+// diffuse with the energy split (lights.hlsli, add_pbr_light), the sun fully
+// shadowed. Ambient: the family's ambient (the cube at the normal, or the
+// vertex's) for the diffuse; for the specular, the reflection cube (Metal,
+// Refl) at a roughness-dependent mip, else the ambient along the reflection
+// vector (the cube at R, or the vertex's), weighted by the split-sum fit
+// (env_brdf_approx). The rim, subsurface and emissive terms are the
+// originals', added on top.
+//
+// The material from the Blinn-Phong assets:
+//   GGX alpha  = sqrt(2 / (n + 2)), n = materialData[5].z (the Blinn-Phong
+//                exponent; the Beckmann-equivalent width), clamped to
+//                [kAlphaMin, 1]; without Spec, kNoSpecAlpha
+//   tint       = saturate(specularMap * materialData[1]) (the specular colour,
+//                as the originals weight their highlight)
+//   dielectric F0 = kDielectricF0 + tint * kSpecF0Scale (without Spec,
+//                kDielectricF0)
+//   Metal: metalness = saturate(luminance(tint) / kMetalLumFull): bright
+//                specular-map texels are bare metal, dark ones (paint, dirt,
+//                rust) dielectric; F0 = lerp(dielectric F0, tint, metalness),
+//                the diffuse albedo times (1 - metalness)
+// Not used here (fewer constants than the originals; the game uploads them
+// anyway): the reflection weights materialData[5].x and [2].w — the
+// reflection's weight is the Fresnel / split-sum's.
+//
+// The families with neither Spec nor Rim (PgDiffFP, AmbOcc, Emis, EmisAmbOcc)
+// have no cameraPos in their interface, so no view direction: for them the
+// view is taken as the normal (N.V = 1: the Burley view factor 1, the
+// environment along the normal) and there's no direct specular.
+#define MC2VR_PGDIFF_VIEW (MC2VR_PGDIFF_SPEC || MC2VR_PGDIFF_RIM)
+
+static const float kDielectricF0 = 0.04;  // the common dielectric's 4%
+static const float kSpecF0Scale = 0.25;   // specular map -> extra dielectric F0 (calibration)
+static const float kAlphaMin = 0.03;      // the sharpest highlight (GGX alpha)
+static const float kNoSpecAlpha = 0.6;    // GGX alpha of the families without a specular map
+static const float kMetalLumFull = 0.5;   // tint luminance at which a Metal texel is fully metal
+static const float kEnvStrength = 1.0;    // environment specular scale (calibration)
+static const float kReflectionMips = 6;   // reflectionMap mip at roughness 1 (clamped to its chain)
+
+static const float3 kLuminance = float3(0.299, 0.587, 0.114);
+
+float4 main(Input i) : COLOR
+{
+    const float2 uv = i.uvDepthFade.xy;
+    const float3 normal = surface_normal(i);
+#if MC2VR_PGDIFF_VIEW
+    const float3 view = normalize(cameraPos - i.worldPos);
+#else
+    const float3 view = normal;
+#endif
+    const float4 albedo = tex2D(diffuseMap, uv);
+#if MC2VR_PGDIFF_AMBOCC
+    const float3 ao = i.ambOcc.rgb;
+#else
+    const float3 ao = 1;
+#endif
+
+    // ---- the material ----
+    PbrMaterial m;
+    float metalness = 0;
+#if MC2VR_PGDIFF_SPEC
+    const float3 tint = saturate(tex2D(specularMap, uv).rgb * materialData[1].rgb);
+    m.alpha = clamp(sqrt(2 / (max(materialData[5].z, 0) + 2)), kAlphaMin, 1);
+    m.f0 = kDielectricF0 + tint * kSpecF0Scale;
+#if MC2VR_PGDIFF_METAL
+    metalness = saturate(dot(tint, kLuminance) / kMetalLumFull);
+    m.f0 = lerp(m.f0, tint, metalness);
+#endif
+#else
+    m.alpha = kNoSpecAlpha;
+    m.f0 = kDielectricF0;
+#endif
+    m.roughness = sqrt(m.alpha);
+#if MC2VR_PGDIFF_VIEW
+    m.ndv = abs(dot(normal, view)) + 1e-5;
+#else
+    m.ndv = 1;
+#endif
+    const float3 diffuseAlbedo = albedo.rgb * (1 - metalness);
+
+    // ---- direct light ----
+    const float visibility = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w);
+    const float3 toSun = -globalLightData[0].xyz;
+    LocalLights direct = local_lights_pbr(i.worldPos, normal, view, m);
+    add_pbr_light(direct, visibility * globalLightData[1].rgb, toSun, normal, view, m);
+
+    // The originals' extra terms (their place in the saturated direct light).
+    float3 extra = 0;
+    const float ndl = dot(normal, toSun);
+#if MC2VR_PGDIFF_SSS
+    const float sunBand = subsurface_band(ndl);
+    extra += max(sunBand, 0) * materialData[4].rgb;
+#endif
+#if MC2VR_PGDIFF_RIM
+    const float rimTerm = dot(-view, normal) + globalLightData[2].w;
+    extra += max(rimTerm, 0) * globalLightData[2].rgb * (1 - ndl);
+#if MC2VR_PGDIFF_SSS
+    extra += max(subsurface_band(rimTerm), 0) * materialData[4].rgb * (1 - sunBand);
+#endif
+#endif
+
+    // ---- ambient and environment ----
+    const float3 envBrdf = env_brdf_approx(m.f0, m.roughness, m.ndv);
+    const float3 reflected = reflect(-view, normal);
+    const float3 ambient = ambient_light(i, normal) * materialData[2].rgb;
+#if MC2VR_PGDIFF_METAL || MC2VR_PGDIFF_REFL
+    const float3 environment = texCUBElod(reflectionMap, float4(reflected, m.roughness * kReflectionMips)).rgb;
+#else
+    const float3 environment = ambient_light(i, reflected) * materialData[2].rgb;
+#endif
+
+#if !MC2VR_PGDIFF_VIEW
+    direct.specular = 0;
+#endif
+    const float3 specular = direct.specular + environment * envBrdf * (kEnvStrength * ao);
+    float3 colour = diffuseAlbedo * (direct.diffuse * materialData[0].rgb + ambient * (1 - envBrdf) * ao) +
+                    albedo.rgb * saturate(extra) * materialData[0].rgb * ao + specular;
+#if MC2VR_PGDIFF_EMIS
+    colour += tex2D(emissiveMap, uv).rgb * materialData[3].rgb * ao;
+#endif
+
+    float alpha = albedo.a * materialData[5].w;
+#if MC2VR_PGDIFF_AMBOCC
+    alpha *= i.ambOcc.a;
+#endif
+
+    colour = colour * i.extinction + i.inscatter;
+#if MC2VR_PGDIFF_SPEC
+    // The highlight's luminance shows through transparent parts.
+    alpha = saturate(max(alpha, dot(specular, kLuminance)));
+#endif
+    return float4(min(max(colour, 1e-5), 30000), alpha);
+}
+#endif  // MC2VR_SHADING_MODERN
