@@ -33,6 +33,7 @@
 #include "sha256.h"
 #include "debug/gpu_census.hpp"
 #include "debug/gui_census.hpp"
+#include "debug/material_census.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
 #include "vr/pacing.hpp"
@@ -177,6 +178,11 @@ static void load_conf()
             // debug/gui_census.hpp). Must precede the hook installs.
             if (!gui_census::set_enabled(value)) {
                 MC2VR_LOG("conf: debug_gui_census=%s not recognized (use on|clouds|off)", value);
+            }
+        } else if (strcmp(key, "debug_material_census") == 0) {
+            // The reflective materials' constants (log/CSV only; debug/material_census.hpp).
+            if (!material_census::set_enabled(value)) {
+                MC2VR_LOG("conf: debug_material_census=%s not recognized (use on|off)", value);
             }
         } else if (strcmp(key, "debug_gpu_census") == 0) {
             // Per-pass / per-render-target GPU + CPU + draw-call census

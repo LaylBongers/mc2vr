@@ -65,6 +65,7 @@ add_library(mc2vr_carrier SHARED
     debug/gameplay_census.cpp
     debug/gpu_census.cpp
     debug/gui_census.cpp
+    debug/material_census.cpp
     debug/occlusion_off.cpp
     debug/ps_census.cpp
     debug/render_dump.cpp

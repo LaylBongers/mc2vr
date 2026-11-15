@@ -37,6 +37,13 @@ const uint32_t *substitute_pixel_shader(const uint32_t *original);
 // Returns what to create instead (the original, texel-scaled as needed).
 const uint32_t *on_substitute_failed(const uint32_t *original, const uint32_t *used, long hr);
 
+// The device created `object` from `used` (what substitute_pixel_shader
+// returned): remembered, so debug tools can name our shaders by object.
+void on_created(const uint32_t *used, const void *object);
+// Our reimplementation's registry name for a created shader object, or
+// nullptr (an original, or unknown).
+const char *name_of(const void *object);
+
 // 10 s window report; logs only when something changed.
 void report_window();
 

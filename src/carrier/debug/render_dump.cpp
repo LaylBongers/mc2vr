@@ -30,6 +30,7 @@
 #include "debug/gameplay_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/gui_census.hpp"
+#include "debug/material_census.hpp"
 #include "debug/occlusion_off.hpp"
 #include "vr/occlusion_queries.hpp"
 #include "debug/ps_census.hpp"
@@ -236,6 +237,7 @@ void report_window()
     hud::report_window();
     world_markers::report_window();
     gui_census::report_window();
+    material_census::report_window();
     camera_table::report_window();
     cull_frustum::report_window();
     reimpl::shadow_fit_report_window();

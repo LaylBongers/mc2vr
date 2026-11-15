@@ -1159,6 +1159,33 @@ const uint32_t *on_substitute_failed(const uint32_t *original, const uint32_t *u
     return texel_scaled(original);
 }
 
+namespace {
+struct Created {
+    const void *object;
+    const char *name;
+};
+std::vector<Created> g_created;  // load thread writes at creation; debug readers on the render thread
+} // namespace
+
+void on_created(const uint32_t *used, const void *object)
+{
+    if (object == nullptr || used == nullptr) return;
+    for (const Entry &e : g_entries) {
+        if (e.last_used == used) {
+            g_created.push_back(Created{object, e.name});
+            return;
+        }
+    }
+}
+
+const char *name_of(const void *object)
+{
+    for (const Created &c : g_created) {
+        if (c.object == object) return c.name;
+    }
+    return nullptr;
+}
+
 void report_window()
 {
     // Oracle: each reimplemented shader is substituted once per creation by

@@ -80,12 +80,13 @@ A deliberate look change for the 280 PgDiff materials only, selected by conf `sh
 - **Material** from the Blinn-Phong assets:
   - α = clamp(√(2 / (n + 2)), 0.03, 1), with n = `materialData[5].z`.
   - Tint = specular map × `materialData[1]`. Dielectric F0 = 0.04 + tint · `kSpecF0Scale` (0.25).
-  - **Metal families:** metalness = saturate(luminance(tint) / 0.5), so bright texels act as bare metal and dark ones stay dielectric.
+  - **Every surface is a dielectric with its full albedo.** The game's "Metal" is an environment-mapped reflective material (car paint, glass, panels), not bare metal. A first version derived metalness from the specular map's luminance, and coloured car paint washed out to grey with pink splotches (live, 2026-11-15). It was removed.
   - **Families without Spec:** F0 = 0.04, α = 0.6.
   - The normal map's z uses the correct √(1 − x² − y²), where classic keeps the original's slip.
 - **Ambient and environment:**
   - **Diffuse ambient** (ambient cube or vertex ambient): × (1 − EnvBRDF) × AO.
-  - **Specular ambient** for every material: the reflection cube with a roughness mip (Metal/Refl families), else the ambient cube along R (Norm families), else the vertex ambient. Weighted by Karis's `EnvBRDFApprox` × `kEnvStrength` (1.0) × AO.
+  - **Specular ambient:** the ambient cube along R (Norm families) or the vertex ambient, weighted by Karis's `EnvBRDFApprox` × `kEnvStrength` (1.0) × AO.
+  - **Metal/Refl reflections** are a coat over the full-colour base: the reflection cube at a roughness mip × the specular map × the artists' own weight. Metal's weight is its original Fresnel, `lerp(materialData[2].w, 1, (1 − N·V)⁵) · materialData[5].x`; Refl's is the constant `materialData[5].x`. The base gives up `kCoatEnergy` (0.5) of that weight.
   - AO now darkens only ambient and environment, not direct light.
 - **Unchanged:** rim, SSS and emissive work as in classic. The alpha is raised by the modern specular's luminance.
 - **Compromises:**
@@ -96,7 +97,7 @@ A deliberate look change for the 280 PgDiff materials only, selected by conf `sh
 - **Checks:**
   - `shader_iface.py --modern`: inputs, samplers and constants within the original's interface, since the game sets nothing else.
   - `shader_equiv.py --modern-finite`: no NaN or infinity where the original is finite, on plausible lights. It also gives each family's modern/classic luminance ratio as a calibration aid: about 0.55–0.9 for Metal/Refl, 0.76–0.87 for Spec without AmbOcc, 0.9–1.2 elsewhere.
-- **OPEN:** calibration in the HMD. `kSpecF0Scale`, `kEnvStrength` and `kMetalLumFull` are in `PgDiff.hlsl`.
+- **OPEN:** calibration in the HMD. `kSpecF0Scale`, `kEnvStrength` and `kCoatEnergy` are in `PgDiff.hlsl`.
 
 ## Cost
 

@@ -253,11 +253,12 @@ float4 main(Input i) : COLOR
 // Direct light (the sun and every local light): GGX specular and Burley
 // diffuse with the energy split (lights.hlsli, add_pbr_light), the sun fully
 // shadowed. Ambient: the family's ambient (the cube at the normal, or the
-// vertex's) for the diffuse; for the specular, the reflection cube (Metal,
-// Refl) at a roughness-dependent mip, else the ambient along the reflection
-// vector (the cube at R, or the vertex's), weighted by the split-sum fit
-// (env_brdf_approx). The rim, subsurface and emissive terms are the
-// originals', added on top.
+// vertex's) for the diffuse; for the specular, the ambient along the
+// reflection vector (the cube at R, or the vertex's), weighted by the
+// split-sum fit (env_brdf_approx). The reflective families (Metal, Refl) get
+// their reflection cube as a coat over the full-colour base instead, weighted
+// by the artists' own controls (below). The rim, subsurface and emissive
+// terms are the originals', added on top.
 //
 // The material from the Blinn-Phong assets:
 //   GGX alpha  = sqrt(2 / (n + 2)), n = materialData[5].z (the Blinn-Phong
@@ -267,13 +268,16 @@ float4 main(Input i) : COLOR
 //                as the originals weight their highlight)
 //   dielectric F0 = kDielectricF0 + tint * kSpecF0Scale (without Spec,
 //                kDielectricF0)
-//   Metal: metalness = saturate(luminance(tint) / kMetalLumFull): bright
-//                specular-map texels are bare metal, dark ones (paint, dirt,
-//                rust) dielectric; F0 = lerp(dielectric F0, tint, metalness),
-//                the diffuse albedo times (1 - metalness)
-// Not used here (fewer constants than the originals; the game uploads them
-// anyway): the reflection weights materialData[5].x and [2].w — the
-// reflection's weight is the Fresnel / split-sum's.
+//   Every surface is a dielectric with its full albedo. The game's "Metal" is
+//   an environment-mapped reflective material (car paint, glass, polished
+//   panels), not bare metal: treating bright specular-map texels as metal
+//   (no diffuse, reflection tinted by the grey map) washed coloured paint out
+//   to grey (live, 2026-11-15).
+//   Metal: a coat over the base, the original's Fresnel weight
+//                lerp(materialData[2].w, 1, (1 - N.V)^5) * materialData[5].x
+//                on the reflection cube (at a roughness mip) times the
+//                specular map; the base gives up kCoatEnergy of that weight.
+//   Refl:  the same with the original's constant weight materialData[5].x.
 //
 // The families with neither Spec nor Rim (PgDiffFP, AmbOcc, Emis, EmisAmbOcc)
 // have no cameraPos in their interface, so no view direction: for them the
@@ -285,7 +289,7 @@ static const float kDielectricF0 = 0.04;  // the common dielectric's 4%
 static const float kSpecF0Scale = 0.25;   // specular map -> extra dielectric F0 (calibration)
 static const float kAlphaMin = 0.03;      // the sharpest highlight (GGX alpha)
 static const float kNoSpecAlpha = 0.6;    // GGX alpha of the families without a specular map
-static const float kMetalLumFull = 0.5;   // tint luminance at which a Metal texel is fully metal
+static const float kCoatEnergy = 0.5;     // share of the coat's weight the base below gives up
 static const float kEnvStrength = 1.0;    // environment specular scale (calibration)
 static const float kReflectionMips = 6;   // reflectionMap mip at roughness 1 (clamped to its chain)
 
@@ -309,15 +313,11 @@ float4 main(Input i) : COLOR
 
     // ---- the material ----
     PbrMaterial m;
-    float metalness = 0;
 #if MC2VR_PGDIFF_SPEC
-    const float3 tint = saturate(tex2D(specularMap, uv).rgb * materialData[1].rgb);
+    const float3 specMap = tex2D(specularMap, uv).rgb;
+    const float3 tint = saturate(specMap * materialData[1].rgb);
     m.alpha = clamp(sqrt(2 / (max(materialData[5].z, 0) + 2)), kAlphaMin, 1);
     m.f0 = kDielectricF0 + tint * kSpecF0Scale;
-#if MC2VR_PGDIFF_METAL
-    metalness = saturate(dot(tint, kLuminance) / kMetalLumFull);
-    m.f0 = lerp(m.f0, tint, metalness);
-#endif
 #else
     m.alpha = kNoSpecAlpha;
     m.f0 = kDielectricF0;
@@ -328,7 +328,7 @@ float4 main(Input i) : COLOR
 #else
     m.ndv = 1;
 #endif
-    const float3 diffuseAlbedo = albedo.rgb * (1 - metalness);
+    float3 diffuseAlbedo = albedo.rgb;
 
     // ---- direct light ----
     const float visibility = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w);
@@ -355,16 +355,23 @@ float4 main(Input i) : COLOR
     const float3 envBrdf = env_brdf_approx(m.f0, m.roughness, m.ndv);
     const float3 reflected = reflect(-view, normal);
     const float3 ambient = ambient_light(i, normal) * materialData[2].rgb;
-#if MC2VR_PGDIFF_METAL || MC2VR_PGDIFF_REFL
-    const float3 environment = texCUBElod(reflectionMap, float4(reflected, m.roughness * kReflectionMips)).rgb;
-#else
-    const float3 environment = ambient_light(i, reflected) * materialData[2].rgb;
-#endif
-
 #if !MC2VR_PGDIFF_VIEW
     direct.specular = 0;
 #endif
+#if MC2VR_PGDIFF_METAL || MC2VR_PGDIFF_REFL
+    // The reflective coat, weighted as the artists set it.
+#if MC2VR_PGDIFF_METAL
+    const float coat = lerp(materialData[2].w, 1, pow5(1 - min(m.ndv, 1))) * materialData[5].x;
+#else
+    const float coat = materialData[5].x;
+#endif
+    const float3 reflection = texCUBElod(reflectionMap, float4(reflected, m.roughness * kReflectionMips)).rgb;
+    diffuseAlbedo *= 1 - saturate(coat) * kCoatEnergy;
+    const float3 specular = direct.specular + reflection * specMap * (coat * ao);
+#else
+    const float3 environment = ambient_light(i, reflected) * materialData[2].rgb;
     const float3 specular = direct.specular + environment * envBrdf * (kEnvStrength * ao);
+#endif
     float3 colour = diffuseAlbedo * (direct.diffuse * materialData[0].rgb + ambient * (1 - envBrdf) * ao) +
                     albedo.rgb * saturate(extra) * materialData[0].rgb * ao + specular;
 #if MC2VR_PGDIFF_EMIS
