@@ -73,3 +73,7 @@ Pixel-shader inventory (`debug_camera_census=on`, which also covers the bound PS
 
 Work, in order:
 1. The remaining PS-side producer from the inventory: the reflection view.
+
+## Carrier-provided `cameraPos` (modern shading)
+
+Modern shader variants whose originals declare no `cameraPos` read it at c92. On each draw with one bound, `on_record_draw` uploads the current eye view record's camera position there, the same source as the game's own `cameraPos` uploads. On offscreen passes and without an HMD, that's the game's record. [shaders.md](shaders.md) has the details.

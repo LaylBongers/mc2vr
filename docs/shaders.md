@@ -71,7 +71,7 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
 
 ## Modern shading (optional)
 
-A deliberate look change for the 280 PgDiff materials only, selected by conf `shading=classic|modern` (default `classic`). Every PgDiff variant is also built with `MC2VR_SHADING_MODERN=1` as `<symbol>_modern`, and `hooks/shader_reimpl.cpp` picks the set at creation; the atlas texel scaling applies to either. Classic is the faithful set, verified against the originals. Terrain, vegetation, decals and water have no modern set.
+A deliberate look change, selected by conf `shading=classic|modern` (default `classic`). It covers the PgDiff materials, terrain, vegetation (PgFastFP, PgScrubLightFP), billboard trees and decals: 337 shaders. Water has no modern set. Every such variant is also built with `MC2VR_SHADING_MODERN=1` as `<symbol>_modern`, and `hooks/shader_reimpl.cpp` picks the set at creation; the atlas texel scaling applies to either. Classic is the faithful set, verified against the originals. Shared helpers are in `modern.hlsli`.
 
 - **Direct light** (sun and every point/spot light, `lights.hlsli` `local_lights_pbr`):
   - **Specular:** GGX · Smith height-correlated visibility · Schlick Fresnel · N·L · π. The π is because the game's units have no 1/π.
@@ -91,15 +91,39 @@ A deliberate look change for the 280 PgDiff materials only, selected by conf `sh
   - **Optional, later:** hand-tag metal settings, e.g. with a debug key that highlights one material setting, and give those a metal path.
   - AO now darkens only ambient and environment, not direct light.
 - **Unchanged:** rim, SSS and emissive work as in classic. The alpha is raised by the modern specular's luminance.
+- **The other families** are dielectrics (F0 = 0.04) with a fixed GGX α per family:
+
+  | Family | α | Environment strength |
+  |---|---|---|
+  | Terrain (`kTerrainAlpha`, `kTerrainEnvStrength`) | 0.8 | 0.5, so far ground doesn't look wet |
+  | PgFastFP | 0.6 | 1.0 |
+  | PgScrubLightFP | 0.6 | 1.0 |
+  | Billboard trees | 0.6 | 1.0 |
+  | Decals | 0.7 | 1.0 |
+
+  Each keeps its own ambient, texture layers, view blend and alpha. Scrub and decal normals are normalized, and direct light isn't saturated, as in PgDiff modern.
+  - **Luminance against classic:** about 1.01–1.08, PgFastFP 0.95.
 - **Compromises:**
-  - PgDiffFP, AmbOcc, Emis and EmisAmbOcc (28 shaders) have no `cameraPos` in their interface, so no view direction. They take V = N: no direct specular; Burley and the energy split only.
+  - **Carrier-provided camera position:** 85 shaders whose originals declare no `cameraPos` get one. Their modern versions declare it at c92, where every other receiver has it, and the carrier uploads the current eye's camera position there on each draw. These are PgDiffFP, AmbOcc, Emis and EmisAmbOcc, the terrain, PgFastFP, PgScrubLightFP, the billboard trees and the decals.
+    - **How:** `view_rewrite::on_record_draw` from our SubmitToGPU uploads the same per-eye view record the game's own `cameraPos` uploads read, through `Dx9_SetPixelShaderConstantF_Direct`, which keeps no cache. The bound shader is checked when `g_CurPassObject` changes.
+    - **Why c92 is safe:** it is free in all 85 originals.
+    - **Log:** `view/hmd: carrier cameraPos (c92) active`, with counts in the window line. `gameToo` > 0 would mean the game uploads it too (harmless).
   - Non-Norm families' environment has no direction.
   - Shading stays in the game's gamma space.
   - Light-heavy variants run about twice the instructions.
 - **Checks:**
   - `shader_iface.py --modern`: inputs, samplers and constants within the original's interface, since the game sets nothing else.
   - `shader_equiv.py --modern-finite`: no NaN or infinity where the original is finite, on plausible lights. It also gives each family's modern/classic luminance ratio as a calibration aid: about 0.55–0.9 for Metal/Refl, 0.76–0.87 for Spec without AmbOcc, 0.9–1.2 elsewhere.
-- **OPEN:** calibration in the HMD, plus a cost check (`debug_gpu_census`, modern against classic). The knobs `kSpecF0Scale`, `kEnvStrength` and `kReflectionMipMax` are in `PgDiff.hlsl`.
+- **Cost, live (2026-11-15, same spot, `debug_gpu_census`, 90 Hz both):** classic against modern.
+
+  | | Classic | Modern |
+  |---|---|---|
+  | Pass 1 main GPU | 2.82–2.86 ms | 2.86–2.87 ms |
+  | Pass 2 main GPU | 6.56–6.59 ms | 6.56–6.57 ms |
+  | Draws | ~1,110 | ~1,113 |
+
+  So it's free within noise. A first modern run at 60 Hz was a temporary vsync-on test build ("TEMP TEST forcing ONE" in the log), not the shading.
+- **Look, live (2026-11-15):** classic-style reflections with the improved PBR shading. OPEN: fine calibration of `kSpecF0Scale`, `kEnvStrength` and `kReflectionMipMax` (in `PgDiff.hlsl`), and the default (`classic` for now).
 
 ## Cost
 

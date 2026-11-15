@@ -77,6 +77,8 @@ add_library(mc2vr_carrier SHARED
 # Reimplemented shaders (reimpl/shaders/, docs/shaders.md): HLSL compiled at
 # build time into generated/shaders/<name>.h (cmake/hlsl.cmake).
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgBillboardTreeFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgBillboardTreeFP)
+mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgBillboardTreeFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgBillboardTreeFP_modern
+           DEFINES MC2VR_SHADING_MODERN=1)
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgUnderwaterFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgUnderwaterFP)
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgWaterFPDWE.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgWaterFPDWE)
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgWaterFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgWaterFP)
@@ -156,14 +158,12 @@ foreach(entry IN LISTS MC2VR_LIGHT_FAMILIES)
         mc2vr_hlsl(mc2vr_carrier reimpl/shaders/${source}.hlsl ENTRY main PROFILE ps_3_0
                    SYMBOL ${family}${suffix}
                    DEFINES ${features} MC2VR_POINT_LIGHTS=${point} MC2VR_SPOT_LIGHTS=${spot} MC2VR_LIGHTS_LI=${li})
-        # The PgDiff families also in the modern shading (conf shading=modern):
+        # Every family also in the modern shading (conf shading=modern):
         # <family><suffix>_modern.
-        if(source STREQUAL "PgDiff")
-            mc2vr_hlsl(mc2vr_carrier reimpl/shaders/${source}.hlsl ENTRY main PROFILE ps_3_0
-                       SYMBOL ${family}${suffix}_modern
-                       DEFINES ${features} MC2VR_POINT_LIGHTS=${point} MC2VR_SPOT_LIGHTS=${spot} MC2VR_LIGHTS_LI=${li}
-                               MC2VR_SHADING_MODERN=1)
-        endif()
+        mc2vr_hlsl(mc2vr_carrier reimpl/shaders/${source}.hlsl ENTRY main PROFILE ps_3_0
+                   SYMBOL ${family}${suffix}_modern
+                   DEFINES ${features} MC2VR_POINT_LIGHTS=${point} MC2VR_SPOT_LIGHTS=${spot} MC2VR_LIGHTS_LI=${li}
+                           MC2VR_SHADING_MODERN=1)
     endforeach()
 endforeach()
 

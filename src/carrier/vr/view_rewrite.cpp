@@ -14,6 +14,8 @@
 
 #include "game/addresses.h"
 #include "game/dx9.hpp"
+#include "game/render_shell.hpp"
+#include "hooks/shader_reimpl.hpp"
 #include "log.hpp"
 #include "vr/vec_math.hpp"
 #include "vr/camera_table.hpp"
@@ -361,7 +363,7 @@ uint32_t g_eye_n = 0;     // entries in use this pass
 uint32_t g_eye_next = 0;  // the next one to reuse when all are in use
 // Per window: productions by source; uploads by kind and source.
 uint64_t g_produced[kViewSources] = {};
-uint64_t g_uploads[3][kViewSources] = {};
+uint64_t g_uploads[4][kViewSources] = {};
 
 // The eye copy of e.src for this pass's eye (or a pass-through source).
 void produce(EyeEntry &e)
@@ -891,6 +893,49 @@ void on_view_upload(const ViewRecord &v, ViewUpload what)
     }
 }
 
+namespace {
+
+// The carrier's cameraPos (on_record_draw).
+constexpr uint32_t kCameraPosRegister = 92;  // every original's cameraPos (shader_iface.py --modern)
+constexpr uint32_t kNoPassObject = 0xffffffffu;
+uint32_t g_cam_pass_object = kNoPassObject;  // the g_CurPassObject the flag below was resolved for
+bool g_cam_needed = false;                   // its pixel shader takes the carrier's cameraPos
+bool g_cam_logged = false;
+uint64_t g_cam_game_too = 0;  // per window: carrier uploads where the game's pass also had a cameraPos
+
+} // namespace
+
+void on_record_draw(const ViewRecord &v, const game::EffectPass *game_pass)
+{
+    const uint32_t bound = game::g_CurPassObject::get();
+    if (bound != g_cam_pass_object) {
+        g_cam_pass_object = bound;
+        g_cam_needed = false;
+        IDirect3DDevice9 *const dev = game::lti_device();
+        IDirect3DPixelShader9 *ps = nullptr;
+        if (bound != 0 && dev != nullptr && hooks::shader_reimpl::carrier_camera_pos_in_use() &&
+            SUCCEEDED(dev->GetPixelShader(&ps)) && ps != nullptr) {
+            g_cam_needed = hooks::shader_reimpl::needs_carrier_camera_pos(ps);
+            if (g_cam_needed && !g_cam_logged) {
+                g_cam_logged = true;
+                const char *name = hooks::shader_reimpl::name_of(ps);
+                MC2VR_LOG("view/hmd: carrier cameraPos (c%u) active for the modern shaders without one "
+                          "(first: %s); counted in the view record uploads line",
+                          kCameraPosRegister, name != nullptr ? name : "?");
+            }
+            ps->Release();  // the device keeps it bound
+        }
+    }
+    if (!g_cam_needed) {
+        return;
+    }
+    on_view_upload(v, ViewUpload::PsCarrierCameraPos);
+    if (game_pass != nullptr && game_pass->cameraPos.count != 0) {
+        g_cam_game_too++;
+    }
+    game::Dx9_SetPixelShaderConstantF_Direct(kCameraPosRegister, v.rec->cameraPos, 1);
+}
+
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
                                 uint32_t vec4_count)
 {
@@ -932,17 +977,21 @@ void report_window()
                      (unsigned long long)n[0], (unsigned long long)n[1], (unsigned long long)n[2],
                      (unsigned long long)n[3], (unsigned long long)n[4]);
         };
-        char prod[160], vs[160], ps[160], cp[160];
+        char prod[160], vs[160], ps[160], cp[160], ccp[160];
         src(g_produced, prod, sizeof prod);
         src(g_uploads[0], vs, sizeof vs);
         src(g_uploads[1], ps, sizeof ps);
         src(g_uploads[2], cp, sizeof cp);
+        src(g_uploads[3], ccp, sizeof ccp);
         MC2VR_LOG("view/hmd: view records produced %s | identityResidMax=%.3g poseId=%u valid=%d", prod,
                   (double)g_hmd_resid_max, g_hmd.id, (int)g_hmd.valid);
         // The PS copies (depthXform, cameraPos) pass through only off the main pass.
+        // carrier cameraPos: on_record_draw's uploads (modern shading only);
+        // gameToo = the game's pass resolved a cameraPos as well (expected 0).
         MC2VR_LOG("view/hmd: view record uploads: VS viewContextData %s | PS viewContextData %s | "
-                  "PS cameraPos %s",
-                  vs, ps, cp);
+                  "PS cameraPos %s | carrier cameraPos %s gameToo=%llu",
+                  vs, ps, cp, ccp, (unsigned long long)g_cam_game_too);
+        g_cam_game_too = 0;
         for (uint64_t &n : g_produced) n = 0;
         for (auto &k : g_uploads) {
             for (uint64_t &n : k) n = 0;
@@ -1089,6 +1138,7 @@ void set_pass_eye(int sign)
         g_age_measured = false;
         g_eye_n = 0;  // per-pass eye records
         g_eye_next = 0;
+        g_cam_pass_object = kNoPassObject;  // the carrier cameraPos flag, resolved again per pass
     }
     g_pass_eye = sign;
 }

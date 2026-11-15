@@ -60,12 +60,17 @@ Usage: shader_equiv.py <container shader3.bin> [registry.cpp] [generated dir]
                                 Also the modern/classic mean output luminance
                                 ratio (oC0.rgb, Rec.601 weights), per entry and
                                 per family, from a second run with the plain
-                                semantics and the atmosphere neutral (PgDiff's
-                                TEXCOORD4 extinction 1, TEXCOORD5 inscatter 0,
-                                which would otherwise dominate), over the trials
+                                semantics and the atmosphere neutral (the
+                                family's extinction 1 and inscatter 0, which
+                                would otherwise dominate: TEXCOORD4/5 for
+                                PgDiff, terrain and PgFastFP, ATMOSPHERE for the
+                                others), over the trials
                                 where both are finite and below the 30000
                                 clamp: a rough calibration aid only (the
-                                materials and lights are random).
+                                materials and lights are random). cameraPos
+                                (c92) is a random constant like any other, also
+                                for the kCarrierCameraPos entries whose
+                                original lacks it (the carrier uploads it).
 Exit 1 if any entry differs (--modern-finite: any modern-only non-finite
 trial), 2 on usage/emulation errors.
 """
@@ -80,7 +85,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from shader_iface import ROOT, fnv1a, load_generated, parse_ctab, reg_type, words_at  # noqa: E402
+from shader_iface import ROOT, fnv1a, load_generated, modern_entries, parse_ctab, reg_type, words_at  # noqa: E402
 from shader_disasm import OPS  # noqa: E402
 
 SHADOW_SAMPLER = "globalDirLightShadowMap"
@@ -758,6 +763,18 @@ def perturb(words, how):
 
 LUMA = np.array([0.299, 0.587, 0.114])
 LIGHT_SUFFIXES = ("_pl_sl_li", "_pl_sl", "_pl_li", "_sl_li", "_pl", "_sl")
+# --modern-finite's luminance run: the TEXCOORD indices of the atmosphere's
+# extinction and inscatter, by symbol prefix (else 4, 5: PgDiff*, terrain,
+# PgFastFP).
+ATMOSPHERE = (("PgScrubLightFP", (5, 6)), ("PgBillboardTreeFP", (3, 4)), ("PgDecal2FP", (5, 7)))
+USAGE_TEXCOORD = 5
+
+
+def atmosphere_texcoords(sym):
+    for prefix, idx in ATMOSPHERE:
+        if sym.startswith(prefix):
+            return idx
+    return (4, 5)
 
 
 def all_finite(result):
@@ -772,8 +789,7 @@ def all_finite(result):
 
 def modern_finite(container, registry, gen, opts):
     """--modern-finite: see the docstring."""
-    entries = re.findall(r'\{0x([0-9a-f]{8})u, "[^"]*\(shader3\.bin@(0x[0-9a-f]+)\)", mc2vr::shaders::\w+, '
-                         r'mc2vr::shaders::(\w+)', open(registry).read())
+    entries = [(h, off, sym) for h, off, sym, _cam in modern_entries(registry)]
     if opts["--only"]:
         entries = [e for e in entries if opts["--only"] in (e[0], e[2], e[2][:-len("_modern")])]
     if not entries:
@@ -800,8 +816,9 @@ def modern_finite(container, registry, gen, opts):
             lum = Trials(ntrials, np.random.default_rng([int(opts["--seed"]), idx]), decode(orig)[3])
             if opts["--shadow"] == "lit":
                 lum.shadow = np.where(lum.shadow > 0, 1e9, -1e9)
-            lum.inputs[(5, 4)] = np.ones((ntrials, 4))
-            lum.inputs[(5, 5)] = np.zeros((ntrials, 4))
+            ext, insc = atmosphere_texcoords(sym)
+            lum.inputs[(USAGE_TEXCOORD, ext)] = np.ones((ntrials, 4))
+            lum.inputs[(USAGE_TEXCOORD, insc)] = np.zeros((ntrials, 4))
             lo_run = Machine(orig, lum, "orig " + sym).run()
             ln_run = Machine(ours, lum, "modern " + sym).run()
         except EmuError as e:

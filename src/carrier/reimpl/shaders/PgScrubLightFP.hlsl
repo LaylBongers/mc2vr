@@ -6,6 +6,10 @@
 // the normal nor saturates the direct light (as the originals). Local lights:
 // lights.hlsli's defines select the variant.
 
+#ifndef MC2VR_SHADING_MODERN
+#define MC2VR_SHADING_MODERN 0  // conf shading=classic|modern: the `_modern` symbols at the modern main
+#endif
+
 #include "shadow.hlsli"
 #include "lights.hlsli"
 
@@ -21,6 +25,7 @@ struct Input {
     float3 inscatter : TEXCOORD6;
 };
 
+#if !MC2VR_SHADING_MODERN
 float4 main(Input i) : COLOR
 {
     const float3 sun = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w) * globalLightData[1].rgb;
@@ -31,3 +36,32 @@ float4 main(Input i) : COLOR
     const float3 colour = albedo.rgb * light * i.extinction + i.inscatter;
     return float4(min(max(colour, 1e-5), 30000), albedo.a * i.tint.a * materialData[5].w);
 }
+#endif  // !MC2VR_SHADING_MODERN
+
+#if MC2VR_SHADING_MODERN
+// ---- The modern shading (modern.hlsli; as PgFastFP.hlsl's) ----
+//
+// The same dielectric as PgFastFP's modern shading, with this family's
+// ambient (materialData[2] x the vertex tint). The BRDF needs a unit normal,
+// so unlike the classic shading the normal is normalized.
+#include "modern.hlsli"
+
+float3 cameraPos : register(c92);  // not in the originals' interface: the carrier's, per eye
+
+static const float kScrubAlpha = 0.6;        // GGX alpha
+static const float kScrubEnvStrength = 1.0;  // environment specular scale
+
+float4 main(Input i) : COLOR
+{
+    const float3 normal = normalize(i.normal);
+    const float3 view = normalize(cameraPos - i.worldPos);
+    const PbrMaterial m = dielectric(kScrubAlpha, normal, view);
+    const float visibility = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w);
+    const LocalLights direct = direct_light_pbr(i.worldPos, normal, view, m, visibility);
+    const float3 ambient = materialData[2].rgb * i.tint.rgb;
+    const float4 albedo = tex2D(diffuseMap, i.uvDepthFade.xy);
+    const float3 lit = dielectric_colour(albedo.rgb, m, direct, materialData[0].rgb, ambient, ambient, kScrubEnvStrength);
+    const float3 colour = lit * i.extinction + i.inscatter;
+    return float4(min(max(colour, 1e-5), 30000), albedo.a * i.tint.a * materialData[5].w);
+}
+#endif  // MC2VR_SHADING_MODERN

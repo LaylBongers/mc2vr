@@ -15,7 +15,14 @@
 // The originals already take the game's 9-tap sun-shadow filter: shadow.hlsli
 // is theirs, so the math is the originals' throughout. Owning the lookup is
 // the point (the cascade blend band, docs/shadows.md).
+//
+// MC2VR_SHADING_MODERN 0 | 1 (conf shading=classic|modern): 0 the originals'
+// shading; 1 the physically based one (the `_modern` symbols; at the modern
+// main below).
 
+#ifndef MC2VR_SHADING_MODERN
+#define MC2VR_SHADING_MODERN 0
+#endif
 #ifndef MC2VR_TERRAIN_LAYERS
 #define MC2VR_TERRAIN_LAYERS 0
 #endif
@@ -94,6 +101,7 @@ float3 terrain_albedo(Input i)
 #endif
 }
 
+#if !MC2VR_SHADING_MODERN
 float4 main(Input i) : COLOR
 {
     const float3 worldPos = i.worldPosDepth.xyz;
@@ -108,3 +116,36 @@ float4 main(Input i) : COLOR
     const float3 colour = light * terrain_albedo(i) * i.extinction.xyz + i.inscatter.xyz;
     return float4(min(max(colour, 1e-5), 30000), 1);
 }
+#endif  // !MC2VR_SHADING_MODERN
+
+#if MC2VR_SHADING_MODERN
+// ---- The modern shading (modern.hlsli; as PgDiff.hlsl's) ----
+//
+// A rough dielectric: Burley diffuse with the energy split and GGX specular
+// from the sun (fully shadowed) and the local lights; the vertex ambient
+// through the split for the diffuse and, weighted by the split-sum fit, as
+// the environment (it has no direction). The environment is kept at half
+// strength: at grazing angles the fit rises towards 1, and distant ground
+// would look wet.
+#include "modern.hlsli"
+
+float3 cameraPos : register(c92);  // not in the originals' interface: the carrier's, per eye
+
+static const float kTerrainAlpha = 0.8;        // GGX alpha of the ground
+static const float kTerrainEnvStrength = 0.5;  // environment specular scale
+
+float4 main(Input i) : COLOR
+{
+    const float3 worldPos = i.worldPosDepth.xyz;
+    const float3 normal = normalize(i.normalFade.xyz);
+    const float3 view = normalize(cameraPos - worldPos);
+    const PbrMaterial m = dielectric(kTerrainAlpha, normal, view);
+
+    const float visibility = sun_visibility(worldPos, i.worldPosDepth.w, i.normalFade.w);
+    const LocalLights direct = direct_light_pbr(worldPos, normal, view, m, visibility);
+    const float3 lit = dielectric_colour(terrain_albedo(i), m, direct, 1, i.ambient, i.ambient, kTerrainEnvStrength);
+
+    const float3 colour = lit * i.extinction.xyz + i.inscatter.xyz;
+    return float4(min(max(colour, 1e-5), 30000), 1);
+}
+#endif  // MC2VR_SHADING_MODERN

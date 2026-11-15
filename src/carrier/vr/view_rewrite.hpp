@@ -4,7 +4,9 @@
 // or, with debug_view_identity=on, the decompose/rebuild self-check:
 //   - eye_view_record() / on_view_upload(): the PgPrimitive_SubmitToGPU
 //     reimplementation uploads every copy of the view record (VS and PS
-//     viewContextData, PS cameraPos) from this pass's per-eye record.
+//     viewContextData, PS cameraPos) from this pass's per-eye record;
+//     on_record_draw(): the same record's camera position for the modern
+//     shaders whose originals have no cameraPos (the carrier's upload).
 //   - on_set_vs_constant(): the device VmtHook tap for the explicit camera
 //     matrices outside the view record (LocalToProj, LocalToView).
 //   - on_sky_matrix_built() / on_record_vs_constant(): the clouds sky
@@ -51,12 +53,26 @@ struct ViewRecord {
 // is checked per call. The copy stays valid while the record is submitted.
 ViewRecord eye_view_record(const game::ViewContextRecord *vctx);
 
-enum class ViewUpload : uint8_t { VsViewContext, PsViewContext, PsCameraPos };
+// PsCarrierCameraPos: the carrier's own cameraPos upload (on_record_draw).
+enum class ViewUpload : uint8_t { VsViewContext, PsViewContext, PsCameraPos, PsCarrierCameraPos };
 
 // One upload of `v` (counts; a VS viewContextData upload of an eye record also
 // makes its view the one this pass's explicit camera matrices are corrected
 // against, as it was when the rewrite ran at the device).
 void on_view_upload(const ViewRecord &v, ViewUpload what);
+
+// A record is about to draw (the PgPrimitive_SubmitToGPU reimplementation,
+// after its pass's PS constants and command stream, before the draw): when
+// the bound pixel shader is a modern one whose original has no cameraPos
+// (hooks::shader_reimpl::needs_carrier_camera_pos), uploads `v`'s camera
+// position to c92, where every original with a cameraPos takes it: the same
+// value the game's own cameraPos upload would carry, i.e. the eye position
+// on the main pass. Every such draw, since nothing keeps c92 for it. The
+// bound shader is resolved when the game's bound pass object
+// (g_CurPassObject, the one that binds the PS) changes, and per pass.
+// `game_pass` = the record's pass, for the log (whether the game uploads a
+// cameraPos to it too).
+void on_record_draw(const ViewRecord &v, const game::EffectPass *game_pass);
 
 // Tap from device.cpp's SetVertexShaderConstantF handler (main thread, before
 // the driver call): the current record's explicit camera matrices. Returns the

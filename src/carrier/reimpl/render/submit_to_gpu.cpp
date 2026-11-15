@@ -356,6 +356,11 @@ void submit_record(PgPrimitive *rec)
     reimpl::RenderCmd_ExecuteStream(rec->cmdStream, tech, pass);
     // VR: a world marker's quad placed for this eye (vr/world_markers.hpp).
     const bool marker = world_markers::before_draw((uint32_t)(rec - g_PrimitiveBase::get()), rec, tech);
+    // VR: the modern shaders whose originals have no cameraPos get this
+    // record's (per-eye) camera position from us (vr/view_rewrite.hpp).
+    if (tech != nullptr) {
+        view_rewrite::on_record_draw(eye_view, pass);
+    }
     if (tech != nullptr && camera_census::on_draw(rec, tech, pass)) {  // debug tap (true unless a debug skip)
         RenderShell_BindRecordStreams(rec);
         if (g_LastGeometry::get() != rec->geometryObj) {

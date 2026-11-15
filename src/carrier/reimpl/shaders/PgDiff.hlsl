@@ -287,13 +287,12 @@ float4 main(Input i) : COLOR
 //   sqrt(alpha) * 6 (~mip 3 on glossy paint) made the reflections look weak
 //   (live, 2026-11-15).
 //
-// The families with neither Spec nor Rim (PgDiffFP, AmbOcc, Emis, EmisAmbOcc)
-// have no cameraPos in their interface, so no view direction: for them the
-// view is taken as the normal (N.V = 1: the Burley view factor 1, the
-// environment along the normal) and there's no direct specular.
-#define MC2VR_PGDIFF_VIEW (MC2VR_PGDIFF_SPEC || MC2VR_PGDIFF_RIM)
+// The view is the camera's: the families with neither Spec nor Rim (PgDiffFP,
+// AmbOcc, Emis, EmisAmbOcc) have no cameraPos in their originals' interface,
+// so the carrier uploads it to the same register for their modern builds
+// (kCarrierCameraPos in hooks/shader_reimpl.cpp), per eye like the game's.
+#include "modern.hlsli"
 
-static const float kDielectricF0 = 0.04;  // the common dielectric's 4%
 static const float kSpecF0Scale = 0.25;   // specular map -> extra dielectric F0 (calibration)
 static const float kAlphaMin = 0.03;      // the sharpest highlight (GGX alpha)
 static const float kNoSpecAlpha = 0.6;    // GGX alpha of the families without a specular map
@@ -301,17 +300,11 @@ static const float kEnvStrength = 1.0;    // environment specular scale (calibra
 static const float kReflectionMips = 6;   // reflectionMap mip per unit of GGX alpha
 static const float kReflectionMipMax = 1; // the blurriest reflection mip (the originals read level 0)
 
-static const float3 kLuminance = float3(0.299, 0.587, 0.114);
-
 float4 main(Input i) : COLOR
 {
     const float2 uv = i.uvDepthFade.xy;
     const float3 normal = surface_normal(i);
-#if MC2VR_PGDIFF_VIEW
     const float3 view = normalize(cameraPos - i.worldPos);
-#else
-    const float3 view = normal;
-#endif
     const float4 albedo = tex2D(diffuseMap, uv);
 #if MC2VR_PGDIFF_AMBOCC
     const float3 ao = i.ambOcc.rgb;
@@ -331,18 +324,13 @@ float4 main(Input i) : COLOR
     m.f0 = kDielectricF0;
 #endif
     m.roughness = sqrt(m.alpha);
-#if MC2VR_PGDIFF_VIEW
     m.ndv = abs(dot(normal, view)) + 1e-5;
-#else
-    m.ndv = 1;
-#endif
     const float3 diffuseAlbedo = albedo.rgb;
 
     // ---- direct light ----
     const float visibility = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w);
     const float3 toSun = -globalLightData[0].xyz;
-    LocalLights direct = local_lights_pbr(i.worldPos, normal, view, m);
-    add_pbr_light(direct, visibility * globalLightData[1].rgb, toSun, normal, view, m);
+    LocalLights direct = direct_light_pbr(i.worldPos, normal, view, m, visibility);
 
     // The originals' extra terms (their place in the saturated direct light).
     float3 extra = 0;
@@ -363,9 +351,6 @@ float4 main(Input i) : COLOR
     const float3 envBrdf = env_brdf_approx(m.f0, m.roughness, m.ndv);
     const float3 reflected = reflect(-view, normal);
     const float3 ambient = ambient_light(i, normal) * materialData[2].rgb;
-#if !MC2VR_PGDIFF_VIEW
-    direct.specular = 0;
-#endif
 #if MC2VR_PGDIFF_METAL || MC2VR_PGDIFF_REFL
     // The reflective coat, weighted as the artists set it.
 #if MC2VR_PGDIFF_METAL
