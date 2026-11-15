@@ -273,11 +273,19 @@ float4 main(Input i) : COLOR
 //   panels), not bare metal: treating bright specular-map texels as metal
 //   (no diffuse, reflection tinted by the grey map) washed coloured paint out
 //   to grey (live, 2026-11-15).
-//   Metal: a coat over the base, the original's Fresnel weight
-//                lerp(materialData[2].w, 1, (1 - N.V)^5) * materialData[5].x
-//                on the reflection cube (at a roughness mip) times the
-//                specular map; the base gives up kCoatEnergy of that weight.
+//   Metal: the artists' reflection, as in the originals: the reflection
+//                cube times the specular map, weighted by the original's
+//                Fresnel lerp(materialData[2].w, 1, (1 - N.V)^5) *
+//                materialData[5].x and added over the full-colour base. Every
+//                reflective material in the game is authored this way (a
+//                material census, 2026-11-15: Fresnel bases 0..0.29 only,
+//                no metals), so the look the art was tuned for is kept; only
+//                the lighting underneath is modern.
 //   Refl:  the same with the original's constant weight materialData[5].x.
+//   The cube is read near-sharp, as the originals do: the mip follows GGX
+//   alpha (not its square root), capped at kReflectionMipMax. A blur by
+//   sqrt(alpha) * 6 (~mip 3 on glossy paint) made the reflections look weak
+//   (live, 2026-11-15).
 //
 // The families with neither Spec nor Rim (PgDiffFP, AmbOcc, Emis, EmisAmbOcc)
 // have no cameraPos in their interface, so no view direction: for them the
@@ -289,9 +297,9 @@ static const float kDielectricF0 = 0.04;  // the common dielectric's 4%
 static const float kSpecF0Scale = 0.25;   // specular map -> extra dielectric F0 (calibration)
 static const float kAlphaMin = 0.03;      // the sharpest highlight (GGX alpha)
 static const float kNoSpecAlpha = 0.6;    // GGX alpha of the families without a specular map
-static const float kCoatEnergy = 0.5;     // share of the coat's weight the base below gives up
 static const float kEnvStrength = 1.0;    // environment specular scale (calibration)
-static const float kReflectionMips = 6;   // reflectionMap mip at roughness 1 (clamped to its chain)
+static const float kReflectionMips = 6;   // reflectionMap mip per unit of GGX alpha
+static const float kReflectionMipMax = 1; // the blurriest reflection mip (the originals read level 0)
 
 static const float3 kLuminance = float3(0.299, 0.587, 0.114);
 
@@ -328,7 +336,7 @@ float4 main(Input i) : COLOR
 #else
     m.ndv = 1;
 #endif
-    float3 diffuseAlbedo = albedo.rgb;
+    const float3 diffuseAlbedo = albedo.rgb;
 
     // ---- direct light ----
     const float visibility = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w);
@@ -365,8 +373,8 @@ float4 main(Input i) : COLOR
 #else
     const float coat = materialData[5].x;
 #endif
-    const float3 reflection = texCUBElod(reflectionMap, float4(reflected, m.roughness * kReflectionMips)).rgb;
-    diffuseAlbedo *= 1 - saturate(coat) * kCoatEnergy;
+    const float mip = min(m.alpha * kReflectionMips, kReflectionMipMax);
+    const float3 reflection = texCUBElod(reflectionMap, float4(reflected, mip)).rgb;
     const float3 specular = direct.specular + reflection * specMap * (coat * ao);
 #else
     const float3 environment = ambient_light(i, reflected) * materialData[2].rgb;

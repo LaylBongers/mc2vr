@@ -86,7 +86,9 @@ A deliberate look change for the 280 PgDiff materials only, selected by conf `sh
 - **Ambient and environment:**
   - **Diffuse ambient** (ambient cube or vertex ambient): × (1 − EnvBRDF) × AO.
   - **Specular ambient:** the ambient cube along R (Norm families) or the vertex ambient, weighted by Karis's `EnvBRDFApprox` × `kEnvStrength` (1.0) × AO.
-  - **Metal/Refl reflections** are a coat over the full-colour base: the reflection cube at a roughness mip × the specular map × the artists' own weight. Metal's weight is its original Fresnel, `lerp(materialData[2].w, 1, (1 − N·V)⁵) · materialData[5].x`; Refl's is the constant `materialData[5].x`. The base gives up `kCoatEnergy` (0.5) of that weight.
+  - **Metal/Refl reflections are the artists' own,** as in the originals: the reflection cube × the specular map × the original weight (Metal's Fresnel `lerp(materialData[2].w, 1, (1 − N·V)⁵) · materialData[5].x`, Refl's constant `materialData[5].x`), added over the full-colour base. The cube is read near-sharp: the mip is GGX α × 6, capped at 1 (`kReflectionMipMax`).
+  - **Why:** a material census (`debug_material_census`, 2026-11-15; 673k reflective draws, 58 settings) found Fresnel bases of 0–0.29 only (44% at 0, 26% at 0.29), strength 0.2–0.8 and exponents 16–350. Every reflective material is authored as a Fresnel-weighted reflection over its colour, and no constant marks a metal, so there's no automatic metal path. A first coat version, with the base dimmed by 0.5 of the weight and the mip at √α × 6 (~mip 3 on glossy paint), made car reflections look weak (live, 2026-11-15).
+  - **Optional, later:** hand-tag metal settings, e.g. with a debug key that highlights one material setting, and give those a metal path.
   - AO now darkens only ambient and environment, not direct light.
 - **Unchanged:** rim, SSS and emissive work as in classic. The alpha is raised by the modern specular's luminance.
 - **Compromises:**
@@ -97,7 +99,7 @@ A deliberate look change for the 280 PgDiff materials only, selected by conf `sh
 - **Checks:**
   - `shader_iface.py --modern`: inputs, samplers and constants within the original's interface, since the game sets nothing else.
   - `shader_equiv.py --modern-finite`: no NaN or infinity where the original is finite, on plausible lights. It also gives each family's modern/classic luminance ratio as a calibration aid: about 0.55–0.9 for Metal/Refl, 0.76–0.87 for Spec without AmbOcc, 0.9–1.2 elsewhere.
-- **OPEN:** calibration in the HMD. `kSpecF0Scale`, `kEnvStrength` and `kCoatEnergy` are in `PgDiff.hlsl`.
+- **OPEN:** calibration in the HMD, plus a cost check (`debug_gpu_census`, modern against classic). The knobs `kSpecF0Scale`, `kEnvStrength` and `kReflectionMipMax` are in `PgDiff.hlsl`.
 
 ## Cost
 
