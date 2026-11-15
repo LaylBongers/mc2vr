@@ -71,7 +71,7 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
 
 ## Modern shading (optional)
 
-A deliberate look change, selected by conf `shading=classic|modern` (default `classic`). It covers the PgDiff materials, terrain, vegetation (PgFastFP, PgScrubLightFP), billboard trees and decals: 337 shaders. Water has no modern set. Every such variant is also built with `MC2VR_SHADING_MODERN=1` as `<symbol>_modern`, and `hooks/shader_reimpl.cpp` picks the set at creation; the atlas texel scaling applies to either. Classic is the faithful set, verified against the originals. Shared helpers are in `modern.hlsli`.
+A deliberate look change, selected by conf `shading=classic|modern`. The default has been **`modern`** since 2026-11-16. It covers the PgDiff materials, terrain, vegetation (PgFastFP, PgScrubLightFP), billboard trees and decals: 337 shaders. Water has no modern set. Every such variant is also built with `MC2VR_SHADING_MODERN=1` as `<symbol>_modern`, and `hooks/shader_reimpl.cpp` picks the set at creation; the atlas texel scaling applies to either. Classic is the faithful set, verified against the originals. Shared helpers are in `modern.hlsli`.
 
 - **Direct light** (sun and every point/spot light, `lights.hlsli` `local_lights_pbr`):
   - **Specular:** GGX · Smith height-correlated visibility · Schlick Fresnel · N·L · π. The π is because the game's units have no 1/π.
@@ -95,7 +95,7 @@ A deliberate look change, selected by conf `shading=classic|modern` (default `cl
 
   | Family | α | Environment strength |
   |---|---|---|
-  | Terrain (`kTerrainAlpha`, `kTerrainEnvStrength`) | 0.8 | 1.0. It was 0.5 at first, set up front against wet-looking ground, which made terrain about as dull as classic (live, 2026-11-15) |
+  | Terrain (`kTerrainAlpha`, `kTerrainEnvStrength`) | 0.8 | 1.0, "about right" (live, 2026-11-16). It was 0.5 at first, set up front against wet-looking ground, which made terrain about as dull as classic |
   | PgFastFP | 0.6 | 1.0 |
   | PgScrubLightFP | 0.6 | 1.0 |
   | Billboard trees | 0.6 | 1.0 |
@@ -104,10 +104,10 @@ A deliberate look change, selected by conf `shading=classic|modern` (default `cl
   Each keeps its own ambient, texture layers, view blend and alpha. Scrub and decal normals are normalized, and direct light isn't saturated, as in PgDiff modern.
   - **Luminance against classic:** about 1.01–1.08, PgFastFP 0.95.
 - **Compromises:**
-  - **Carrier-provided camera position:** 85 shaders whose originals declare no `cameraPos` get one. Their modern versions declare it at c92, where every other receiver has it, and the carrier uploads the current eye's camera position there on each draw. These are PgDiffFP, AmbOcc, Emis and EmisAmbOcc, the terrain, PgFastFP, PgScrubLightFP, the billboard trees and the decals.
-    - **How:** `view_rewrite::on_record_draw` from our SubmitToGPU uploads the same per-eye view record the game's own `cameraPos` uploads read, through `Dx9_SetPixelShaderConstantF_Direct`, which keeps no cache. The bound shader is checked when `g_CurPassObject` changes.
-    - **Why c92 is safe:** it is free in all 85 originals.
-    - **Log:** `view/hmd: carrier cameraPos (c92) active`, with counts in the window line. `gameToo` > 0 would mean the game uploads it too (harmless).
+  - **`cameraPos` for the families whose originals have none:** 85 shaders, namely PgDiffFP, AmbOcc, Emis and EmisAmbOcc, the terrain, PgFastFP, PgScrubLightFP, the billboard trees and the decals. Their modern versions declare `cameraPos` at c92, where every other receiver has it (c92 is free in all 85 originals; `kAddsCameraPos` in the registry).
+    - **The game uploads it itself,** per eye through the view rewrite. It resolves a shader's constants by name from the object it created, which is ours, and its pass uploads `cameraPos` wherever the shader declares one.
+    - **Measured:** live, 2026-11-16, on every such draw (591k of 591k). A carrier-side upload, briefly added for this, was redundant and has been removed.
+    - **Consequence for future shader work:** a reimplemented shader can use any constant the game uploads by name, if it declares it.
   - Non-Norm families' environment has no direction.
   - Shading stays in the game's gamma space.
   - Light-heavy variants run about twice the instructions.
@@ -123,7 +123,7 @@ A deliberate look change, selected by conf `shading=classic|modern` (default `cl
   | Draws | ~1,110 | ~1,113 |
 
   So it's free within noise. A first modern run at 60 Hz was a temporary vsync-on test build ("TEMP TEST forcing ONE" in the log), not the shading.
-- **Look, live (2026-11-15):** classic-style reflections with the improved PBR shading. OPEN: fine calibration of `kSpecF0Scale`, `kEnvStrength` and `kReflectionMipMax` (in `PgDiff.hlsl`), and the default (`classic` for now).
+- **Look, live (2026-11-15/16):** classic-style reflections with the improved PBR shading, and a good balance across all families; terrain about right at the neutral environment strength. Made the default (2026-11-16). The knobs are `kSpecF0Scale`, `kEnvStrength` and `kReflectionMipMax` (`PgDiff.hlsl`), and the per-family α and environment constants.
 
 ## Cost
 

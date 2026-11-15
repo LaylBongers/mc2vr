@@ -19,7 +19,7 @@
 
 namespace mc2vr::hooks::shader_reimpl {
 
-// conf `shading = classic | modern` (default classic): the shading of every
+// conf `shading = classic | modern` (default modern): the shading of every
 // reimplemented family but the water. classic = the originals' math; modern
 // = the physically based `_modern` builds (MC2VR_SHADING_MODERN in
 // reimpl/shaders/). Must precede the shader creations. False if `value`
@@ -44,13 +44,6 @@ void on_created(const uint32_t *used, const void *object);
 // Our reimplementation's registry name for a created shader object, or
 // nullptr (an original, or unknown).
 const char *name_of(const void *object);
-
-// True for a created shader object whose cameraPos (c92) the game doesn't
-// upload, since the original's interface has none: a modern shader that needs
-// the carrier to upload the view position (vr/view_rewrite.cpp). Any thread.
-bool needs_carrier_camera_pos(const void *object);
-// Whether any such object has been created (none in the classic shading).
-bool carrier_camera_pos_in_use();
 
 // 10 s window report; logs only when something changed.
 void report_window();

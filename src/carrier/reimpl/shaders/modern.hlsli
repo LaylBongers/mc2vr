@@ -4,10 +4,11 @@
 // modern family builds on it: the sun with the local lights, the view-side
 // setup of a plain dielectric, and the ambient/environment split.
 //
-// The view direction needs the camera position: the families whose original
-// has a cameraPos (c92) get it from the game; for the others the carrier
-// uploads it there, per eye (the registry's kCarrierCameraPos entries,
-// hooks/shader_reimpl.cpp; vr/view_rewrite.cpp). Each family declares it.
+// The view direction needs the camera position (c92). Each family declares
+// it; the game uploads it per eye wherever a shader declares one, also for
+// the families whose original has none: it resolves constants by name from
+// the shader object we hand it (the registry's kAddsCameraPos entries,
+// hooks/shader_reimpl.cpp).
 
 #ifndef MC2VR_MODERN_HLSLI
 #define MC2VR_MODERN_HLSLI

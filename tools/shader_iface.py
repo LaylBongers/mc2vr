@@ -25,9 +25,10 @@ Usage: shader_iface.py <container shader3.bin> [registry.cpp] [generated dir] [-
     - every sampler is one of the original's (register, type);
     - every constant-table entry is the original's (name, register set,
       register), its count at most the original's;
-    - the one allowance: an entry marked kCarrierCameraPos in the registry
-      (its original has no cameraPos; the carrier uploads one,
-      vr/view_rewrite.cpp on_record_draw) may add `cameraPos` as c92[1] (the
+    - the one allowance: an entry marked kAddsCameraPos in the registry
+      (its original has no cameraPos; the game uploads one anyway, since it
+      resolves constants by name from our shader object) may add `cameraPos`
+      as c92[1] (the
       register every original's cameraPos has), provided no constant of the
       original covers c92. A marked entry must use it (else the mark is
       stale), and nothing else may be added.
@@ -182,21 +183,21 @@ def declarations(words):
     return inputs, samplers
 
 
-# The carrier-provided constant (kCarrierCameraPos entries, --modern).
+# The added constant (kAddsCameraPos entries, --modern).
 CARRIER_CAMERA = ("cameraPos", ("c", 92, 1))
 
 
 def modern_entries(registry):
     """The registry's entries with a modern symbol: (hash, offset, modern
-    symbol, carrier cameraPos?)."""
+    symbol, added cameraPos?)."""
     return [(h, off, sym, bool(cam)) for h, off, sym, cam in re.findall(
         r'\{0x([0-9a-f]{8})u, "[^"]*\(shader3\.bin@(0x[0-9a-f]+)\)", mc2vr::shaders::\w+, '
-        r'mc2vr::shaders::(\w+)(, kCarrierCameraPos)?\}', open(registry).read())]
+        r'mc2vr::shaders::(\w+)(, kAddsCameraPos)?\}', open(registry).read())]
 
 
 def subset_problems(orig, ours, carrier_camera=False):
     """Where OURS uses anything outside ORIGINAL's interface (--modern);
-    carrier_camera: the kCarrierCameraPos allowance (see the docstring)."""
+    carrier_camera: the kAddsCameraPos allowance (see the docstring)."""
     problems = []
     oi, os_ = declarations(orig)
     ni, ns = declarations(ours)
@@ -214,10 +215,10 @@ def subset_problems(orig, ours, carrier_camera=False):
         name, want = CARRIER_CAMERA
         covering = [k for k, (rs, r, c) in oc.items() if rs == want[0] and r <= want[1] < r + c]
         if name in oc or covering:
-            problems.append("kCarrierCameraPos, but the original has %s at c%d" % (
+            problems.append("kAddsCameraPos, but the original has %s at c%d" % (
                 ", ".join(sorted(set(covering + ([name] if name in oc else [])))), want[1]))
         elif nc.get(name) != want:
-            problems.append("kCarrierCameraPos, but ours has %s %s, not %s%d[%d]" % (
+            problems.append("kAddsCameraPos, but ours has %s %s, not %s%d[%d]" % (
                 name, nc.get(name), want[0], want[1], want[2]))
         else:
             del nc[name]  # the allowed addition
@@ -245,11 +246,11 @@ def check_modern(container, registry, gen):
         _, _, _, nt = analyze(ours)
         print("%s %s %-44s taps %d->%d  tokens %d->%d%s" % (
             "ok " if not problems else "BAD", h, sym, ot, nt, len(orig), len(ours),
-            "  [carrier cameraPos]" if cam else ""))
+            "  [added cameraPos]" if cam else ""))
         for p in problems:
             print("    " + p)
         bad += bool(problems)
-    print("%d of %d modern entries outside the original's interface (%d with the carrier's cameraPos)" % (
+    print("%d of %d modern entries outside the original's interface (%d with an added cameraPos)" % (
         bad, len(entries), sum(e[3] for e in entries)))
     return 1 if bad else 0
 

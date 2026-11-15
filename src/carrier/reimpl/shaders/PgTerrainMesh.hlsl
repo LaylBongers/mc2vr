@@ -129,7 +129,7 @@ float4 main(Input i) : COLOR
 // ground, made the terrain look about as dull as classic: live, 2026-11-15.)
 #include "modern.hlsli"
 
-float3 cameraPos : register(c92);  // not in the originals' interface: the carrier's, per eye
+float3 cameraPos : register(c92);  // not in the originals' interface; the game uploads it by name, per eye
 
 static const float kTerrainAlpha = 0.8;        // GGX alpha of the ground
 static const float kTerrainEnvStrength = 1.0;  // environment specular scale (1 = neutral)

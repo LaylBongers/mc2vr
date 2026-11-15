@@ -69,8 +69,8 @@ Usage: shader_equiv.py <container shader3.bin> [registry.cpp] [generated dir]
                                 clamp: a rough calibration aid only (the
                                 materials and lights are random). cameraPos
                                 (c92) is a random constant like any other, also
-                                for the kCarrierCameraPos entries whose
-                                original lacks it (the carrier uploads it).
+                                for the kAddsCameraPos entries whose
+                                original lacks it (the game uploads it by name).
 Exit 1 if any entry differs (--modern-finite: any modern-only non-finite
 trial), 2 on usage/emulation errors.
 """

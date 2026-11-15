@@ -3,7 +3,6 @@
 
 #include "hooks/shader_reimpl.hpp"
 
-#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -699,7 +698,7 @@ struct Entry {
     const char *name;
     const uint32_t *code;    // ours (the classic shading: the original's math)
     const uint32_t *modern;  // ours in the modern shading (shading=modern), or nullptr (none: `code`)
-    bool carrier_camera = false;  // kCarrierCameraPos (below)
+    bool adds_camera_pos = false;  // kAddsCameraPos (below)
     uint32_t created = 0;         // substitutions so far
     bool failed = false;          // the device refused ours
     const uint32_t *last_used = nullptr;  // what was created for it last (ours, maybe texel-scaled)
@@ -708,23 +707,24 @@ struct Entry {
 
 // The entry's modern shader takes `float3 cameraPos : register(c92)`, which
 // the original's interface lacks (every original with a cameraPos has it at
-// c92, and these use no part of c92): the game never uploads it, so the
-// carrier does, per eye, while such an object is bound
-// (needs_carrier_camera_pos, vr/view_rewrite.cpp). tools/shader_iface.py
-// --modern allows exactly this addition for exactly these entries.
-constexpr bool kCarrierCameraPos = true;
+// c92, and these use no part of c92). The game uploads it anyway, per eye:
+// it resolves a shader's constants by name from the object it created (ours),
+// and its pass uploads cameraPos wherever the shader declares one (live,
+// 2026-11-16: every such draw). tools/shader_iface.py --modern allows exactly
+// this addition for exactly these entries.
+constexpr bool kAddsCameraPos = true;
 
 // One line per reimplemented shader; docs/shaders.md lists them.
 Entry g_entries[] = {
     // PgBillboardTreeFP and PgBillboardTreeFP_fade share one bytecode (shader3.bin@0x2ff0, @0x3790).
-    {0xeacf64f8u, "PgBillboardTreeFP (shader3.bin@0x2ff0)", mc2vr::shaders::PgBillboardTreeFP, mc2vr::shaders::PgBillboardTreeFP_modern, kCarrierCameraPos},
-    {0xdeef11a9u, "PgDecal2FP (shader3.bin@0xa2a0)", mc2vr::shaders::PgDecal2FP, mc2vr::shaders::PgDecal2FP_modern, kCarrierCameraPos},
-    {0x8360631bu, "PgDecal2FP_pl (shader3.bin@0xa840)", mc2vr::shaders::PgDecal2FP_pl, mc2vr::shaders::PgDecal2FP_pl_modern, kCarrierCameraPos},
-    {0xe40c452eu, "PgDecal2FP_pl_li (shader3.bin@0xb800)", mc2vr::shaders::PgDecal2FP_pl_li, mc2vr::shaders::PgDecal2FP_pl_li_modern, kCarrierCameraPos},
-    {0x6751d4d3u, "PgDecal2FP_pl_sl (shader3.bin@0xc210)", mc2vr::shaders::PgDecal2FP_pl_sl, mc2vr::shaders::PgDecal2FP_pl_sl_modern, kCarrierCameraPos},
-    {0x4552f636u, "PgDecal2FP_pl_sl_li (shader3.bin@0xddd0)", mc2vr::shaders::PgDecal2FP_pl_sl_li, mc2vr::shaders::PgDecal2FP_pl_sl_li_modern, kCarrierCameraPos},
-    {0x15cf77adu, "PgDecal2FP_sl (shader3.bin@0xeed0)", mc2vr::shaders::PgDecal2FP_sl, mc2vr::shaders::PgDecal2FP_sl_modern, kCarrierCameraPos},
-    {0xe651a6c7u, "PgDecal2FP_sl_li (shader3.bin@0x10070)", mc2vr::shaders::PgDecal2FP_sl_li, mc2vr::shaders::PgDecal2FP_sl_li_modern, kCarrierCameraPos},
+    {0xeacf64f8u, "PgBillboardTreeFP (shader3.bin@0x2ff0)", mc2vr::shaders::PgBillboardTreeFP, mc2vr::shaders::PgBillboardTreeFP_modern, kAddsCameraPos},
+    {0xdeef11a9u, "PgDecal2FP (shader3.bin@0xa2a0)", mc2vr::shaders::PgDecal2FP, mc2vr::shaders::PgDecal2FP_modern, kAddsCameraPos},
+    {0x8360631bu, "PgDecal2FP_pl (shader3.bin@0xa840)", mc2vr::shaders::PgDecal2FP_pl, mc2vr::shaders::PgDecal2FP_pl_modern, kAddsCameraPos},
+    {0xe40c452eu, "PgDecal2FP_pl_li (shader3.bin@0xb800)", mc2vr::shaders::PgDecal2FP_pl_li, mc2vr::shaders::PgDecal2FP_pl_li_modern, kAddsCameraPos},
+    {0x6751d4d3u, "PgDecal2FP_pl_sl (shader3.bin@0xc210)", mc2vr::shaders::PgDecal2FP_pl_sl, mc2vr::shaders::PgDecal2FP_pl_sl_modern, kAddsCameraPos},
+    {0x4552f636u, "PgDecal2FP_pl_sl_li (shader3.bin@0xddd0)", mc2vr::shaders::PgDecal2FP_pl_sl_li, mc2vr::shaders::PgDecal2FP_pl_sl_li_modern, kAddsCameraPos},
+    {0x15cf77adu, "PgDecal2FP_sl (shader3.bin@0xeed0)", mc2vr::shaders::PgDecal2FP_sl, mc2vr::shaders::PgDecal2FP_sl_modern, kAddsCameraPos},
+    {0xe651a6c7u, "PgDecal2FP_sl_li (shader3.bin@0x10070)", mc2vr::shaders::PgDecal2FP_sl_li, mc2vr::shaders::PgDecal2FP_sl_li_modern, kAddsCameraPos},
     {0xb45eaaccu, "PgDiffSpecNormAmbOccFP (shader3.bin@0xd9c70)", mc2vr::shaders::PgDiffSpecNormAmbOccFP, mc2vr::shaders::PgDiffSpecNormAmbOccFP_modern},
     {0x700f33e6u, "PgDiffSpecNormAmbOccFP_pl (shader3.bin@0xda8a0)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl, mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_modern},
     {0xb11bb21fu, "PgDiffSpecNormAmbOccFP_pl_li (shader3.bin@0xdc7f0)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_li, mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_li_modern},
@@ -746,13 +746,13 @@ Entry g_entries[] = {
     {0x065fb9a4u, "PgDiffSpecMetalNormFP_pl_sl_li (shader3.bin@0xbc5e0)", mc2vr::shaders::PgDiffSpecMetalNormFP_pl_sl_li, mc2vr::shaders::PgDiffSpecMetalNormFP_pl_sl_li_modern},
     {0x483bd668u, "PgDiffSpecMetalNormFP_sl (shader3.bin@0xbe480)", mc2vr::shaders::PgDiffSpecMetalNormFP_sl, mc2vr::shaders::PgDiffSpecMetalNormFP_sl_modern},
     {0xb7e6aafdu, "PgDiffSpecMetalNormFP_sl_li (shader3.bin@0xc01e0)", mc2vr::shaders::PgDiffSpecMetalNormFP_sl_li, mc2vr::shaders::PgDiffSpecMetalNormFP_sl_li_modern},
-    {0xeca746f7u, "PgDiffAmbOccFP (shader3.bin@0x11570)", mc2vr::shaders::PgDiffAmbOccFP, mc2vr::shaders::PgDiffAmbOccFP_modern, kCarrierCameraPos},
-    {0xa32fdbf1u, "PgDiffAmbOccFP_pl (shader3.bin@0x11e50)", mc2vr::shaders::PgDiffAmbOccFP_pl, mc2vr::shaders::PgDiffAmbOccFP_pl_modern, kCarrierCameraPos},
-    {0x1bca4bd8u, "PgDiffAmbOccFP_pl_li (shader3.bin@0x13130)", mc2vr::shaders::PgDiffAmbOccFP_pl_li, mc2vr::shaders::PgDiffAmbOccFP_pl_li_modern, kCarrierCameraPos},
-    {0xf51899f2u, "PgDiffAmbOccFP_pl_sl (shader3.bin@0x13e50)", mc2vr::shaders::PgDiffAmbOccFP_pl_sl, mc2vr::shaders::PgDiffAmbOccFP_pl_sl_modern, kCarrierCameraPos},
-    {0x0cdf5dc1u, "PgDiffAmbOccFP_pl_sl_li (shader3.bin@0x15d30)", mc2vr::shaders::PgDiffAmbOccFP_pl_sl_li, mc2vr::shaders::PgDiffAmbOccFP_pl_sl_li_modern, kCarrierCameraPos},
-    {0x8d5debcdu, "PgDiffAmbOccFP_sl (shader3.bin@0x17150)", mc2vr::shaders::PgDiffAmbOccFP_sl, mc2vr::shaders::PgDiffAmbOccFP_sl_modern, kCarrierCameraPos},
-    {0x0a2900c5u, "PgDiffAmbOccFP_sl_li (shader3.bin@0x18610)", mc2vr::shaders::PgDiffAmbOccFP_sl_li, mc2vr::shaders::PgDiffAmbOccFP_sl_li_modern, kCarrierCameraPos},
+    {0xeca746f7u, "PgDiffAmbOccFP (shader3.bin@0x11570)", mc2vr::shaders::PgDiffAmbOccFP, mc2vr::shaders::PgDiffAmbOccFP_modern, kAddsCameraPos},
+    {0xa32fdbf1u, "PgDiffAmbOccFP_pl (shader3.bin@0x11e50)", mc2vr::shaders::PgDiffAmbOccFP_pl, mc2vr::shaders::PgDiffAmbOccFP_pl_modern, kAddsCameraPos},
+    {0x1bca4bd8u, "PgDiffAmbOccFP_pl_li (shader3.bin@0x13130)", mc2vr::shaders::PgDiffAmbOccFP_pl_li, mc2vr::shaders::PgDiffAmbOccFP_pl_li_modern, kAddsCameraPos},
+    {0xf51899f2u, "PgDiffAmbOccFP_pl_sl (shader3.bin@0x13e50)", mc2vr::shaders::PgDiffAmbOccFP_pl_sl, mc2vr::shaders::PgDiffAmbOccFP_pl_sl_modern, kAddsCameraPos},
+    {0x0cdf5dc1u, "PgDiffAmbOccFP_pl_sl_li (shader3.bin@0x15d30)", mc2vr::shaders::PgDiffAmbOccFP_pl_sl_li, mc2vr::shaders::PgDiffAmbOccFP_pl_sl_li_modern, kAddsCameraPos},
+    {0x8d5debcdu, "PgDiffAmbOccFP_sl (shader3.bin@0x17150)", mc2vr::shaders::PgDiffAmbOccFP_sl, mc2vr::shaders::PgDiffAmbOccFP_sl_modern, kAddsCameraPos},
+    {0x0a2900c5u, "PgDiffAmbOccFP_sl_li (shader3.bin@0x18610)", mc2vr::shaders::PgDiffAmbOccFP_sl_li, mc2vr::shaders::PgDiffAmbOccFP_sl_li_modern, kAddsCameraPos},
     {0x98043426u, "PgDiffAmbOccRimFP (shader3.bin@0x195e0)", mc2vr::shaders::PgDiffAmbOccRimFP, mc2vr::shaders::PgDiffAmbOccRimFP_modern},
     {0x298e7d23u, "PgDiffAmbOccRimFP_pl (shader3.bin@0x19f70)", mc2vr::shaders::PgDiffAmbOccRimFP_pl, mc2vr::shaders::PgDiffAmbOccRimFP_pl_modern},
     {0x5cfce082u, "PgDiffAmbOccRimFP_pl_li (shader3.bin@0x1b2e0)", mc2vr::shaders::PgDiffAmbOccRimFP_pl_li, mc2vr::shaders::PgDiffAmbOccRimFP_pl_li_modern},
@@ -760,13 +760,13 @@ Entry g_entries[] = {
     {0x8a3aff33u, "PgDiffAmbOccRimFP_pl_sl_li (shader3.bin@0x1e000)", mc2vr::shaders::PgDiffAmbOccRimFP_pl_sl_li, mc2vr::shaders::PgDiffAmbOccRimFP_pl_sl_li_modern},
     {0x3bda0918u, "PgDiffAmbOccRimFP_sl (shader3.bin@0x1f4d0)", mc2vr::shaders::PgDiffAmbOccRimFP_sl, mc2vr::shaders::PgDiffAmbOccRimFP_sl_modern},
     {0x4ffff1bdu, "PgDiffAmbOccRimFP_sl_li (shader3.bin@0x20a20)", mc2vr::shaders::PgDiffAmbOccRimFP_sl_li, mc2vr::shaders::PgDiffAmbOccRimFP_sl_li_modern},
-    {0xc332796eu, "PgDiffEmisAmbOccFP (shader3.bin@0x21a80)", mc2vr::shaders::PgDiffEmisAmbOccFP, mc2vr::shaders::PgDiffEmisAmbOccFP_modern, kCarrierCameraPos},
-    {0x63d0e272u, "PgDiffEmisAmbOccFP_pl (shader3.bin@0x223b0)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_modern, kCarrierCameraPos},
-    {0xc3d1e0e3u, "PgDiffEmisAmbOccFP_pl_li (shader3.bin@0x236e0)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl_li, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_li_modern, kCarrierCameraPos},
-    {0x2ec2d4c2u, "PgDiffEmisAmbOccFP_pl_sl (shader3.bin@0x24450)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl_modern, kCarrierCameraPos},
-    {0xa532cae9u, "PgDiffEmisAmbOccFP_pl_sl_li (shader3.bin@0x26380)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl_li, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl_li_modern, kCarrierCameraPos},
-    {0x1854e14du, "PgDiffEmisAmbOccFP_sl (shader3.bin@0x277f0)", mc2vr::shaders::PgDiffEmisAmbOccFP_sl, mc2vr::shaders::PgDiffEmisAmbOccFP_sl_modern, kCarrierCameraPos},
-    {0x837752c1u, "PgDiffEmisAmbOccFP_sl_li (shader3.bin@0x28d00)", mc2vr::shaders::PgDiffEmisAmbOccFP_sl_li, mc2vr::shaders::PgDiffEmisAmbOccFP_sl_li_modern, kCarrierCameraPos},
+    {0xc332796eu, "PgDiffEmisAmbOccFP (shader3.bin@0x21a80)", mc2vr::shaders::PgDiffEmisAmbOccFP, mc2vr::shaders::PgDiffEmisAmbOccFP_modern, kAddsCameraPos},
+    {0x63d0e272u, "PgDiffEmisAmbOccFP_pl (shader3.bin@0x223b0)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_modern, kAddsCameraPos},
+    {0xc3d1e0e3u, "PgDiffEmisAmbOccFP_pl_li (shader3.bin@0x236e0)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl_li, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_li_modern, kAddsCameraPos},
+    {0x2ec2d4c2u, "PgDiffEmisAmbOccFP_pl_sl (shader3.bin@0x24450)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl_modern, kAddsCameraPos},
+    {0xa532cae9u, "PgDiffEmisAmbOccFP_pl_sl_li (shader3.bin@0x26380)", mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl_li, mc2vr::shaders::PgDiffEmisAmbOccFP_pl_sl_li_modern, kAddsCameraPos},
+    {0x1854e14du, "PgDiffEmisAmbOccFP_sl (shader3.bin@0x277f0)", mc2vr::shaders::PgDiffEmisAmbOccFP_sl, mc2vr::shaders::PgDiffEmisAmbOccFP_sl_modern, kAddsCameraPos},
+    {0x837752c1u, "PgDiffEmisAmbOccFP_sl_li (shader3.bin@0x28d00)", mc2vr::shaders::PgDiffEmisAmbOccFP_sl_li, mc2vr::shaders::PgDiffEmisAmbOccFP_sl_li_modern, kAddsCameraPos},
     {0xac88c72eu, "PgDiffEmisAmbOccRimFP (shader3.bin@0x29d20)", mc2vr::shaders::PgDiffEmisAmbOccRimFP, mc2vr::shaders::PgDiffEmisAmbOccRimFP_modern},
     {0x8f005dccu, "PgDiffEmisAmbOccRimFP_pl (shader3.bin@0x2a700)", mc2vr::shaders::PgDiffEmisAmbOccRimFP_pl, mc2vr::shaders::PgDiffEmisAmbOccRimFP_pl_modern},
     {0x178065b5u, "PgDiffEmisAmbOccRimFP_pl_li (shader3.bin@0x2bac0)", mc2vr::shaders::PgDiffEmisAmbOccRimFP_pl_li, mc2vr::shaders::PgDiffEmisAmbOccRimFP_pl_li_modern},
@@ -774,13 +774,13 @@ Entry g_entries[] = {
     {0x55c9af4cu, "PgDiffEmisAmbOccRimFP_pl_sl_li (shader3.bin@0x2e880)", mc2vr::shaders::PgDiffEmisAmbOccRimFP_pl_sl_li, mc2vr::shaders::PgDiffEmisAmbOccRimFP_pl_sl_li_modern},
     {0xf5ac540cu, "PgDiffEmisAmbOccRimFP_sl (shader3.bin@0x2fda0)", mc2vr::shaders::PgDiffEmisAmbOccRimFP_sl, mc2vr::shaders::PgDiffEmisAmbOccRimFP_sl_modern},
     {0x45be32d5u, "PgDiffEmisAmbOccRimFP_sl_li (shader3.bin@0x31340)", mc2vr::shaders::PgDiffEmisAmbOccRimFP_sl_li, mc2vr::shaders::PgDiffEmisAmbOccRimFP_sl_li_modern},
-    {0x7a1955d0u, "PgDiffEmisFP (shader3.bin@0x323f0)", mc2vr::shaders::PgDiffEmisFP, mc2vr::shaders::PgDiffEmisFP_modern, kCarrierCameraPos},
-    {0x44d74994u, "PgDiffEmisFP_pl (shader3.bin@0x32d00)", mc2vr::shaders::PgDiffEmisFP_pl, mc2vr::shaders::PgDiffEmisFP_pl_modern, kCarrierCameraPos},
-    {0x226c2c2du, "PgDiffEmisFP_pl_li (shader3.bin@0x34000)", mc2vr::shaders::PgDiffEmisFP_pl_li, mc2vr::shaders::PgDiffEmisFP_pl_li_modern, kCarrierCameraPos},
-    {0xf0526d38u, "PgDiffEmisFP_pl_sl (shader3.bin@0x34d40)", mc2vr::shaders::PgDiffEmisFP_pl_sl, mc2vr::shaders::PgDiffEmisFP_pl_sl_modern, kCarrierCameraPos},
-    {0x3f4d3a97u, "PgDiffEmisFP_pl_sl_li (shader3.bin@0x36c40)", mc2vr::shaders::PgDiffEmisFP_pl_sl_li, mc2vr::shaders::PgDiffEmisFP_pl_sl_li_modern, kCarrierCameraPos},
-    {0x0a3e33dbu, "PgDiffEmisFP_sl (shader3.bin@0x38090)", mc2vr::shaders::PgDiffEmisFP_sl, mc2vr::shaders::PgDiffEmisFP_sl_modern, kCarrierCameraPos},
-    {0x5eb0730bu, "PgDiffEmisFP_sl_li (shader3.bin@0x39570)", mc2vr::shaders::PgDiffEmisFP_sl_li, mc2vr::shaders::PgDiffEmisFP_sl_li_modern, kCarrierCameraPos},
+    {0x7a1955d0u, "PgDiffEmisFP (shader3.bin@0x323f0)", mc2vr::shaders::PgDiffEmisFP, mc2vr::shaders::PgDiffEmisFP_modern, kAddsCameraPos},
+    {0x44d74994u, "PgDiffEmisFP_pl (shader3.bin@0x32d00)", mc2vr::shaders::PgDiffEmisFP_pl, mc2vr::shaders::PgDiffEmisFP_pl_modern, kAddsCameraPos},
+    {0x226c2c2du, "PgDiffEmisFP_pl_li (shader3.bin@0x34000)", mc2vr::shaders::PgDiffEmisFP_pl_li, mc2vr::shaders::PgDiffEmisFP_pl_li_modern, kAddsCameraPos},
+    {0xf0526d38u, "PgDiffEmisFP_pl_sl (shader3.bin@0x34d40)", mc2vr::shaders::PgDiffEmisFP_pl_sl, mc2vr::shaders::PgDiffEmisFP_pl_sl_modern, kAddsCameraPos},
+    {0x3f4d3a97u, "PgDiffEmisFP_pl_sl_li (shader3.bin@0x36c40)", mc2vr::shaders::PgDiffEmisFP_pl_sl_li, mc2vr::shaders::PgDiffEmisFP_pl_sl_li_modern, kAddsCameraPos},
+    {0x0a3e33dbu, "PgDiffEmisFP_sl (shader3.bin@0x38090)", mc2vr::shaders::PgDiffEmisFP_sl, mc2vr::shaders::PgDiffEmisFP_sl_modern, kAddsCameraPos},
+    {0x5eb0730bu, "PgDiffEmisFP_sl_li (shader3.bin@0x39570)", mc2vr::shaders::PgDiffEmisFP_sl_li, mc2vr::shaders::PgDiffEmisFP_sl_li_modern, kAddsCameraPos},
     {0x3ec91ae0u, "PgDiffEmisRimFP (shader3.bin@0x3a560)", mc2vr::shaders::PgDiffEmisRimFP, mc2vr::shaders::PgDiffEmisRimFP_modern},
     {0xd02b0322u, "PgDiffEmisRimFP_pl (shader3.bin@0x3af20)", mc2vr::shaders::PgDiffEmisRimFP_pl, mc2vr::shaders::PgDiffEmisRimFP_pl_modern},
     {0xb659a47bu, "PgDiffEmisRimFP_pl_li (shader3.bin@0x3c2b0)", mc2vr::shaders::PgDiffEmisRimFP_pl_li, mc2vr::shaders::PgDiffEmisRimFP_pl_li_modern},
@@ -788,13 +788,13 @@ Entry g_entries[] = {
     {0x6c78b846u, "PgDiffEmisRimFP_pl_sl_li (shader3.bin@0x3f010)", mc2vr::shaders::PgDiffEmisRimFP_pl_sl_li, mc2vr::shaders::PgDiffEmisRimFP_pl_sl_li_modern},
     {0xbcd156f6u, "PgDiffEmisRimFP_sl (shader3.bin@0x40500)", mc2vr::shaders::PgDiffEmisRimFP_sl, mc2vr::shaders::PgDiffEmisRimFP_sl_modern},
     {0xcd643023u, "PgDiffEmisRimFP_sl_li (shader3.bin@0x41a80)", mc2vr::shaders::PgDiffEmisRimFP_sl_li, mc2vr::shaders::PgDiffEmisRimFP_sl_li_modern},
-    {0xdba94c85u, "PgDiffFP (shader3.bin@0x42b00)", mc2vr::shaders::PgDiffFP, mc2vr::shaders::PgDiffFP_modern, kCarrierCameraPos},
-    {0x416cf8e7u, "PgDiffFP_pl (shader3.bin@0x433c0)", mc2vr::shaders::PgDiffFP_pl, mc2vr::shaders::PgDiffFP_pl_modern, kCarrierCameraPos},
-    {0xd1d1c3c6u, "PgDiffFP_pl_li (shader3.bin@0x44670)", mc2vr::shaders::PgDiffFP_pl_li, mc2vr::shaders::PgDiffFP_pl_li_modern, kCarrierCameraPos},
-    {0x7ebfec6cu, "PgDiffFP_pl_sl (shader3.bin@0x45360)", mc2vr::shaders::PgDiffFP_pl_sl, mc2vr::shaders::PgDiffFP_pl_sl_modern, kCarrierCameraPos},
-    {0x3a0f09c3u, "PgDiffFP_pl_sl_li (shader3.bin@0x47210)", mc2vr::shaders::PgDiffFP_pl_sl_li, mc2vr::shaders::PgDiffFP_pl_sl_li_modern, kCarrierCameraPos},
-    {0xaa548d97u, "PgDiffFP_sl (shader3.bin@0x48610)", mc2vr::shaders::PgDiffFP_sl, mc2vr::shaders::PgDiffFP_sl_modern, kCarrierCameraPos},
-    {0x1e9c298bu, "PgDiffFP_sl_li (shader3.bin@0x49aa0)", mc2vr::shaders::PgDiffFP_sl_li, mc2vr::shaders::PgDiffFP_sl_li_modern, kCarrierCameraPos},
+    {0xdba94c85u, "PgDiffFP (shader3.bin@0x42b00)", mc2vr::shaders::PgDiffFP, mc2vr::shaders::PgDiffFP_modern, kAddsCameraPos},
+    {0x416cf8e7u, "PgDiffFP_pl (shader3.bin@0x433c0)", mc2vr::shaders::PgDiffFP_pl, mc2vr::shaders::PgDiffFP_pl_modern, kAddsCameraPos},
+    {0xd1d1c3c6u, "PgDiffFP_pl_li (shader3.bin@0x44670)", mc2vr::shaders::PgDiffFP_pl_li, mc2vr::shaders::PgDiffFP_pl_li_modern, kAddsCameraPos},
+    {0x7ebfec6cu, "PgDiffFP_pl_sl (shader3.bin@0x45360)", mc2vr::shaders::PgDiffFP_pl_sl, mc2vr::shaders::PgDiffFP_pl_sl_modern, kAddsCameraPos},
+    {0x3a0f09c3u, "PgDiffFP_pl_sl_li (shader3.bin@0x47210)", mc2vr::shaders::PgDiffFP_pl_sl_li, mc2vr::shaders::PgDiffFP_pl_sl_li_modern, kAddsCameraPos},
+    {0xaa548d97u, "PgDiffFP_sl (shader3.bin@0x48610)", mc2vr::shaders::PgDiffFP_sl, mc2vr::shaders::PgDiffFP_sl_modern, kAddsCameraPos},
+    {0x1e9c298bu, "PgDiffFP_sl_li (shader3.bin@0x49aa0)", mc2vr::shaders::PgDiffFP_sl_li, mc2vr::shaders::PgDiffFP_sl_li_modern, kAddsCameraPos},
     {0x80b68050u, "PgDiffRimFP (shader3.bin@0x4efd0)", mc2vr::shaders::PgDiffRimFP, mc2vr::shaders::PgDiffRimFP_modern},
     {0x7b1b379du, "PgDiffRimFP_pl (shader3.bin@0x4f940)", mc2vr::shaders::PgDiffRimFP_pl, mc2vr::shaders::PgDiffRimFP_pl_modern},
     {0x8da31f2cu, "PgDiffRimFP_pl_li (shader3.bin@0x50c80)", mc2vr::shaders::PgDiffRimFP_pl_li, mc2vr::shaders::PgDiffRimFP_pl_li_modern},
@@ -1005,55 +1005,55 @@ Entry g_entries[] = {
     {0x144fffb3u, "PgDiffSpecSSSRimFP_pl_sl_li (shader3.bin@0x1cff90)", mc2vr::shaders::PgDiffSpecSSSRimFP_pl_sl_li, mc2vr::shaders::PgDiffSpecSSSRimFP_pl_sl_li_modern},
     {0x3a116f80u, "PgDiffSpecSSSRimFP_sl (shader3.bin@0x1d1d60)", mc2vr::shaders::PgDiffSpecSSSRimFP_sl, mc2vr::shaders::PgDiffSpecSSSRimFP_sl_modern},
     {0x1398935bu, "PgDiffSpecSSSRimFP_sl_li (shader3.bin@0x1d39f0)", mc2vr::shaders::PgDiffSpecSSSRimFP_sl_li, mc2vr::shaders::PgDiffSpecSSSRimFP_sl_li_modern},
-    {0x3e76835cu, "PgFastFP (shader3.bin@0x1d6370)", mc2vr::shaders::PgFastFP, mc2vr::shaders::PgFastFP_modern, kCarrierCameraPos},
-    {0x1055364cu, "PgFastFP_pl (shader3.bin@0x1d6930)", mc2vr::shaders::PgFastFP_pl, mc2vr::shaders::PgFastFP_pl_modern, kCarrierCameraPos},
-    {0x19b8861cu, "PgFastFP_pl_li (shader3.bin@0x1d7920)", mc2vr::shaders::PgFastFP_pl_li, mc2vr::shaders::PgFastFP_pl_li_modern, kCarrierCameraPos},
-    {0x2aa895fbu, "PgFastFP_pl_sl (shader3.bin@0x1d8350)", mc2vr::shaders::PgFastFP_pl_sl, mc2vr::shaders::PgFastFP_pl_sl_modern, kCarrierCameraPos},
-    {0x7d01c4f5u, "PgFastFP_pl_sl_li (shader3.bin@0x1d9f40)", mc2vr::shaders::PgFastFP_pl_sl_li, mc2vr::shaders::PgFastFP_pl_sl_li_modern, kCarrierCameraPos},
-    {0x8d347471u, "PgFastFP_sl (shader3.bin@0x1db080)", mc2vr::shaders::PgFastFP_sl, mc2vr::shaders::PgFastFP_sl_modern, kCarrierCameraPos},
-    {0x5fa41029u, "PgFastFP_sl_li (shader3.bin@0x1dc250)", mc2vr::shaders::PgFastFP_sl_li, mc2vr::shaders::PgFastFP_sl_li_modern, kCarrierCameraPos},
-    {0x765f3420u, "PgScrubLightFP (shader3.bin@0x2004c0)", mc2vr::shaders::PgScrubLightFP, mc2vr::shaders::PgScrubLightFP_modern, kCarrierCameraPos},
-    {0x523d88a3u, "PgScrubLightFP_pl (shader3.bin@0x200a80)", mc2vr::shaders::PgScrubLightFP_pl, mc2vr::shaders::PgScrubLightFP_pl_modern, kCarrierCameraPos},
-    {0x4249bd13u, "PgScrubLightFP_pl_li (shader3.bin@0x201a60)", mc2vr::shaders::PgScrubLightFP_pl_li, mc2vr::shaders::PgScrubLightFP_pl_li_modern, kCarrierCameraPos},
-    {0x788c2fddu, "PgScrubLightFP_pl_sl (shader3.bin@0x202480)", mc2vr::shaders::PgScrubLightFP_pl_sl, mc2vr::shaders::PgScrubLightFP_pl_sl_modern, kCarrierCameraPos},
-    {0x59ca705eu, "PgScrubLightFP_pl_sl_li (shader3.bin@0x204060)", mc2vr::shaders::PgScrubLightFP_pl_sl_li, mc2vr::shaders::PgScrubLightFP_pl_sl_li_modern, kCarrierCameraPos},
-    {0x9de607f6u, "PgScrubLightFP_sl (shader3.bin@0x205180)", mc2vr::shaders::PgScrubLightFP_sl, mc2vr::shaders::PgScrubLightFP_sl_modern, kCarrierCameraPos},
-    {0x307dcccdu, "PgScrubLightFP_sl_li (shader3.bin@0x206340)", mc2vr::shaders::PgScrubLightFP_sl_li, mc2vr::shaders::PgScrubLightFP_sl_li_modern, kCarrierCameraPos},
-    {0x972e1b82u, "PgTerrainMeshFP (shader3.bin@0x2439e0)", mc2vr::shaders::PgTerrainMeshFP, mc2vr::shaders::PgTerrainMeshFP_modern, kCarrierCameraPos},
-    {0xd6862fe2u, "PgTerrainMeshFP_pl (shader3.bin@0x2441e0)", mc2vr::shaders::PgTerrainMeshFP_pl, mc2vr::shaders::PgTerrainMeshFP_pl_modern, kCarrierCameraPos},
-    {0x4e3ec610u, "PgTerrainMeshFP_pl_li (shader3.bin@0x2453c0)", mc2vr::shaders::PgTerrainMeshFP_pl_li, mc2vr::shaders::PgTerrainMeshFP_pl_li_modern, kCarrierCameraPos},
-    {0xdb681215u, "PgTerrainMeshFP_pl_sl (shader3.bin@0x245fe0)", mc2vr::shaders::PgTerrainMeshFP_pl_sl, mc2vr::shaders::PgTerrainMeshFP_pl_sl_modern, kCarrierCameraPos},
-    {0xd8b6ba48u, "PgTerrainMeshFP_pl_sl_li (shader3.bin@0x247dc0)", mc2vr::shaders::PgTerrainMeshFP_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP_pl_sl_li_modern, kCarrierCameraPos},
-    {0xa37e1546u, "PgTerrainMeshFP_sl (shader3.bin@0x2490f0)", mc2vr::shaders::PgTerrainMeshFP_sl, mc2vr::shaders::PgTerrainMeshFP_sl_modern, kCarrierCameraPos},
-    {0x9a8facf5u, "PgTerrainMeshFP_sl_li (shader3.bin@0x24a4c0)", mc2vr::shaders::PgTerrainMeshFP_sl_li, mc2vr::shaders::PgTerrainMeshFP_sl_li_modern, kCarrierCameraPos},
-    {0x71b9f2a4u, "PgTerrainMeshFP1D (shader3.bin@0x222850)", mc2vr::shaders::PgTerrainMeshFP1D, mc2vr::shaders::PgTerrainMeshFP1D_modern, kCarrierCameraPos},
-    {0x1414c36au, "PgTerrainMeshFP1D_pl (shader3.bin@0x223140)", mc2vr::shaders::PgTerrainMeshFP1D_pl, mc2vr::shaders::PgTerrainMeshFP1D_pl_modern, kCarrierCameraPos},
-    {0x368fe8b4u, "PgTerrainMeshFP1D_pl_li (shader3.bin@0x224420)", mc2vr::shaders::PgTerrainMeshFP1D_pl_li, mc2vr::shaders::PgTerrainMeshFP1D_pl_li_modern, kCarrierCameraPos},
-    {0x175fa56fu, "PgTerrainMeshFP1D_pl_sl (shader3.bin@0x225140)", mc2vr::shaders::PgTerrainMeshFP1D_pl_sl, mc2vr::shaders::PgTerrainMeshFP1D_pl_sl_modern, kCarrierCameraPos},
-    {0xcfc98e76u, "PgTerrainMeshFP1D_pl_sl_li (shader3.bin@0x227020)", mc2vr::shaders::PgTerrainMeshFP1D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP1D_pl_sl_li_modern, kCarrierCameraPos},
-    {0xc126500du, "PgTerrainMeshFP1D_sl (shader3.bin@0x228440)", mc2vr::shaders::PgTerrainMeshFP1D_sl, mc2vr::shaders::PgTerrainMeshFP1D_sl_modern, kCarrierCameraPos},
-    {0xed15509au, "PgTerrainMeshFP1D_sl_li (shader3.bin@0x229900)", mc2vr::shaders::PgTerrainMeshFP1D_sl_li, mc2vr::shaders::PgTerrainMeshFP1D_sl_li_modern, kCarrierCameraPos},
-    {0x5ad7189au, "PgTerrainMeshFP2D (shader3.bin@0x22a8d0)", mc2vr::shaders::PgTerrainMeshFP2D, mc2vr::shaders::PgTerrainMeshFP2D_modern, kCarrierCameraPos},
-    {0xbe3f0f57u, "PgTerrainMeshFP2D_pl (shader3.bin@0x22b220)", mc2vr::shaders::PgTerrainMeshFP2D_pl, mc2vr::shaders::PgTerrainMeshFP2D_pl_modern, kCarrierCameraPos},
-    {0x91612249u, "PgTerrainMeshFP2D_pl_li (shader3.bin@0x22c560)", mc2vr::shaders::PgTerrainMeshFP2D_pl_li, mc2vr::shaders::PgTerrainMeshFP2D_pl_li_modern, kCarrierCameraPos},
-    {0xc62e1ae0u, "PgTerrainMeshFP2D_pl_sl (shader3.bin@0x22d2d0)", mc2vr::shaders::PgTerrainMeshFP2D_pl_sl, mc2vr::shaders::PgTerrainMeshFP2D_pl_sl_modern, kCarrierCameraPos},
-    {0xe16ea2cdu, "PgTerrainMeshFP2D_pl_sl_li (shader3.bin@0x22f210)", mc2vr::shaders::PgTerrainMeshFP2D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP2D_pl_sl_li_modern, kCarrierCameraPos},
-    {0xcd9c5360u, "PgTerrainMeshFP2D_sl (shader3.bin@0x230690)", mc2vr::shaders::PgTerrainMeshFP2D_sl, mc2vr::shaders::PgTerrainMeshFP2D_sl_modern, kCarrierCameraPos},
-    {0xc27ddedfu, "PgTerrainMeshFP2D_sl_li (shader3.bin@0x231bb0)", mc2vr::shaders::PgTerrainMeshFP2D_sl_li, mc2vr::shaders::PgTerrainMeshFP2D_sl_li_modern, kCarrierCameraPos},
-    {0x3af611d5u, "PgTerrainMeshFP3D (shader3.bin@0x232be0)", mc2vr::shaders::PgTerrainMeshFP3D, mc2vr::shaders::PgTerrainMeshFP3D_modern, kCarrierCameraPos},
-    {0x5cfcf8cdu, "PgTerrainMeshFP3D_pl (shader3.bin@0x233590)", mc2vr::shaders::PgTerrainMeshFP3D_pl, mc2vr::shaders::PgTerrainMeshFP3D_pl_modern, kCarrierCameraPos},
-    {0xaee7ce7fu, "PgTerrainMeshFP3D_pl_li (shader3.bin@0x234930)", mc2vr::shaders::PgTerrainMeshFP3D_pl_li, mc2vr::shaders::PgTerrainMeshFP3D_pl_li_modern, kCarrierCameraPos},
-    {0xbe3ac53bu, "PgTerrainMeshFP3D_pl_sl (shader3.bin@0x235700)", mc2vr::shaders::PgTerrainMeshFP3D_pl_sl, mc2vr::shaders::PgTerrainMeshFP3D_pl_sl_modern, kCarrierCameraPos},
-    {0x1bda072au, "PgTerrainMeshFP3D_pl_sl_li (shader3.bin@0x2376a0)", mc2vr::shaders::PgTerrainMeshFP3D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP3D_pl_sl_li_modern, kCarrierCameraPos},
-    {0x5aafbdb2u, "PgTerrainMeshFP3D_sl (shader3.bin@0x238b80)", mc2vr::shaders::PgTerrainMeshFP3D_sl, mc2vr::shaders::PgTerrainMeshFP3D_sl_modern, kCarrierCameraPos},
-    {0xf763b721u, "PgTerrainMeshFP3D_sl_li (shader3.bin@0x23a100)", mc2vr::shaders::PgTerrainMeshFP3D_sl_li, mc2vr::shaders::PgTerrainMeshFP3D_sl_li_modern, kCarrierCameraPos},
-    {0xb87cace9u, "PgTerrainMeshFP4D (shader3.bin@0x23b190)", mc2vr::shaders::PgTerrainMeshFP4D, mc2vr::shaders::PgTerrainMeshFP4D_modern, kCarrierCameraPos},
-    {0x32255d76u, "PgTerrainMeshFP4D_pl (shader3.bin@0x23bba0)", mc2vr::shaders::PgTerrainMeshFP4D_pl, mc2vr::shaders::PgTerrainMeshFP4D_pl_modern, kCarrierCameraPos},
-    {0x0a525994u, "PgTerrainMeshFP4D_pl_li (shader3.bin@0x23cfa0)", mc2vr::shaders::PgTerrainMeshFP4D_pl_li, mc2vr::shaders::PgTerrainMeshFP4D_pl_li_modern, kCarrierCameraPos},
-    {0x7c08c23cu, "PgTerrainMeshFP4D_pl_sl (shader3.bin@0x23ddd0)", mc2vr::shaders::PgTerrainMeshFP4D_pl_sl, mc2vr::shaders::PgTerrainMeshFP4D_pl_sl_modern, kCarrierCameraPos},
-    {0x137b06a9u, "PgTerrainMeshFP4D_pl_sl_li (shader3.bin@0x23fdd0)", mc2vr::shaders::PgTerrainMeshFP4D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP4D_pl_sl_li_modern, kCarrierCameraPos},
-    {0x17d2ce31u, "PgTerrainMeshFP4D_sl (shader3.bin@0x241310)", mc2vr::shaders::PgTerrainMeshFP4D_sl, mc2vr::shaders::PgTerrainMeshFP4D_sl_modern, kCarrierCameraPos},
-    {0x304c3df6u, "PgTerrainMeshFP4D_sl_li (shader3.bin@0x2428f0)", mc2vr::shaders::PgTerrainMeshFP4D_sl_li, mc2vr::shaders::PgTerrainMeshFP4D_sl_li_modern, kCarrierCameraPos},
+    {0x3e76835cu, "PgFastFP (shader3.bin@0x1d6370)", mc2vr::shaders::PgFastFP, mc2vr::shaders::PgFastFP_modern, kAddsCameraPos},
+    {0x1055364cu, "PgFastFP_pl (shader3.bin@0x1d6930)", mc2vr::shaders::PgFastFP_pl, mc2vr::shaders::PgFastFP_pl_modern, kAddsCameraPos},
+    {0x19b8861cu, "PgFastFP_pl_li (shader3.bin@0x1d7920)", mc2vr::shaders::PgFastFP_pl_li, mc2vr::shaders::PgFastFP_pl_li_modern, kAddsCameraPos},
+    {0x2aa895fbu, "PgFastFP_pl_sl (shader3.bin@0x1d8350)", mc2vr::shaders::PgFastFP_pl_sl, mc2vr::shaders::PgFastFP_pl_sl_modern, kAddsCameraPos},
+    {0x7d01c4f5u, "PgFastFP_pl_sl_li (shader3.bin@0x1d9f40)", mc2vr::shaders::PgFastFP_pl_sl_li, mc2vr::shaders::PgFastFP_pl_sl_li_modern, kAddsCameraPos},
+    {0x8d347471u, "PgFastFP_sl (shader3.bin@0x1db080)", mc2vr::shaders::PgFastFP_sl, mc2vr::shaders::PgFastFP_sl_modern, kAddsCameraPos},
+    {0x5fa41029u, "PgFastFP_sl_li (shader3.bin@0x1dc250)", mc2vr::shaders::PgFastFP_sl_li, mc2vr::shaders::PgFastFP_sl_li_modern, kAddsCameraPos},
+    {0x765f3420u, "PgScrubLightFP (shader3.bin@0x2004c0)", mc2vr::shaders::PgScrubLightFP, mc2vr::shaders::PgScrubLightFP_modern, kAddsCameraPos},
+    {0x523d88a3u, "PgScrubLightFP_pl (shader3.bin@0x200a80)", mc2vr::shaders::PgScrubLightFP_pl, mc2vr::shaders::PgScrubLightFP_pl_modern, kAddsCameraPos},
+    {0x4249bd13u, "PgScrubLightFP_pl_li (shader3.bin@0x201a60)", mc2vr::shaders::PgScrubLightFP_pl_li, mc2vr::shaders::PgScrubLightFP_pl_li_modern, kAddsCameraPos},
+    {0x788c2fddu, "PgScrubLightFP_pl_sl (shader3.bin@0x202480)", mc2vr::shaders::PgScrubLightFP_pl_sl, mc2vr::shaders::PgScrubLightFP_pl_sl_modern, kAddsCameraPos},
+    {0x59ca705eu, "PgScrubLightFP_pl_sl_li (shader3.bin@0x204060)", mc2vr::shaders::PgScrubLightFP_pl_sl_li, mc2vr::shaders::PgScrubLightFP_pl_sl_li_modern, kAddsCameraPos},
+    {0x9de607f6u, "PgScrubLightFP_sl (shader3.bin@0x205180)", mc2vr::shaders::PgScrubLightFP_sl, mc2vr::shaders::PgScrubLightFP_sl_modern, kAddsCameraPos},
+    {0x307dcccdu, "PgScrubLightFP_sl_li (shader3.bin@0x206340)", mc2vr::shaders::PgScrubLightFP_sl_li, mc2vr::shaders::PgScrubLightFP_sl_li_modern, kAddsCameraPos},
+    {0x972e1b82u, "PgTerrainMeshFP (shader3.bin@0x2439e0)", mc2vr::shaders::PgTerrainMeshFP, mc2vr::shaders::PgTerrainMeshFP_modern, kAddsCameraPos},
+    {0xd6862fe2u, "PgTerrainMeshFP_pl (shader3.bin@0x2441e0)", mc2vr::shaders::PgTerrainMeshFP_pl, mc2vr::shaders::PgTerrainMeshFP_pl_modern, kAddsCameraPos},
+    {0x4e3ec610u, "PgTerrainMeshFP_pl_li (shader3.bin@0x2453c0)", mc2vr::shaders::PgTerrainMeshFP_pl_li, mc2vr::shaders::PgTerrainMeshFP_pl_li_modern, kAddsCameraPos},
+    {0xdb681215u, "PgTerrainMeshFP_pl_sl (shader3.bin@0x245fe0)", mc2vr::shaders::PgTerrainMeshFP_pl_sl, mc2vr::shaders::PgTerrainMeshFP_pl_sl_modern, kAddsCameraPos},
+    {0xd8b6ba48u, "PgTerrainMeshFP_pl_sl_li (shader3.bin@0x247dc0)", mc2vr::shaders::PgTerrainMeshFP_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP_pl_sl_li_modern, kAddsCameraPos},
+    {0xa37e1546u, "PgTerrainMeshFP_sl (shader3.bin@0x2490f0)", mc2vr::shaders::PgTerrainMeshFP_sl, mc2vr::shaders::PgTerrainMeshFP_sl_modern, kAddsCameraPos},
+    {0x9a8facf5u, "PgTerrainMeshFP_sl_li (shader3.bin@0x24a4c0)", mc2vr::shaders::PgTerrainMeshFP_sl_li, mc2vr::shaders::PgTerrainMeshFP_sl_li_modern, kAddsCameraPos},
+    {0x71b9f2a4u, "PgTerrainMeshFP1D (shader3.bin@0x222850)", mc2vr::shaders::PgTerrainMeshFP1D, mc2vr::shaders::PgTerrainMeshFP1D_modern, kAddsCameraPos},
+    {0x1414c36au, "PgTerrainMeshFP1D_pl (shader3.bin@0x223140)", mc2vr::shaders::PgTerrainMeshFP1D_pl, mc2vr::shaders::PgTerrainMeshFP1D_pl_modern, kAddsCameraPos},
+    {0x368fe8b4u, "PgTerrainMeshFP1D_pl_li (shader3.bin@0x224420)", mc2vr::shaders::PgTerrainMeshFP1D_pl_li, mc2vr::shaders::PgTerrainMeshFP1D_pl_li_modern, kAddsCameraPos},
+    {0x175fa56fu, "PgTerrainMeshFP1D_pl_sl (shader3.bin@0x225140)", mc2vr::shaders::PgTerrainMeshFP1D_pl_sl, mc2vr::shaders::PgTerrainMeshFP1D_pl_sl_modern, kAddsCameraPos},
+    {0xcfc98e76u, "PgTerrainMeshFP1D_pl_sl_li (shader3.bin@0x227020)", mc2vr::shaders::PgTerrainMeshFP1D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP1D_pl_sl_li_modern, kAddsCameraPos},
+    {0xc126500du, "PgTerrainMeshFP1D_sl (shader3.bin@0x228440)", mc2vr::shaders::PgTerrainMeshFP1D_sl, mc2vr::shaders::PgTerrainMeshFP1D_sl_modern, kAddsCameraPos},
+    {0xed15509au, "PgTerrainMeshFP1D_sl_li (shader3.bin@0x229900)", mc2vr::shaders::PgTerrainMeshFP1D_sl_li, mc2vr::shaders::PgTerrainMeshFP1D_sl_li_modern, kAddsCameraPos},
+    {0x5ad7189au, "PgTerrainMeshFP2D (shader3.bin@0x22a8d0)", mc2vr::shaders::PgTerrainMeshFP2D, mc2vr::shaders::PgTerrainMeshFP2D_modern, kAddsCameraPos},
+    {0xbe3f0f57u, "PgTerrainMeshFP2D_pl (shader3.bin@0x22b220)", mc2vr::shaders::PgTerrainMeshFP2D_pl, mc2vr::shaders::PgTerrainMeshFP2D_pl_modern, kAddsCameraPos},
+    {0x91612249u, "PgTerrainMeshFP2D_pl_li (shader3.bin@0x22c560)", mc2vr::shaders::PgTerrainMeshFP2D_pl_li, mc2vr::shaders::PgTerrainMeshFP2D_pl_li_modern, kAddsCameraPos},
+    {0xc62e1ae0u, "PgTerrainMeshFP2D_pl_sl (shader3.bin@0x22d2d0)", mc2vr::shaders::PgTerrainMeshFP2D_pl_sl, mc2vr::shaders::PgTerrainMeshFP2D_pl_sl_modern, kAddsCameraPos},
+    {0xe16ea2cdu, "PgTerrainMeshFP2D_pl_sl_li (shader3.bin@0x22f210)", mc2vr::shaders::PgTerrainMeshFP2D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP2D_pl_sl_li_modern, kAddsCameraPos},
+    {0xcd9c5360u, "PgTerrainMeshFP2D_sl (shader3.bin@0x230690)", mc2vr::shaders::PgTerrainMeshFP2D_sl, mc2vr::shaders::PgTerrainMeshFP2D_sl_modern, kAddsCameraPos},
+    {0xc27ddedfu, "PgTerrainMeshFP2D_sl_li (shader3.bin@0x231bb0)", mc2vr::shaders::PgTerrainMeshFP2D_sl_li, mc2vr::shaders::PgTerrainMeshFP2D_sl_li_modern, kAddsCameraPos},
+    {0x3af611d5u, "PgTerrainMeshFP3D (shader3.bin@0x232be0)", mc2vr::shaders::PgTerrainMeshFP3D, mc2vr::shaders::PgTerrainMeshFP3D_modern, kAddsCameraPos},
+    {0x5cfcf8cdu, "PgTerrainMeshFP3D_pl (shader3.bin@0x233590)", mc2vr::shaders::PgTerrainMeshFP3D_pl, mc2vr::shaders::PgTerrainMeshFP3D_pl_modern, kAddsCameraPos},
+    {0xaee7ce7fu, "PgTerrainMeshFP3D_pl_li (shader3.bin@0x234930)", mc2vr::shaders::PgTerrainMeshFP3D_pl_li, mc2vr::shaders::PgTerrainMeshFP3D_pl_li_modern, kAddsCameraPos},
+    {0xbe3ac53bu, "PgTerrainMeshFP3D_pl_sl (shader3.bin@0x235700)", mc2vr::shaders::PgTerrainMeshFP3D_pl_sl, mc2vr::shaders::PgTerrainMeshFP3D_pl_sl_modern, kAddsCameraPos},
+    {0x1bda072au, "PgTerrainMeshFP3D_pl_sl_li (shader3.bin@0x2376a0)", mc2vr::shaders::PgTerrainMeshFP3D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP3D_pl_sl_li_modern, kAddsCameraPos},
+    {0x5aafbdb2u, "PgTerrainMeshFP3D_sl (shader3.bin@0x238b80)", mc2vr::shaders::PgTerrainMeshFP3D_sl, mc2vr::shaders::PgTerrainMeshFP3D_sl_modern, kAddsCameraPos},
+    {0xf763b721u, "PgTerrainMeshFP3D_sl_li (shader3.bin@0x23a100)", mc2vr::shaders::PgTerrainMeshFP3D_sl_li, mc2vr::shaders::PgTerrainMeshFP3D_sl_li_modern, kAddsCameraPos},
+    {0xb87cace9u, "PgTerrainMeshFP4D (shader3.bin@0x23b190)", mc2vr::shaders::PgTerrainMeshFP4D, mc2vr::shaders::PgTerrainMeshFP4D_modern, kAddsCameraPos},
+    {0x32255d76u, "PgTerrainMeshFP4D_pl (shader3.bin@0x23bba0)", mc2vr::shaders::PgTerrainMeshFP4D_pl, mc2vr::shaders::PgTerrainMeshFP4D_pl_modern, kAddsCameraPos},
+    {0x0a525994u, "PgTerrainMeshFP4D_pl_li (shader3.bin@0x23cfa0)", mc2vr::shaders::PgTerrainMeshFP4D_pl_li, mc2vr::shaders::PgTerrainMeshFP4D_pl_li_modern, kAddsCameraPos},
+    {0x7c08c23cu, "PgTerrainMeshFP4D_pl_sl (shader3.bin@0x23ddd0)", mc2vr::shaders::PgTerrainMeshFP4D_pl_sl, mc2vr::shaders::PgTerrainMeshFP4D_pl_sl_modern, kAddsCameraPos},
+    {0x137b06a9u, "PgTerrainMeshFP4D_pl_sl_li (shader3.bin@0x23fdd0)", mc2vr::shaders::PgTerrainMeshFP4D_pl_sl_li, mc2vr::shaders::PgTerrainMeshFP4D_pl_sl_li_modern, kAddsCameraPos},
+    {0x17d2ce31u, "PgTerrainMeshFP4D_sl (shader3.bin@0x241310)", mc2vr::shaders::PgTerrainMeshFP4D_sl, mc2vr::shaders::PgTerrainMeshFP4D_sl_modern, kAddsCameraPos},
+    {0x304c3df6u, "PgTerrainMeshFP4D_sl_li (shader3.bin@0x2428f0)", mc2vr::shaders::PgTerrainMeshFP4D_sl_li, mc2vr::shaders::PgTerrainMeshFP4D_sl_li_modern, kAddsCameraPos},
     {0xedb3eaeeu, "PgUnderwaterFP (shader3.bin@0x24f4d0)", mc2vr::shaders::PgUnderwaterFP, nullptr},
     {0xc2dde179u, "PgWaterFPDWE (shader3.bin@0x254a80)", mc2vr::shaders::PgWaterFPDWE, nullptr},
     {0x06f59bd8u, "PgWaterFP (shader3.bin@0x2571d0)", mc2vr::shaders::PgWaterFP, nullptr},
@@ -1062,7 +1062,7 @@ Entry g_entries[] = {
 };
 
 uint32_t g_seen = 0, g_reported_seen = 0;  // CreatePixelShader calls
-bool g_modern = false;                      // shading=modern
+bool g_modern = true;                       // shading=modern (the default)
 
 // The entry's bytecode in the current shading.
 const uint32_t *chosen(const Entry &e)
@@ -1235,13 +1235,6 @@ struct Created {
 };
 std::vector<Created> g_created;  // load thread writes at creation; debug readers on the render thread
 
-// The created objects that take the carrier's cameraPos (kCarrierCameraPos
-// entries in the modern shading): written at creation, read by the render
-// thread at every pass-object change, so a fixed array published by its
-// count (no reallocation under a reader).
-constexpr uint32_t kMaxCameraObjects = 1024;
-const void *g_camera_objects[kMaxCameraObjects];
-std::atomic<uint32_t> g_camera_object_count{0};
 } // namespace
 
 void on_created(const uint32_t *used, const void *object)
@@ -1250,17 +1243,6 @@ void on_created(const uint32_t *used, const void *object)
     for (const Entry &e : g_entries) {
         if (e.last_used == used) {
             g_created.push_back(Created{object, e.name});
-            if (e.carrier_camera && e.last_modern) {
-                const uint32_t n = g_camera_object_count.load(std::memory_order_relaxed);
-                if (n < kMaxCameraObjects) {
-                    g_camera_objects[n] = object;
-                    g_camera_object_count.store(n + 1, std::memory_order_release);
-                } else if (n == kMaxCameraObjects) {
-                    MC2VR_LOG("shaders: ERROR — more than %u carrier-cameraPos shader objects; %s and later "
-                              "ones get no view position (modern shading)", kMaxCameraObjects, e.name);
-                    g_camera_object_count.store(n + 1, std::memory_order_release);
-                }
-            }
             return;
         }
     }
@@ -1272,22 +1254,6 @@ const char *name_of(const void *object)
         if (c.object == object) return c.name;
     }
     return nullptr;
-}
-
-bool carrier_camera_pos_in_use()
-{
-    return g_camera_object_count.load(std::memory_order_relaxed) != 0;
-}
-
-bool needs_carrier_camera_pos(const void *object)
-{
-    if (object == nullptr) return false;
-    uint32_t n = g_camera_object_count.load(std::memory_order_acquire);
-    if (n > kMaxCameraObjects) n = kMaxCameraObjects;
-    for (uint32_t k = 0; k < n; k++) {
-        if (g_camera_objects[k] == object) return true;
-    }
-    return false;
 }
 
 void report_window()

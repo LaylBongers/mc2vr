@@ -288,9 +288,9 @@ float4 main(Input i) : COLOR
 //   (live, 2026-11-15).
 //
 // The view is the camera's: the families with neither Spec nor Rim (PgDiffFP,
-// AmbOcc, Emis, EmisAmbOcc) have no cameraPos in their originals' interface,
-// so the carrier uploads it to the same register for their modern builds
-// (kCarrierCameraPos in hooks/shader_reimpl.cpp), per eye like the game's.
+// AmbOcc, Emis, EmisAmbOcc) have no cameraPos in their originals' interface;
+// their modern builds declare it at the same register, and the game uploads
+// it there by name (kAddsCameraPos in hooks/shader_reimpl.cpp), per eye.
 #include "modern.hlsli"
 
 static const float kSpecF0Scale = 0.25;   // specular map -> extra dielectric F0 (calibration)

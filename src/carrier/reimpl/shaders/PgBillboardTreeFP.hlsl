@@ -58,7 +58,7 @@ float4 main(Input i) : COLOR
 // environment.
 #include "modern.hlsli"
 
-float3 cameraPos : register(c92);  // not in the original's interface: the carrier's, per eye
+float3 cameraPos : register(c92);  // not in the original's interface; the game uploads it by name, per eye
 
 static const float kTreeAlpha = 0.6;        // GGX alpha
 static const float kTreeEnvStrength = 1.0;  // environment specular scale

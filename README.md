@@ -33,10 +33,10 @@ key and its default).
 - Smooth transitions between shadow cascades on every surface, instead of a hard line where shadow
   detail drops.
 - Higher shadow resolution (`shadow_resolution`, 2048 by default; the game's is 1024).
-- Optional modern material shading (`shading=modern`): physically based lighting with GGX specular,
-  Fresnel, Burley diffuse and image-based reflections, keeping the game's own reflective materials.
-  It applies to buildings, vehicles, props, terrain, vegetation and decals; water keeps the game's
-  lighting.
+- Modern material shading: physically based lighting with GGX specular, Fresnel, Burley diffuse and
+  image-based reflections, keeping the game's own reflective materials. It applies to buildings,
+  vehicles, props, terrain, vegetation and decals; water keeps the game's lighting. It costs nothing
+  measurable; `shading=classic` gives the game's own shading.
 
 ## Setup
 

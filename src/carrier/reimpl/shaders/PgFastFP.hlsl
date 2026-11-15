@@ -48,7 +48,7 @@ float4 main(Input i) : COLOR
 // and, weighted by the split-sum fit, as the environment (no direction).
 #include "modern.hlsli"
 
-float3 cameraPos : register(c92);  // not in the originals' interface: the carrier's, per eye
+float3 cameraPos : register(c92);  // not in the originals' interface; the game uploads it by name, per eye
 
 static const float kFastAlpha = 0.6;        // GGX alpha
 static const float kFastEnvStrength = 1.0;  // environment specular scale

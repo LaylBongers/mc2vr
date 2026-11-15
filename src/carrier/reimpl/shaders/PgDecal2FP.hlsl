@@ -48,7 +48,7 @@ float4 main(Input i) : COLOR
 // normal is normalized.
 #include "modern.hlsli"
 
-float3 cameraPos : register(c92);  // not in the originals' interface: the carrier's, per eye
+float3 cameraPos : register(c92);  // not in the originals' interface; the game uploads it by name, per eye
 
 static const float kDecalAlpha = 0.7;        // GGX alpha
 static const float kDecalEnvStrength = 1.0;  // environment specular scale
