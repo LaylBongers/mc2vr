@@ -6,6 +6,8 @@
 //   - frame_start(): update thread, GameShell_FrameTick entry, before the
 //     game's QPC sample: feeds the dt governor the display-time step (last
 //     rendered display time + one display period, minus the previous target).
+//     Outside lockstep it caps the frame rate instead (120 Hz) and feeds the
+//     real frame interval.
 #pragma once
 
 #include <cstdint>
