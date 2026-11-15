@@ -1,24 +1,38 @@
 // The PgDiff* material families (the game's high-quality "PgDiff<features>FP"
 // shaders; docs/shaders.md) — reimplementation. One source, built per family
 // with feature defines and, like the other families, in 7 light variants
-// (lights.hlsli's defines):
+// (lights.hlsli's defines). The family name lists its features; e.g.
 //
+//   PgDiffFP                (shader3.bin@0x42b00 ..)  (none)
 //   PgDiffSpecNormAmbOccFP  (shader3.bin@0xd9c70 ..)  SPEC NORM AMBOCC
-//   PgDiffSpecNormFP        (shader3.bin@0xf1bf0 ..)  SPEC NORM
 //   PgDiffSpecMetalNormFP   (shader3.bin@0xb5270 ..)  SPEC NORM METAL
 //
 //   MC2VR_PGDIFF_SPEC    specularMap: Blinn-Phong specular from the sun and the
 //                        local lights, its luminance raising the alpha
-//   MC2VR_PGDIFF_NORM    normalMap: a two-channel tangent-space normal
+//   MC2VR_PGDIFF_NORM    normalMap: a two-channel tangent-space normal, and
+//                        the ambient cube; without it, the interpolated
+//                        normal and a per-vertex ambient (COLOR1)
 //   MC2VR_PGDIFF_AMBOCC  the vertex colour (COLOR0) multiplies the lit colour
 //                        and the alpha
 //   MC2VR_PGDIFF_METAL   reflectionMap: a cube reflection, tinted by the
 //                        specular map, weighted by a Fresnel term
+//   MC2VR_PGDIFF_REFL    reflectionMap: the same reflection at a constant
+//                        weight (no Fresnel)
+//   MC2VR_PGDIFF_EMIS    emissiveMap: an unlit colour added to the lit one
+//   MC2VR_PGDIFF_RIM     a rim light: the global rim colour towards the
+//                        silhouette, away from the sun
+//   MC2VR_PGDIFF_SSS     subsurface scattering: a coloured band around the
+//                        sun's terminator (with Rim, also the rim light's)
+//
+// The game builds Spec with any of Norm, Metal, Refl and SSS, and Emis
+// without Spec; Rim and AmbOcc go with all of them. Every feature's place in
+// the lit colour is the originals' (the combined families settle it: the
+// reflection is added before the occlusion multiplies, e.g.
+// PgDiffSpecMetalNormAmbOccFP, shader3.bin@0x9c230).
 //
 // Unlike our other receivers' originals, these already take the game's 9-tap
 // sun-shadow filter: shadow.hlsli is theirs, so the math is the originals'
 // throughout. Owning the lookup is the point (a cascade blend band, docs/shadows.md).
-// Combinations without SPEC and NORM have not been transcribed yet.
 
 #ifndef MC2VR_PGDIFF_SPEC
 #define MC2VR_PGDIFF_SPEC 0
@@ -32,30 +46,58 @@
 #ifndef MC2VR_PGDIFF_METAL
 #define MC2VR_PGDIFF_METAL 0
 #endif
+#ifndef MC2VR_PGDIFF_REFL
+#define MC2VR_PGDIFF_REFL 0
+#endif
+#ifndef MC2VR_PGDIFF_EMIS
+#define MC2VR_PGDIFF_EMIS 0
+#endif
+#ifndef MC2VR_PGDIFF_RIM
+#define MC2VR_PGDIFF_RIM 0
+#endif
+#ifndef MC2VR_PGDIFF_SSS
+#define MC2VR_PGDIFF_SSS 0
+#endif
 
-#if !MC2VR_PGDIFF_SPEC || !MC2VR_PGDIFF_NORM
-#error "PgDiff.hlsl: only the Spec+Norm families are transcribed so far"
+#if (MC2VR_PGDIFF_NORM || MC2VR_PGDIFF_METAL || MC2VR_PGDIFF_REFL || MC2VR_PGDIFF_SSS) && !MC2VR_PGDIFF_SPEC
+#error "PgDiff.hlsl: Norm, Metal, Refl and SSS come with Spec (no such family in the game)"
+#endif
+#if MC2VR_PGDIFF_EMIS && MC2VR_PGDIFF_SPEC
+#error "PgDiff.hlsl: Emis and Spec share sampler s1 (no such family in the game)"
+#endif
+#if MC2VR_PGDIFF_METAL && MC2VR_PGDIFF_REFL
+#error "PgDiff.hlsl: Metal and Refl are two forms of one reflection"
 #endif
 
 #include "shadow.hlsli"
 #include "lights.hlsli"
 
 sampler2D diffuseMap : register(s0);
+#if MC2VR_PGDIFF_SPEC
 sampler2D specularMap : register(s1);
+#endif
+#if MC2VR_PGDIFF_EMIS
+sampler2D emissiveMap : register(s1);
+#endif
+#if MC2VR_PGDIFF_NORM
 sampler2D normalMap : register(s2);
-#if MC2VR_PGDIFF_METAL
+#endif
+#if MC2VR_PGDIFF_METAL || MC2VR_PGDIFF_REFL
 samplerCUBE reflectionMap : register(s13);
 #endif
 
 float3 cameraPos : register(c92);
-// [0] diffuse, [1] specular, [2] ambient (w: the reflection's weight facing
-// the viewer), [5] x reflection weight, z specular exponent, w alpha.
+// [0] diffuse, [1] specular, [2] ambient (w: the metal reflection's weight
+// facing the viewer), [3] emissive, [4] subsurface colour (w: its wrap),
+// [5] x reflection weight, z specular exponent, w alpha.
 float4 materialData[6] : register(c93);
 
 struct Input {
     float4 uvDepthFade : TEXCOORD0;  // uv, view depth, shadow fade
+#if MC2VR_PGDIFF_NORM
     float3 tangent : TEXCOORD1;
     float3 binormal : TEXCOORD2;
+#endif
     float3 normal : TEXCOORD3;
     float3 extinction : TEXCOORD4;   // atmosphere: colour * this + inscatter
     float3 inscatter : TEXCOORD5;
@@ -63,8 +105,12 @@ struct Input {
 #if MC2VR_PGDIFF_AMBOCC
     float4 ambOcc : COLOR0;          // baked ambient occlusion (rgb, alpha)
 #endif
+#if !MC2VR_PGDIFF_NORM
+    float3 ambient : COLOR1;         // the vertex's ambient light
+#endif
 };
 
+#if MC2VR_PGDIFF_NORM
 // The normal map holds the tangent-space normal's x in alpha and y in green
 // (z reconstructed), applied in the interpolated tangent frame. The
 // originals' z is sqrt(1 - x² - 2y), y unsquared: a slip in the game's
@@ -75,29 +121,86 @@ float3 mapped_normal(Input i)
     const float z = sqrt(1 - xy.x * xy.x - 2 * xy.y);
     return normalize(xy.x * i.tangent + xy.y * i.binormal + z * i.normal);
 }
+#endif
+
+float3 surface_normal(Input i)
+{
+#if MC2VR_PGDIFF_NORM
+    return mapped_normal(i);
+#else
+    return normalize(i.normal);
+#endif
+}
+
+// The ambient light: the ambient cube at the mapped normal, or the vertex's.
+float3 ambient_light(Input i, float3 normal)
+{
+#if MC2VR_PGDIFF_NORM
+    return ambient_cube(normal);
+#else
+    return i.ambient;
+#endif
+}
+
+#if MC2VR_PGDIFF_SSS
+// Subsurface scattering (materialData[4]: colour, w wrap): a wrapped diffuse
+// (the lighting term remapped from [-wrap, 1]) minus the plain one, both
+// smoothstepped. Of N.L, a band around the sun's terminator; unclamped (the
+// colour takes max(band, 0)).
+float subsurface_band(float x)
+{
+    const float wrap = materialData[4].w;
+    return smoothstep(-wrap, 1, x) - smoothstep(0, 1, x);
+}
+#endif
 
 float4 main(Input i) : COLOR
 {
     const float2 uv = i.uvDepthFade.xy;
-    const float3 normal = mapped_normal(i);
+    const float3 normal = surface_normal(i);
     const float3 view = normalize(cameraPos - i.worldPos);
 
-    // The sun: diffuse by its visibility; the specular highlight is kept at a
-    // quarter of it in shadow.
+    // The sun: diffuse by its visibility (with Spec, the highlight is kept at
+    // a quarter of it in shadow).
     const float visibility = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w);
     const float3 toSun = -globalLightData[0].xyz;
-    const float3 sunDiffuse = visibility * globalLightData[1].rgb * max(dot(normal, toSun), 0);
+    const float ndl = dot(normal, toSun);
+    float3 direct = visibility * globalLightData[1].rgb * max(ndl, 0);
+#if MC2VR_PGDIFF_SSS
+    // Subsurface scattering of the sun, unshadowed.
+    const float sunBand = subsurface_band(ndl);
+    direct += max(sunBand, 0) * materialData[4].rgb;
+#endif
+#if MC2VR_PGDIFF_RIM
+    // The rim light (globalLightData[2]: colour, w bias): stronger where the
+    // surface turns from the viewer, and away from the sun (1 - N.L, N.L
+    // unclamped).
+    const float rimTerm = dot(-view, normal) + globalLightData[2].w;
+    direct += max(rimTerm, 0) * globalLightData[2].rgb * (1 - ndl);
+#if MC2VR_PGDIFF_SSS
+    // The rim scatters too: its term through the same band, where the sun's
+    // band leaves room (1 - band, unclamped).
+    direct += max(subsurface_band(rimTerm), 0) * materialData[4].rgb * (1 - sunBand);
+#endif
+#endif
+#if MC2VR_PGDIFF_SPEC
     const float3 sunSpecular = max(0.25, visibility) * globalLightData[1].rgb *
                                blinn_phong(normal, toSun, view, materialData[5].z);
-
     const LocalLights local = local_lights_spec(i.worldPos, normal, view, materialData[5].z);
-    const float3 diffuse = saturate(sunDiffuse + local.diffuse);
-    const float3 light = diffuse * materialData[0].rgb + ambient_cube(normal) * materialData[2].rgb;
+    direct += local.diffuse;
+#else
+    direct += local_lights(i.worldPos, normal);
+#endif
+    const float3 light = saturate(direct) * materialData[0].rgb + ambient_light(i, normal) * materialData[2].rgb;
 
     const float4 albedo = tex2D(diffuseMap, uv);
+    float3 colour = albedo.rgb * light;
+
+#if MC2VR_PGDIFF_SPEC
     const float3 specMap = tex2D(specularMap, uv).rgb;
     const float3 specular = (sunSpecular + local.specular) * specMap * materialData[1].rgb;
-    float3 colour = albedo.rgb * light + specular;
+    colour += specular;
+#endif
 
 #if MC2VR_PGDIFF_METAL
     // Reflection: Fresnel (1 - N.V)^5 blends materialData[2].w (facing) to 1
@@ -105,6 +208,14 @@ float4 main(Input i) : COLOR
     const float fresnel = pow(1 - max(dot(view, normal), 0), 5);
     const float weight = lerp(materialData[2].w, 1, fresnel) * materialData[5].x;
     colour += texCUBE(reflectionMap, reflect(-view, normal)).rgb * specMap * weight;
+#endif
+#if MC2VR_PGDIFF_REFL
+    // Reflection at a constant weight, tinted by the specular map.
+    colour += texCUBE(reflectionMap, reflect(-view, normal)).rgb * specMap * materialData[5].x;
+#endif
+
+#if MC2VR_PGDIFF_EMIS
+    colour += tex2D(emissiveMap, uv).rgb * materialData[3].rgb;
 #endif
 
     float alpha = albedo.a * materialData[5].w;
@@ -114,7 +225,9 @@ float4 main(Input i) : COLOR
 #endif
 
     colour = colour * i.extinction + i.inscatter;
+#if MC2VR_PGDIFF_SPEC
     // The highlight's luminance shows through transparent parts.
-    const float specLuminance = dot(specular, float3(0.299, 0.587, 0.114));
-    return float4(min(max(colour, 1e-5), 30000), saturate(max(alpha, specLuminance)));
+    alpha = saturate(max(alpha, dot(specular, float3(0.299, 0.587, 0.114))));
+#endif
+    return float4(min(max(colour, 1e-5), 30000), alpha);
 }

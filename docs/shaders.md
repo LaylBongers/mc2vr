@@ -38,6 +38,8 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
 | **PgFastFP** (vegetation and other cheap meshes), 7 variants (`shader3.bin@0x1d6370`–`@0x1dc250`): `3e76835c`, `1055364c`, `19b8861c`, `2aa895fb`, `7d01c4f5`, `8d347471`, `5fa41029` | `PgFastFP.hlsl` | the game's 9-tap sun-shadow filter instead of one binary tap ([shadows.md](shadows.md)) |
 | **PgScrubLightFP** (scrub/brush vegetation), 7 variants (`@0x2004c0`–`@0x206340`): `765f3420`, `523d88a3`, `4249bd13`, `788c2fdd`, `59ca705e`, `9de607f6`, `307dcccd` | `PgScrubLightFP.hlsl` | the same |
 | **PgDiffSpecNormAmbOccFP**, **PgDiffSpecNormFP**, **PgDiffSpecMetalNormFP**, 7 variants each (`shader3.bin@0xd9c70`…, `@0xf1bf0`…, `@0xb5270`…) | `PgDiff.hlsl`: one source, features by define (below) | none yet. These already used the game's 9-tap filter. Taken over so the cascade blend band can be added in `shadow.hlsli` ([shadows.md](shadows.md)); the math is identical to the originals, the shadow kernel included |
+| The other 37 PgDiff families, 7 variants each (259 shaders; Diff/Spec/AmbOcc/Norm/Metal/Refl/Emis/Rim/SSS combinations) | `PgDiff.hlsl` | none yet: identical to the originals, 9-tap kernel included (checked with the band off) |
+| **PgTerrainMeshFP** and **1D**–**4D**, 7 variants each (`shader3.bin@0x2439e0`…, `@0x222850`…`@0x23b190`…) | `PgTerrainMesh.hlsl`, `MC2VR_TERRAIN_LAYERS=0..4` | none yet: identical to the originals, 9-tap kernel included (checked with the band off). The colour is `GlobalMap`; with layers, `GlobalMap`·`TEXCOORD0.z` + a signed detail term at `(TEXCOORD4.w, TEXCOORD5.w)` + one `LayerkMap_Diff` per layer (even samplers s2…s8) weighted by `COLOR(k−1).w`. Lit by sun + diffuse local lights + a vertex ambient (`TEXCOORD1`) |
 | **PgDecal2FP** (decals), 7 variants (`@0xa2a0`–`@0x10070`): `deef11a9`, `8360631b`, `e40c452e`, `6751d4d3`, `4552f636`, `15cf77ad`, `e651a6c7` | `PgDecal2FP.hlsl` | the same. No material constants: ambient cube + (sun + local lights), on the raw normal, unsaturated |
 | **PgBillboardTreeFP** / `_fade` (billboard trees; one bytecode, `@0x2ff0`/`@0x3790`): `eacf64f8` | `PgBillboardTreeFP.hlsl` | the same. The two billboard views' normal-map lookups are rotated about Y and blended; ambient cube |
 | **PgUnderwaterFP** (`@0x24f4d0`): `edb3eaee` | `PgUnderwaterFP.hlsl` | the same. Wake-masked (`texkill`) surface seen from below: Blinn-Phong specular, and a Fresnel blend with a projected refraction offset by the normal |
@@ -54,7 +56,13 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
   - **`MC2VR_PGDIFF_NORM`:** a tangent-space normal map (x in alpha, y in green; frame from `TEXCOORD1`–`3`). The originals rebuild z as `sqrt(1 − x² − 2y)`, a linear y term that looks like a slip in the game's source. It's kept, to stay identical.
   - **`MC2VR_PGDIFF_AMBOCC`:** `COLOR0` multiplies the lit colour and the alpha.
   - **`MC2VR_PGDIFF_METAL`:** a `reflectionMap` cube at `reflect(−V, N)`, tinted by the specular map, weighted by Fresnel⁵ · `materialData[5].x`.
-  - Families without Spec or Norm stop with an `#error` until their input layout is ported.
+  - **`MC2VR_PGDIFF_REFL`:** the same reflection without Fresnel, times `materialData[5].x`.
+  - **`MC2VR_PGDIFF_EMIS`:** `emissiveMap` (s1) × `materialData[3].rgb`.
+  - **`MC2VR_PGDIFF_RIM`:** `max(dot(−V, N) + globalLightData[2].w, 0)` · `globalLightData[2].rgb` · `(1 − N·L)` (N·L unclamped), inside the saturated direct light.
+  - **`MC2VR_PGDIFF_SSS`:** the wrapped band `smoothstep(−w, 1, N·L) − smoothstep(0, 1, N·L)` (w = `materialData[4].w`) × `materialData[4].rgb`, unshadowed and sun-only. Combined with Rim, the rim also goes through the band, weighted by `(1 − sunBand)`.
+  - **Placement:** the reflection and emissive terms are added before AmbOcc's `COLOR0` multiply, confirmed by the Metal+AmbOcc and Refl+AmbOcc families.
+  - **Without Norm:** the normal is `normalize(TEXCOORD3)`, and the ambient is `COLOR1` × `materialData[2]`. **Without Spec:** diffuse-only local lights and an unsaturated alpha.
+  - `#error` guards reject the combinations the game never builds.
   - `lights.hlsli` now also gives the local lights' Blinn-Phong specular (`local_lights_spec`). `local_lights` keeps the diffuse-only form the other families use.
 - **Variants:** each family comes in 7, built from one source with defines (`src/carrier/CMakeLists.txt`). The generated symbols carry the originals' file names: `PgFastFP`, `PgFastFP_pl`, `_pl_li`, `_pl_sl`, `_pl_sl_li`, `_sl`, `_sl_li`. They are no local lights, or point and/or spot lights in one of two counting schemes:
   - **plain** (`_pl`, `_sl`, `_pl_sl`): the highest set bool picks the count. Points take 8/4/2/1 by `b3`/`b2`/`b1`/`b0`; spots take 4/2/1 by `b6`/`b5`/`b4`.
@@ -85,6 +93,7 @@ A/B in one spot (2026-11-13, HMD, gameplay, last ~30 s of each run; per frame, b
 - **All 27 single-tap receivers are reimplemented (2026-11-14):** both checks pass on every one. `shader_equiv.py` mocks `dsx`/`dsy` as an affine function, and enlarges the `Waves` footprint scales so the wave branches run.
 - **Live (2026-11-14):** the five water shaders (PgUnderwaterFP, PgWaterFPDWE, PgWaterFP, PgWaterFPbl, PgWaterFP_LI). All 27 substituted, no visual issues.
 - **Live (2026-11-15):** the 21 PgDiff variants (with the cascade blend band). All 48 substituted, no visible issues.
+- OPEN, live check: the 35 terrain shaders and the 259 remaining PgDiff shaders (2026-11-15). Both checks pass on all 342 entries, and the band-off kernel check passes on all terrain and PgDiff originals. **Every shadow receiver in `shader3.bin` is now ours** (343 container entries; two share one bytecode). A clean rebuild takes ~1 min (one Wine start per shader).
 - **Which original 9-tap families matter** (for the cascade blend band, [shadows.md](shadows.md)). `debug_ps_census=all` with `shadow_resolution=1024` writes the run's totals to `ps_census.csv`; `tools/ps_census_families.py` ranks them by family. First run (2026-11-14, ~7 min of gameplay), share of shadow-receiver pixels:
   - **PgDiffSpecNormAmbOccFP** 67%; PgDiffSpecNormFP 9%; PgFastFP (ours) 6%; PgDiffSpecMetalNormFP 3%;
   - the terrain set PgTerrainMeshFP + 1D–4D about 7% together; PgDiffFP 2%; PgDiffAmbOccFP, PgDiffSpecFP and PgDiffSpecReflNormAmbOccFP 1–2% each; the rest under 1%.
