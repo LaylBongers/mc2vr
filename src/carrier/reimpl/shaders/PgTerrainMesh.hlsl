@@ -124,15 +124,15 @@ float4 main(Input i) : COLOR
 // A rough dielectric: Burley diffuse with the energy split and GGX specular
 // from the sun (fully shadowed) and the local lights; the vertex ambient
 // through the split for the diffuse and, weighted by the split-sum fit, as
-// the environment (it has no direction). The environment is kept at half
-// strength: at grazing angles the fit rises towards 1, and distant ground
-// would look wet.
+// the environment (it has no direction), at the neutral strength like every
+// other family. (Half strength, set up front against wet-looking distant
+// ground, made the terrain look about as dull as classic: live, 2026-11-15.)
 #include "modern.hlsli"
 
 float3 cameraPos : register(c92);  // not in the originals' interface: the carrier's, per eye
 
 static const float kTerrainAlpha = 0.8;        // GGX alpha of the ground
-static const float kTerrainEnvStrength = 0.5;  // environment specular scale
+static const float kTerrainEnvStrength = 1.0;  // environment specular scale (1 = neutral)
 
 float4 main(Input i) : COLOR
 {

@@ -95,7 +95,7 @@ A deliberate look change, selected by conf `shading=classic|modern` (default `cl
 
   | Family | α | Environment strength |
   |---|---|---|
-  | Terrain (`kTerrainAlpha`, `kTerrainEnvStrength`) | 0.8 | 0.5, so far ground doesn't look wet |
+  | Terrain (`kTerrainAlpha`, `kTerrainEnvStrength`) | 0.8 | 1.0. It was 0.5 at first, set up front against wet-looking ground, which made terrain about as dull as classic (live, 2026-11-15) |
   | PgFastFP | 0.6 | 1.0 |
   | PgScrubLightFP | 0.6 | 1.0 |
   | Billboard trees | 0.6 | 1.0 |
