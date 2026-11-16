@@ -19,22 +19,26 @@ namespace mc2vr::game {
 
 // ---- PgClouds fields (floats unless noted) ---------------------------------------------
 // The constant block (10 vec4, identical in both emitters) is built from these;
-// only the sky matrix depends on the camera.
-constexpr uintptr_t kCloudsAspectNum = 0x10;   // c2.xz = +0x10 / +0x14
-constexpr uintptr_t kCloudsAspectDen = 0x14;   // also c3.x
-constexpr uintptr_t kCloudsCenter = 0x18;      // c3.y/.z = +0x18 +- +0x54 / 2
-constexpr uintptr_t kCloudsExtentA = 0x1c;     // c9.xy from (+0x1c, +0x20) * aspect
-constexpr uintptr_t kCloudsExtentB = 0x20;
-constexpr uintptr_t kCloudsWidth = 0x54;       // c3.w; c3.yz half-width; c9.w factor
-constexpr uintptr_t kCloudsShape = 0x5c;       // s: c4.xyz = 3(1-s^2)/(2(s^2+2)), s^2+1, -2s (clamped to [-1, 1])
-constexpr uintptr_t kCloudsC4W = 0x60;         // c4.w
-constexpr uintptr_t kCloudsScale = 0x64;       // c9.zw = x / 1000, width * x / 1000
-constexpr uintptr_t kCloudsTint = 0x6c;        // float[3]: c6.xyz / c7.xyz factors
-constexpr uintptr_t kCloudsBlend = 0x78;       // k: c6/c7 = lerp(1, sky colour, k)
-constexpr uintptr_t kCloudsRangeLo = 0x7c;     // c8.xy = 1/(hi - lo), lo/(lo - hi)
-constexpr uintptr_t kCloudsRangeHi = 0x80;
-constexpr uintptr_t kCloudsFadeLo = 0x84;      // c8.zw = hi - lo, lo
-constexpr uintptr_t kCloudsFadeHi = 0x88;
+// only the sky matrix depends on the camera. Roles from the shaders
+// (PgCloudRenderVP1 / FP1, docs/reverse_engineering/sky_clouds.md; live
+// values in parentheses). The cloud layer is the clouds' mesh scaled by
+// kCloudsPlaneExtent around the camera, at kCloudsAltitude above it,
+// kCloudsThickness thick.
+constexpr uintptr_t kCloudsTexRepeat = 0x10;    // texture repeats per extent (1.25): c2.xz = it / extent
+constexpr uintptr_t kCloudsPlaneExtent = 0x14;  // the mesh's scale (7000): c3.x
+constexpr uintptr_t kCloudsAltitude = 0x18;     // the layer's middle above the camera (750): c3.yz = it +- thickness / 2
+constexpr uintptr_t kCloudsFadeStart = 0x1c;    // radial fade, full opacity inside (world units; x c2 into texture units)
+constexpr uintptr_t kCloudsFadeEnd = 0x20;      // radial fade, zero outside: c9.xy
+constexpr uintptr_t kCloudsThickness = 0x54;    // (125): c3.w; c9.w factor
+constexpr uintptr_t kCloudsPhaseG = 0x5c;       // Cornette-Shanks anisotropy g: c4.xyz = 3(1-g^2)/(2(g^2+2)), g^2+1, -2g
+constexpr uintptr_t kCloudsScatter = 0x60;      // the phase function's strength: c4.w
+constexpr uintptr_t kCloudsExtinction = 0x64;   // per 1000 units of density: c9.zw = it / 1000, thickness * it / 1000
+constexpr uintptr_t kCloudsTint = 0x6c;         // float[3]: c6.xyz / c7.xyz factors
+constexpr uintptr_t kCloudsBlend = 0x78;        // k: c6/c7 = lerp(1, sky colour, k)
+constexpr uintptr_t kCloudsDensityLo = 0x7c;    // density [lo, hi] -> 0..1: c8.xy = 1/(hi - lo), lo/(lo - hi)
+constexpr uintptr_t kCloudsDensityHi = 0x80;
+constexpr uintptr_t kCloudsOpacityLo = 0x84;    // ... -> opacity [lo, hi]: c8.zw = hi - lo, lo
+constexpr uintptr_t kCloudsOpacityHi = 0x88;
 constexpr uintptr_t kCloudsMaterialRender1 = 0x260; // the record's material (thunk_FUN_02537cb0, EmitCloudRender1)
 constexpr uintptr_t kCloudsMaterialRender2 = 0x3f0; // the record's material (thunk_FUN_02537cb0, EmitCloudRender2)
 constexpr uintptr_t kCloudsStreams = 0x690;      // -> the scratch record's streamDataList
@@ -42,10 +46,12 @@ constexpr uintptr_t kCloudsGeometry = 0x6a8;     // -> the scratch record's geom
 constexpr uintptr_t kCloudsOutRT = 0x6c4;        // IDirect3DSurface9 *: the half-size clouds target (mCloudOutRT)
 
 // The sky parameters (*(g_GlobalCamCtx + 0x104)): +0x00 u8 = 1 skips the
-// clouds' own target (they draw into whatever is bound), +0x20 a vec4 copied
-// to c5, +0x40 / +0x70 the colours c6 / c7 blend towards.
+// clouds' own target, the haze and cloud render 2; +0x20 the sun direction
+// (the clouds' c5, the sun quad's placement); +0x40 / +0x70 the colours c6 /
+// c7 blend towards (c6 lights the clouds in FP1; c7 is read by no shipped
+// cloud shader).
 constexpr uintptr_t kGlobalCamSky = 0x104;
-constexpr uintptr_t kSkyC5 = 0x20;
+constexpr uintptr_t kSkySunDirection = 0x20;
 constexpr uintptr_t kSkyColourA = 0x40;
 constexpr uintptr_t kSkyColourB = 0x70;
 

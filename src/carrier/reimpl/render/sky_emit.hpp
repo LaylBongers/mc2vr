@@ -46,6 +46,7 @@
 #include <cstdint>
 
 namespace mc2vr::game {
+struct Technique;
 struct ViewContext;
 }
 
@@ -59,6 +60,12 @@ struct SkyDepthWindow {
 };
 
 void Sky_EmitRecords(uint8_t *sky, const float *camera);
+
+// True for the techniques whose instance matrix Sky_EmitRecords anchors at the
+// camera (the dome, PgSkyVP, and the sun, PgSunVP; nothing else draws with
+// them). VR: SubmitToGPU anchors those at each eye instead
+// (view_rewrite::eye_anchored_instance, docs/clouds.md).
+bool anchored_at_camera(const game::Technique *tech);
 
 // "sky:" log line per 10 s window.
 void sky_report_window();

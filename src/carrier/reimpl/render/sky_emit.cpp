@@ -98,7 +98,7 @@ void Sky_EmitRecords(uint8_t *sky, const float *camera)
     ViewContext *const ctx = reinterpret_cast<ViewContext *>(
         shell + (uint32_t)at<uint16_t>(shell, kRenderShellSubView) * kRenderShellViewStride + 0x10);
     const float *const sun = reinterpret_cast<const float *>(at<uint8_t *>(g_GlobalCamCtx::get(), kGlobalCamSky) +
-                                                             kSkyC5);
+                                                             kSkySunDirection);
 
     // ---- the depth window and the haze range 0x47f8a0-0x47f9bd ----
     SkyDepthWindow win{};
@@ -242,6 +242,11 @@ void Sky_EmitRecords(uint8_t *sky, const float *camera)
     sc.cmdStream = nullptr;
     g_ScratchBucketOverride::set(0);
     g_emits.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool anchored_at_camera(const Technique *tech)
+{
+    return tech != nullptr && (tech == &g_PgSkyVP::ptr()->base || tech == &g_PgSunVP::ptr()->base);
 }
 
 void sky_report_window()

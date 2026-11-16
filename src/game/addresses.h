@@ -197,7 +197,7 @@
 // ring id, about to go into the object's history, the counter and the record.
 #define MC2_RING_ID_READY ((uintptr_t)0x0046fa22u)
 
-// The clouds pass (docs/view_rewrite.md "Clouds"): the emitters' extent
+// The clouds pass (docs/reverse_engineering/sky_clouds.md): the emitters' extent
 // [begin, end): PgClouds_EmitCloudGen (the cloud generation) 0x0047db80..0x0047decf,
 // PgClouds_EmitCloudRender1 0x0047ded0..0x0047e8b0, PgClouds_EmitCloudRender2
 // ..0x0047f088 (contiguous). The generation's quad is submitted through

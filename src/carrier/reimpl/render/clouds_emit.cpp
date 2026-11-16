@@ -78,14 +78,14 @@ ViewContext *current_view()
 void build_constants(uint8_t *obj, const float *inv, float *c)
 {
     const auto fld = [obj](uintptr_t off) { return at<float>(obj, off); };
-    const float s = fld(kCloudsShape);
-    const float aspect = fld(kCloudsAspectNum) / fld(kCloudsAspectDen);
-    const float eb = fld(kCloudsExtentB) * aspect;
-    const float ea = fld(kCloudsExtentA) * aspect;
-    const float s2 = s * s;
-    const float m2s = s * kMinusTwo;
-    const float c4x = ((kOne - s2) * kThree) / ((s2 + kTwo) * kTwo);
-    const float c4y = s2 + kOne;
+    const float g = fld(kCloudsPhaseG);
+    const float tex_per_unit = fld(kCloudsTexRepeat) / fld(kCloudsPlaneExtent);
+    const float fade_end = fld(kCloudsFadeEnd) * tex_per_unit;      // in texture units
+    const float fade_start = fld(kCloudsFadeStart) * tex_per_unit;
+    const float g2 = g * g;
+    const float m2g = g * kMinusTwo;
+    const float c4x = ((kOne - g2) * kThree) / ((g2 + kTwo) * kTwo);
+    const float c4y = g2 + kOne;
     const float zero = 0.0f;
     const float t0 = inv[12] * zero, t1 = inv[13] * zero, t2 = inv[14] * zero;
     for (int k = 0; k < 2; k++) {
@@ -94,21 +94,21 @@ void build_constants(uint8_t *obj, const float *inv, float *c)
         c[k * 4 + 2] = t2;
         c[k * 4 + 3] = zero;
     }
-    const float r = fld(kCloudsAspectNum) / fld(kCloudsAspectDen);
+    const float r = fld(kCloudsTexRepeat) / fld(kCloudsPlaneExtent);
     c[8] = r;
     c[9] = zero;
     c[10] = r;
     c[11] = zero;
-    copy4(&c[12], obj + kCloudsAspectDen);
-    c[13] = fld(kCloudsWidth) * kHalf + fld(kCloudsCenter);
-    c[14] = fld(kCloudsCenter) - fld(kCloudsWidth) * kHalf;
-    copy4(&c[15], obj + kCloudsWidth);
+    copy4(&c[12], obj + kCloudsPlaneExtent);
+    c[13] = fld(kCloudsThickness) * kHalf + fld(kCloudsAltitude);
+    c[14] = fld(kCloudsAltitude) - fld(kCloudsThickness) * kHalf;
+    copy4(&c[15], obj + kCloudsThickness);
     c[16] = c4x;
     c[17] = c4y;
-    c[18] = m2s;
-    copy4(&c[19], obj + kCloudsC4W);
+    c[18] = m2g;
+    copy4(&c[19], obj + kCloudsScatter);
     uint8_t *const sky = at<uint8_t *>(g_GlobalCamCtx::get(), kGlobalCamSky);
-    std::memcpy(&c[20], sky + kSkyC5, 16);
+    std::memcpy(&c[20], sky + kSkySunDirection, 16);
     const float k = fld(kCloudsBlend);
     const float om = kOne - k;
     for (int row = 0; row < 2; row++) {
@@ -119,16 +119,16 @@ void build_constants(uint8_t *obj, const float *inv, float *c)
         out[2] = fld(kCloudsTint + 8) * (col[2] * k + om);
         out[3] = col[3] * k + om;
     }
-    c[32] = kOne / (fld(kCloudsRangeHi) - fld(kCloudsRangeLo));
-    c[33] = fld(kCloudsRangeLo) / (fld(kCloudsRangeLo) - fld(kCloudsRangeHi));
-    c[34] = fld(kCloudsFadeHi) - fld(kCloudsFadeLo);
-    copy4(&c[35], obj + kCloudsFadeLo);
-    const float eb2 = eb * eb;
-    const float den = eb2 - ea * ea;
-    c[36] = eb2 / den;
+    c[32] = kOne / (fld(kCloudsDensityHi) - fld(kCloudsDensityLo));
+    c[33] = fld(kCloudsDensityLo) / (fld(kCloudsDensityLo) - fld(kCloudsDensityHi));
+    c[34] = fld(kCloudsOpacityHi) - fld(kCloudsOpacityLo);
+    copy4(&c[35], obj + kCloudsOpacityLo);
+    const float end2 = fade_end * fade_end;
+    const float den = end2 - fade_start * fade_start;
+    c[36] = end2 / den;
     c[37] = g_CloudsNegOne::get() / den;
-    c[38] = fld(kCloudsScale) * kMilli;
-    c[39] = fld(kCloudsWidth) * fld(kCloudsScale) * kMilli;
+    c[38] = fld(kCloudsExtinction) * kMilli;
+    c[39] = fld(kCloudsThickness) * fld(kCloudsExtinction) * kMilli;
 }
 
 // The sky matrix (0x47e34e-0x47e553): transpose(inverse(camera rotation) * P),

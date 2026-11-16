@@ -552,25 +552,12 @@ constexpr uint32_t kSkyEntries = 8;  // 2 per frame, a few frames back
 SkyEntry g_sky[kSkyEntries];
 std::atomic<uint32_t> g_sky_next{0};
 // Per window. Built (scene build): with/without an HMD view, or not of the
-// camera-relative form; the worst angle between the matrix's axes and its
-// view's (the emitter's camera argument should be the view's camera).
+// camera-relative form.
 uint64_t g_sky_built_hmd = 0, g_sky_built_not_hmd = 0, g_sky_built_failed = 0;
-float g_sky_axis_deg_max = 0.0f;
 // Uploads (render thread), by what they carried.
 uint64_t g_sky_up_eye = 0, g_sky_up_not_hmd = 0, g_sky_up_no_pose = 0;
 float g_sky_resid_max = 0.0f;  // debug_view_identity: |rebuilt - mono|
 uint64_t g_sky_up_unregistered = 0;  // g_ViewProjMtx uploads no emitter registered: passed through mono
-
-// The angle between unit vectors a and b. Not acos(dot): near 1 a float dot
-// steps by 2^-24, so acos reads 0.0198° * sqrt(k) for k ulps of rounding (the
-// first live run showed a flat 0.0396°/0.0442° = 4/5 ulps). The chord form
-// keeps ~1e-5° resolution in single precision (this file is x87 code, and the
-// render threads run the x87 FPU at 24 bits: vr/fpu_precision.hpp).
-float axis_angle_deg(const math::Vec3 &a, const math::Vec3 &b)
-{
-    const float h = 0.5f * math::length(a - b);
-    return 2.0f * std::asin(h > 1.0f ? 1.0f : h) * 57.29578f;
-}
 
 // The registered entry `data` is (its pointer and content), copied out; false
 // when none.
@@ -785,17 +772,7 @@ void on_sky_matrix_built(const float *m, const float *view_vp)
     math::Vec3 pos{0.0f, 0.0f, 0.0f};
     camera_table::UnionSample smp;
     const bool hmd = find_stamp(vp, &rot, &pos, &smp);
-    if (hmd) {
-        g_sky_built_hmd++;
-        vp_camera::Camera view;
-        if (vp_camera::decompose(vp, &view)) {
-            const float deg = std::fmax(std::fmax(axis_angle_deg(sky.R, view.R), axis_angle_deg(sky.U, view.U)),
-                                        axis_angle_deg(sky.F, view.F));
-            g_sky_axis_deg_max = std::fmax(g_sky_axis_deg_max, deg);
-        }
-    } else {
-        g_sky_built_not_hmd++;
-    }
+    (hmd ? g_sky_built_hmd : g_sky_built_not_hmd)++;
     SkyEntry &e = g_sky[g_sky_next.fetch_add(1, std::memory_order_relaxed) % kSkyEntries];
     const uint32_t s = e.seq.load(std::memory_order_relaxed);
     e.seq.store(s + 1, std::memory_order_relaxed);
@@ -891,6 +868,27 @@ void on_view_upload(const ViewRecord &v, ViewUpload what)
     }
 }
 
+namespace {
+uint64_t g_anchored_eye = 0, g_anchored_mono = 0;  // camera-anchored instance uploads, per window
+}
+
+const float *eye_anchored_instance(const ViewRecord &v, const game::ViewContextRecord *mono, const float *m,
+                                   uint32_t vec4_count)
+{
+    if (v.source != ViewSource::Eye || mono == nullptr || m == nullptr || vec4_count < 3 || vec4_count > 4) {
+        g_anchored_mono++;
+        return m;
+    }
+    // The upload layout is transposed (PgPrimitive_PublishFrame): the
+    // translation is the .w of rows 0..2. Shifted by the eye's offset from the
+    // mono camera, the instance keeps its place relative to the eye.
+    static float out[16];
+    memcpy(out, m, vec4_count * 16);
+    for (int k = 0; k < 3; k++) out[k * 4 + 3] += v.rec->cameraPos[k] - mono->cameraPos[k];
+    g_anchored_eye++;
+    return out;
+}
+
 const float *on_set_vs_constant(uint32_t start_register, const float *data,
                                 uint32_t vec4_count)
 {
@@ -952,16 +950,19 @@ void report_window()
                   (unsigned long long)g_mtx_rows, (unsigned long long)g_mtx_split,
                   (unsigned long long)g_mtx_no_delta);
         g_mtx_rows = g_mtx_split = g_mtx_no_delta = 0;
-        MC2VR_LOG("view/hmd: sky matrices (clouds): built hmd=%llu notHmd=%llu failed=%llu axesVsView max=%.3gdeg | "
+        MC2VR_LOG("view/hmd: camera-anchored instances (sky dome, sun): eye=%llu passthrough=%llu",
+                  (unsigned long long)g_anchored_eye, (unsigned long long)g_anchored_mono);
+        g_anchored_eye = g_anchored_mono = 0;
+        MC2VR_LOG("view/hmd: sky matrices (clouds): built hmd=%llu notHmd=%llu failed=%llu | "
                   "uploads eye=%llu notHmd=%llu noPose=%llu unregistered=%llu identityResidMax=%.3g",
                   (unsigned long long)g_sky_built_hmd, (unsigned long long)g_sky_built_not_hmd,
-                  (unsigned long long)g_sky_built_failed, (double)g_sky_axis_deg_max,
+                  (unsigned long long)g_sky_built_failed,
                   (unsigned long long)g_sky_up_eye, (unsigned long long)g_sky_up_not_hmd,
                   (unsigned long long)g_sky_up_no_pose, (unsigned long long)g_sky_up_unregistered,
                   (double)g_sky_resid_max);
         g_sky_built_hmd = g_sky_built_not_hmd = g_sky_built_failed = 0;
         g_sky_up_eye = g_sky_up_not_hmd = g_sky_up_no_pose = g_sky_up_unregistered = 0;
-        g_sky_axis_deg_max = g_sky_resid_max = 0.0f;
+        g_sky_resid_max = 0.0f;
         MC2VR_LOG("view/hmd: shadow boxes: LocalToView rows=%llu ViewToLocal rows=%llu | checks: "
                   "convention (P_mono*S*LocalToView = LocalToProj, S = -x) n=%llu bad=%llu max=%.3g, "
                   "inverse (ViewToLocal*LocalToView = I) n=%llu bad=%llu max=%.3g | noL2P=%llu split=%llu noReg=%llu",

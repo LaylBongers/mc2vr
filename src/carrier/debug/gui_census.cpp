@@ -28,10 +28,10 @@ constexpr uint32_t kMaxNamed = 12;
 constexpr uint32_t kMaxTex = 4;
 
 bool g_enabled = false;
-// debug_gui_census=clouds: instead of the GUI range, the records emitted by
-// the clouds pass (PgClouds_EmitCloudRender1, PgClouds_EmitCloudRender2), in both eye
-// passes of kCloudFrames consecutive frames (docs/view_rewrite.md
-// "Clouds").
+// debug_gui_census=clouds: instead of the GUI range, the records the clouds
+// pass and the sky emitter emit, and what draws inside the sky's depth window,
+// in both eye passes of kCloudFrames consecutive frames
+// (docs/reverse_engineering/sky_clouds.md).
 bool g_clouds = false;
 constexpr uint32_t kCloudFrames = 2;
 uint32_t g_frames_left = 0;

@@ -55,9 +55,9 @@ ViewSeen *view_seen(const game::ViewContext *ctx, const uint32_t *cam)
 }
 
 // The builder's own signs kept; magnitudes widened, never narrowed. Writes the
-// ctx tans too: the clouds pass maps the screen to view directions with
-// them (only the mono fallback now: HMD views get each eye's own FOV,
-// docs/view_rewrite.md "Clouds"; docs/culling.md).
+// ctx tans too, so they stay the ones the view's projection is built from
+// (their reader, the clouds' sky matrix, then matches the view; HMD views
+// replace it per eye anyway: docs/view_rewrite.md "Clouds").
 void widen(game::ViewContext *ctx, float &th, float &tv, float hmd_th, float hmd_tv)
 {
     th = std::copysign(std::fmax(std::fabs(th), hmd_th), th);

@@ -9,6 +9,7 @@
 
 #include "reimpl/render/begin_submit.hpp"
 #include "reimpl/render/render_cmd.hpp"
+#include "reimpl/render/sky_emit.hpp"
 
 #include <windows.h>
 #include <d3d9.h>
@@ -233,7 +234,14 @@ void submit_record(PgPrimitive *rec)
             if (tech->globalLight.count) Dx9_SetVertexShaderConstantF(&tech->globalLight, vctx->globalLightData);
         }
         if ((vs_mask & 0x10) && tech->envConsts.count) {
-            Dx9_SetVertexShaderConstantF(&tech->envConsts, env);
+            const void *instance = env;
+            if (anchored_at_camera(tech)) {
+                // VR: the sky dome and the sun sit at this pass's eye, i.e. at
+                // infinity in stereo (docs/clouds.md).
+                instance = view_rewrite::eye_anchored_instance(eye_view, vctx, reinterpret_cast<const float *>(env),
+                                                               tech->envConsts.count);
+            }
+            Dx9_SetVertexShaderConstantF(&tech->envConsts, instance);
         }
         if (vs_mask & 0x08) {
             if (tech->materialConsts.count) Dx9_SetVertexShaderConstantF(&tech->materialConsts, mat->vsConsts);

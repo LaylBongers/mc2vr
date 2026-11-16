@@ -9,6 +9,7 @@
 //     matrices outside the view record (LocalToProj, LocalToView).
 //   - on_sky_matrix_built() / on_record_vs_constant(): the clouds sky
 //     matrices, registered by their emitters and uploaded per eye.
+//   - eye_anchored_instance(): the sky dome and the sun, placed at each eye.
 //   - on_set_render_target(): pass gate (RT0 size == engine render size) — only the main
 //     scene pass is rewritten (shadow-map/reflection/offscreen passes are not).
 //   - set_identity_oracle()/set_view_world_scale(): mc2vr.conf controls.
@@ -87,6 +88,15 @@ bool main_pass_active();
 // The main view camera's pitch in degrees (world +y up) as last seen by the
 // rewrite (pass 1), and whether it has been seen. Diagnostics.
 bool main_camera_pitch(float *degrees);
+
+// A camera-anchored instance matrix (the sky dome's and the sun's, placed at
+// the camera by Sky_EmitRecords) about to be uploaded as the record's
+// objectData (`m`: the upload layout, vec4_count rows) with view record `v`
+// (eye_view_record) of the game's record `mono`. On an eye record: a copy
+// whose translation follows the eye (+ this eye's camPos - the mono camPos),
+// which puts these sky objects at infinity in stereo. Else `m`.
+const float *eye_anchored_instance(const ViewRecord &v, const game::ViewContextRecord *mono, const float *m,
+                                   uint32_t vec4_count);
 
 // The vertex shader the next record draws with (the PgPrimitive_SubmitToGPU
 // reimplementation, before the record's command stream runs): its explicit
