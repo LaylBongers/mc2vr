@@ -79,6 +79,7 @@
 
 #include "shadow.hlsli"
 #include "lights.hlsli"
+#include "normal_map.hlsli"
 
 sampler2D diffuseMap : register(s0);
 #if MC2VR_PGDIFF_SPEC
@@ -118,28 +119,11 @@ struct Input {
 #endif
 };
 
-#if MC2VR_PGDIFF_NORM
-// The normal map holds the tangent-space normal's x in alpha and y in green
-// (z reconstructed), applied in the interpolated tangent frame. The
-// originals' z is sqrt(1 - x² - 2y), y unsquared: a slip in the game's
-// source (meant: 1 - x² - y²), kept so the shading stays the originals'.
-// The modern shading reconstructs it properly.
-float3 mapped_normal(Input i)
-{
-    const float2 xy = 2 * (tex2D(normalMap, i.uvDepthFade.xy).wy - 0.5);
-#if MC2VR_SHADING_MODERN
-    const float z = sqrt(saturate(1 - xy.x * xy.x - xy.y * xy.y));
-#else
-    const float z = sqrt(1 - xy.x * xy.x - 2 * xy.y);
-#endif
-    return normalize(xy.x * i.tangent + xy.y * i.binormal + z * i.normal);
-}
-#endif
-
 float3 surface_normal(Input i)
 {
 #if MC2VR_PGDIFF_NORM
-    return mapped_normal(i);
+    // In both shadings, with the originals' z slip fixed (normal_map.hlsli).
+    return mapped_normal(tex2D(normalMap, i.uvDepthFade.xy), i.tangent, i.binormal, i.normal);
 #else
     return normalize(i.normal);
 #endif

@@ -24,14 +24,15 @@ key and its default).
 
 **Graphics**
 
-- Rendering fixes: working MSAA (`msaa`), anisotropic filtering (`anisotropic_filtering`).
+- Rendering fixes: working MSAA (`msaa`), anisotropic filtering (`anisotropic_filtering`),
+  correct normal maps.
 - Improved sun shadows: stable cascades, filtering on every surface, smooth cascade transitions,
   footprint-adaptive PCF (stable thin shadows at grazing angles).
 - Higher shadow resolution (`shadow_resolution`, 2048 by default; the game's is 1024).
 - Modern material shading: physically based lighting with GGX specular, Fresnel, Burley diffuse and
   image-based reflections, keeping the game's own reflective materials. It applies to buildings,
   vehicles, props, terrain, vegetation and decals; water keeps the game's lighting. It costs nothing
-  measurable; `shading=classic` gives the game's own shading.
+  measurable; `shading=classic` gives the game's own shading (with the normal-map fix).
 
 ## Setup
 

@@ -35,6 +35,11 @@ Per trial, identical for both shaders:
     it tap for tap: there the random-depth trials add per-texel noise in
     [-1,1] (a hash of the point-sampled texel of the stock 1024x4096 atlas),
     so the uv side is checked too;
+Originals reading normalMap are first corrected in memory (fix_normal_z): their
+normal-map z slip, sqrt(|1 - x^2 - 2y|), becomes saturate'd 1 - x^2 - y^2 under
+the sqrt, as ours reconstruct it (reimpl/shaders/normal_map.hlsli). Marked
+"[normal z fixed]"; with --self the check compares the corrected original
+with itself.
 Trials run as SIMD lanes (numpy, float64), with per-lane masks for
 if/else/loops/break/predication, as a GPU would.
 
@@ -724,6 +729,76 @@ def compare(a, b, trials, tol):
     return ok, worst, msgs
 
 
+# ---- the originals' normal-map z, corrected (normal_map.hlsli) ------------
+NORMAL_SAMPLER = "normalMap"
+OP_MUL, OP_MAD = 5, 4
+
+
+def src_reg(tok):
+    return reg_type(tok), tok & 0x7FF
+
+
+def fix_normal_z(words):
+    """Every original reading normalMap rebuilds z as sqrt(|1 - x^2 - 2y|):
+    the compiled `mad t.c, h, k, r` with h = y/2 (replicated) and k a def
+    constant of -4, r = 1 - x^2. Ours reconstruct it correctly, a deliberate
+    difference in both shadings, so the original is corrected in memory
+    before comparing:
+        mul     f.x, h, h          (f: a temp the shader doesn't use)
+        mad_sat t.c, f.x, k, r     (= saturate(1 - x^2 - y^2))
+    Everything else is still compared. Returns (words, corrected?)."""
+    prog, defs, _, ctab = decode(words)
+    if NORMAL_SAMPLER not in ctab:
+        return words, False
+    consts = {d[1] & 0x7FF: [f32(v) for v in d[2]] for d in defs if d[0] == "def"}
+    hits = []
+    for ins in prog:
+        if ins.op != OP_MAD or ins.pred or len(ins.srcs) != 3:
+            continue
+        (dtok, drel), (s0, r0), (s1, r1), (s2, r2) = ins.dst, *ins.srcs
+        if src_reg(s1)[0] != R_CONST or src_reg(s1)[1] not in consts or (s1 >> 24) & 0xF:
+            continue
+        sw = (s1 >> 16) & 0xFF
+        comps = {(sw >> (2 * k)) & 3 for k in range(4)}
+        if len(comps) != 1 or consts[src_reg(s1)[1]][comps.pop()] != -4.0:
+            continue
+        hits.append(ins)
+    if len(hits) != 1:
+        raise EmuError("normal-map z: expected one mad by -4, found %d" % len(hits))
+    ins = hits[0]
+    (dtok, drel), (s0, r0), (s1, r1), (s2, r2) = ins.dst, *ins.srcs
+    mask = (dtok >> 16) & 0xF
+    if drel or r0 or r2 or reg_type(dtok) != R_TEMP or mask not in (1, 2, 4, 8) or (dtok >> 20) & 0xF:
+        raise EmuError("normal-map z: unexpected operands in the mad")
+    used = {tok & 0x7FF for x in prog for tok, _ in ([x.dst] if x.dst else []) + list(x.srcs)
+            if reg_type(tok) == R_TEMP}
+    free = max(used, default=-1) + 1
+    if free >= 32:
+        raise EmuError("normal-map z: no free temp")
+    temp = dtok & ~0x7FF & ~(0xF << 16) & ~(0xF << 20)  # dtok's register type bits, no mask/modifier
+    f_dst = temp | free | (1 << 16)                     # f.x
+    f_src = temp | free | (1 << 31)                     # f.xxxx (swizzle 0, no modifier)
+    # Locate the mad's tokens: instructions are emitted in order.
+    i, k = 1, -1
+    while i < len(words):
+        t = words[i]
+        op = t & 0xFFFF
+        if op == 0xFFFE:
+            i += 1 + ((t >> 16) & 0x7FFF)
+            continue
+        n = (t >> 24) & 0xF
+        if OPS.get(op) not in ("dcl", "def", "defi", "defb"):
+            k += 1
+            if k == ins.index:
+                break
+        i += 1 + n
+    if words[i] != ins.raw:
+        raise EmuError("normal-map z: lost the mad in the token stream")
+    mul = [(words[i] & ~0xFFFF & ~(0xF << 24)) | OP_MUL | (3 << 24), f_dst, s0, s0]
+    mad = [words[i], dtok | (1 << 20), f_src, s1, s2]
+    return list(words[:i]) + mul + mad + list(words[i + 5:]), True
+
+
 # ---- perturbation (demonstrates that differences are caught) -------------
 def negate_src(tok):
     """Toggle a source operand's negation: none <-> neg, abs <-> absneg."""
@@ -807,8 +882,8 @@ def modern_finite(container, registry, gen, opts):
     families = {}
     t0 = time.time()
     for idx, (h, off, sym) in enumerate(entries):
-        orig = words_at(container, int(off, 16))
         try:
+            orig, _ = fix_normal_z(words_at(container, int(off, 16)))
             path = os.path.join(gen, sym + ".h")
             if not os.path.exists(path):
                 raise EmuError("no generated header %s (build first)" % path)
@@ -915,9 +990,11 @@ def main():
     bad = errors = 0
     t0 = time.time()
     for idx, (h, off, sym) in enumerate(entries):
-        orig = words_at(container, int(off, 16))
         note = ""
         try:
+            orig, fixed = fix_normal_z(words_at(container, int(off, 16)))
+            if fixed:
+                note += "  [normal z fixed]"
             if self_test:
                 ours = list(orig)
             else:

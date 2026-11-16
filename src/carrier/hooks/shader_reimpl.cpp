@@ -25,6 +25,8 @@
 #include "shaders/PgDecal2FP_sl_modern.h"
 #include "shaders/PgDecal2FP_sl_li.h"
 #include "shaders/PgDecal2FP_sl_li_modern.h"
+#include "shaders/PgDiffRefractFP.h"
+#include "shaders/PgDiffRefractNormFP.h"
 #include "shaders/PgDiffSpecMetalNormFP.h"
 #include "shaders/PgDiffSpecMetalNormFP_modern.h"
 #include "shaders/PgDiffSpecMetalNormFP_pl.h"
@@ -725,6 +727,10 @@ Entry g_entries[] = {
     {0x4552f636u, "PgDecal2FP_pl_sl_li (shader3.bin@0xddd0)", mc2vr::shaders::PgDecal2FP_pl_sl_li, mc2vr::shaders::PgDecal2FP_pl_sl_li_modern, kAddsCameraPos},
     {0x15cf77adu, "PgDecal2FP_sl (shader3.bin@0xeed0)", mc2vr::shaders::PgDecal2FP_sl, mc2vr::shaders::PgDecal2FP_sl_modern, kAddsCameraPos},
     {0xe651a6c7u, "PgDecal2FP_sl_li (shader3.bin@0x10070)", mc2vr::shaders::PgDecal2FP_sl_li, mc2vr::shaders::PgDecal2FP_sl_li_modern, kAddsCameraPos},
+    // PgDiffRefractFP and its 6 light variants share one bytecode (shader3.bin@0x4aa40 .. @0x4c4e0).
+    {0xdc91abe9u, "PgDiffRefractFP (shader3.bin@0x4aa40)", mc2vr::shaders::PgDiffRefractFP, nullptr},
+    // PgDiffRefractNormFP and its 6 light variants share one bytecode (shader3.bin@0x4c950 .. @0x4ea50).
+    {0x4a771f15u, "PgDiffRefractNormFP (shader3.bin@0x4c950)", mc2vr::shaders::PgDiffRefractNormFP, nullptr},
     {0xb45eaaccu, "PgDiffSpecNormAmbOccFP (shader3.bin@0xd9c70)", mc2vr::shaders::PgDiffSpecNormAmbOccFP, mc2vr::shaders::PgDiffSpecNormAmbOccFP_modern},
     {0x700f33e6u, "PgDiffSpecNormAmbOccFP_pl (shader3.bin@0xda8a0)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl, mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_modern},
     {0xb11bb21fu, "PgDiffSpecNormAmbOccFP_pl_li (shader3.bin@0xdc7f0)", mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_li, mc2vr::shaders::PgDiffSpecNormAmbOccFP_pl_li_modern},

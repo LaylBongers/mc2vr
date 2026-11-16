@@ -80,6 +80,9 @@ add_library(mc2vr_carrier SHARED
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgBillboardTreeFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgBillboardTreeFP)
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgBillboardTreeFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgBillboardTreeFP_modern
            DEFINES MC2VR_SHADING_MODERN=1)
+mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgDiffRefract.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgDiffRefractFP)
+mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgDiffRefract.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgDiffRefractNormFP
+           DEFINES MC2VR_PGDIFF_REFRACT_NORM=1)
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgUnderwaterFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgUnderwaterFP)
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgWaterFPDWE.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgWaterFPDWE)
 mc2vr_hlsl(mc2vr_carrier reimpl/shaders/PgWaterFP.hlsl ENTRY main PROFILE ps_3_0 SYMBOL PgWaterFP)
