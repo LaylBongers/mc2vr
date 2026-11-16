@@ -26,7 +26,7 @@ key and its default).
 
 - Rendering fixes: working MSAA (`msaa`), anisotropic filtering (`anisotropic_filtering`).
 - Improved sun shadows: stable cascades, filtering on every surface, smooth cascade transitions,
-  stable thin shadows at grazing angles.
+  footprint-adaptive PCF (stable thin shadows at grazing angles).
 - Higher shadow resolution (`shadow_resolution`, 2048 by default; the game's is 1024).
 - Modern material shading: physically based lighting with GGX specular, Fresnel, Burley diffuse and
   image-based reflections, keeping the game's own reflective materials. It applies to buildings,

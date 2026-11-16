@@ -1,6 +1,6 @@
 // The sun's cascaded shadow lookup, as the game's high-quality receivers do it
 // (shader3.bin@0x11570, the diffuseMap + materialData shader; docs/shadows.md),
-// plus a blend band at the cascade boundaries and a footprint-scaled filter
+// plus a blend band at the cascade boundaries and footprint-adaptive PCF
 // (sun_shadow; neither is in the game).
 // Shared by the reimplemented receivers in this directory.
 // globalLightData's layout: global_light.hlsli.
@@ -104,7 +104,7 @@ float shadow_tap_at(float3 t, float2 uv, float cascade, bool lod)
     return shadow_tap(float3(clamp(uv, lo, hi), t.z), 0, lod);
 }
 
-// The footprint filter: past kFootprintStart texels per pixel the game's
+// Footprint-adaptive PCF: past kFootprintStart texels per pixel the game's
 // 2-texel tent undersamples the receiver (grazing angles: roads, terrain), and
 // thin shadows (poles, fences, trunks) flicker on and off as head motion
 // slides each pixel's sample across them. Over kFootprintStart ..

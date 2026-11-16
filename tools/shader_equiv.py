@@ -45,7 +45,7 @@ Usage: shader_equiv.py <container shader3.bin> [registry.cpp] [generated dir]
                                 (for deliberate changes to the cascade lookup,
                                 e.g. the blend band: everything else compared)
            [--derivs zero]      screen-space derivatives 0 (e.g. the shadow
-                                footprint filter reduces to the game's tent)
+                                footprint-adaptive PCF reduces to the game's tent)
            [--perturb neg|def[:K]]  alter OURS in memory to show a difference
                                 is caught: neg = negate src0 of the last
                                 instruction writing oC0; def[:K] = add 0.01 to
