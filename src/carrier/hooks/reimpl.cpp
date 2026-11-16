@@ -20,6 +20,7 @@
 #include "reimpl/render/clouds_emit.hpp"
 #include "reimpl/render/end_sub_view.hpp"
 #include "reimpl/render/render_cmd.hpp"
+#include "reimpl/render/sampler_states.hpp"
 #include "reimpl/render/setup_viewports.hpp"
 #include "reimpl/render/shadow_surfaces.hpp"
 #include "reimpl/render/submit_to_gpu.hpp"
@@ -48,6 +49,7 @@ const std::array kReplacements = {
     replace<game::PgClouds_EmitCloudRender1, &reimpl::PgClouds_EmitCloudRender1>(0x0047e8b1u),
     replace<game::PgClouds_EmitCloudRender2, &reimpl::PgClouds_EmitCloudRender2>(0x0047f089u),
     replace<game::PgLtiShadow_CreateSurfaces, &reimpl::PgLtiShadow_CreateSurfaces>(0x00756388u),
+    replace<game::RenderShell_ApplyViewSamplerStates, &reimpl::RenderShell_ApplyViewSamplerStates>(0x007512fbu),
 };
 
 std::array<SafetyHookInline, kReplacements.size()> g_hooks;

@@ -32,6 +32,7 @@ add_library(mc2vr_carrier SHARED
     reimpl/render/end_sub_view.cpp
     reimpl/render/fit_shadow_cascades.cpp
     reimpl/render/render_cmd.cpp
+    reimpl/render/sampler_states.cpp
     reimpl/render/setup_viewports.cpp
     reimpl/render/shadow_surfaces.cpp
     reimpl/render/submit_to_gpu.cpp

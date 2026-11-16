@@ -38,6 +38,7 @@
 #include "debug/wait_census.hpp"
 #include "vr/pacing.hpp"
 #include "vr/xr_session.hpp"
+#include "reimpl/render/sampler_states.hpp"
 #include "reimpl/render/shadow_surfaces.hpp"
 
 #include <cstdio>
@@ -159,6 +160,13 @@ static void load_conf()
             // docs/shadows.md): 1024 (stock), 2048 or 4096. Must precede device creation.
             if (!reimpl::set_shadow_resolution(value)) {
                 MC2VR_LOG("conf: shadow_resolution=%s not recognized (use 1024|2048|4096)", value);
+            }
+        } else if (strcmp(key, "anisotropic_filtering") == 0) {
+            // Anisotropic filtering level for mipmapped asset textures
+            // (reimpl/render/sampler_states.hpp, docs/texture_filtering.md):
+            // off (stock), 2, 4, 8 or 16 (default).
+            if (!reimpl::set_anisotropic_filtering(value)) {
+                MC2VR_LOG("conf: anisotropic_filtering=%s not recognized (use off|2|4|8|16)", value);
             }
         } else if (strcmp(key, "shading") == 0) {
             // The PgDiff material shaders' shading (hooks/shader_reimpl.hpp,

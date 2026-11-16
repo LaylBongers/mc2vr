@@ -52,6 +52,12 @@ inline constexpr Function<void(uint32_t index, const float *plane)> Dx9_SetClipP
 inline constexpr Function<void(uint32_t sampler, uint32_t stage, IDirect3DBaseTexture9 *texture)> Dx9_SetTexture{
     "Dx9_SetTexture", 0x00484350u, {ECX, ESI, STK}};
 
+// dev->SetSamplerState(sampler, type, value) unless g_SamplerStateCache
+// (0x00f7eba8, [sampler * 16 + type], 261 samplers: through
+// D3DVERTEXTEXTURESAMPLER3) already holds value; then the cache is updated.
+inline constexpr Function<void(uint32_t sampler, D3DSAMPLERSTATETYPE type, uint32_t value)> Dx9_SetSamplerState{
+    "Dx9_SetSamplerState", 0x007490f0u, {EDX, ECX, EDI}};
+
 // IDirect3DDevice9::Clear argument order, Stencil in EDX.
 inline constexpr Function<HRESULT(DWORD count, const D3DRECT *rects, DWORD flags, D3DCOLOR color, float z,
                                   DWORD stencil)>

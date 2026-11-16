@@ -10,6 +10,7 @@
 #include "game/function.hpp"
 #include "game/global.hpp"
 #include "game/pg_primitive.hpp"
+#include "game/texture.hpp"
 
 namespace mc2vr::game {
 
@@ -47,6 +48,12 @@ using g_HalfResPassActive = Global<uint8_t, 0x01175617u>;
 
 inline constexpr Function<void(RenderShell *shell, uint32_t slot, uint32_t view)> RenderShell_BindViewTexture{
     "RenderShell_BindViewTexture", 0x00749230u, {EAX, ECX, EDI}};
+// The 7 filter/address/LOD-bias sampler states for one bound texture, from
+// its samplerFlags (ESI = sampler incl. vertex samplers 257-260, view on the
+// stack, ret 4). Reimplemented (reimpl/render/sampler_states.hpp); this
+// declares its entry.
+inline constexpr Function<void(uint32_t sampler, const TextureView *view)> RenderShell_ApplyViewSamplerStates{
+    "RenderShell_ApplyViewSamplerStates", 0x00751240u, {ESI, STK}, Pops{4}};
 inline constexpr Function<void()> RenderShell_ViewType9_StretchBlit{"RenderShell_ViewType9_StretchBlit",
                                                                      0x0074adf0u};
 inline constexpr Function<void()> RenderShell_BeginHalfResPass{"RenderShell_BeginHalfResPass", 0x0074b3e0u};
