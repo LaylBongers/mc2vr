@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "debug/gui_census.hpp"
 #include "game/dx9.hpp"
 #include "log.hpp"
 
@@ -111,6 +112,7 @@ void RenderShell_ApplyViewSamplerStates(uint32_t sampler, const TextureView *vie
     // Feature: anisotropic minification for mipmapped 2D assets.
     const uint32_t level = (flags & kTexFlagPoint) == 0 && wants_anisotropy(sampler, view) ? max_anisotropy() : 0;
     log_class_once(sampler, view, level);
+    gui_census::on_texture_bind(sampler, view, level);  // debug tap
 
     // ---- filters 0x751245-0x75128f ----
     uint32_t mip;

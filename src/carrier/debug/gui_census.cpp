@@ -25,6 +25,7 @@ constexpr uint32_t kMaxRecords = 256;
 constexpr uint32_t kMaxOps = 16;
 constexpr uint32_t kMaxConsts = 1024;
 constexpr uint32_t kMaxNamed = 12;
+constexpr uint32_t kMaxTex = 4;
 
 bool g_enabled = false;
 // debug_gui_census=clouds: instead of the GUI range, the records emitted by
@@ -52,6 +53,16 @@ struct Op {
     uint32_t d[5];  // opcode + first operands
 };
 
+// A texture bind during the record (RenderShell_ApplyViewSamplerStates): the
+// record's TextureView fields, the device texture, the filtering decision.
+struct Tex {
+    uint32_t sampler;
+    uint8_t type;
+    uint16_t resident, levels, flags;
+    uint32_t aniso;  // 0 = stock filters
+    uint32_t rtype, d3d_levels, w, h, fmt, usage;
+};
+
 struct Record {
     uint32_t rank;
     uint32_t pass;
@@ -74,6 +85,8 @@ struct Record {
     uint32_t rt_w, rt_h, rt_fmt;  // RT0's desc, when it is not a named surface
     uint8_t zen_mask, zwr_mask, blend_mask;
     uint16_t zfunc_mask;
+    Tex tex[kMaxTex];
+    uint32_t tex_count;
 };
 
 struct Const {
@@ -232,6 +245,13 @@ void print_capture()
             char s1[24], s2[24];
             MC2VR_LOG("gui:     %u StretchRect(s), last %s -> %s", r.stretches, name_of(r.stretch_src, s1, sizeof s1),
                       name_of(r.stretch_dst, s2, sizeof s2));
+        }
+        for (uint32_t t = 0; t < r.tex_count; t++) {
+            const Tex &x = r.tex[t];
+            MC2VR_LOG("gui:     tex s%u type=%u levels %u/%u flags %04x -> %s | device rtype %u %ux%u fmt %08x %u levels "
+                      "usage %08x",
+                      x.sampler, x.type, x.resident, x.levels, x.flags, x.aniso ? "ANISOTROPIC" : "stock", x.rtype, x.w,
+                      x.h, x.fmt, x.d3d_levels, x.usage);
         }
         for (; c < g_const_count && g_consts[c].record == i; c++) {
             const Const &k = g_consts[c];
@@ -404,6 +424,27 @@ void on_shader_constants_out(const float *in, const float *out, UINT count)
     const UINT n = count * 4 < 16 ? count * 4 : 16;
     k->rewritten = true;
     for (UINT i = 0; i < n; i++) k->o[i] = out[i];
+}
+
+void on_texture_bind(uint32_t sampler, const game::TextureView *view, uint32_t aniso)
+{
+    if (g_cur == nullptr || g_cur->tex_count >= kMaxTex) return;
+    Tex &x = g_cur->tex[g_cur->tex_count++];
+    std::memset(&x, 0, sizeof x);
+    x.sampler = sampler;
+    x.type = view->type;
+    x.resident = view->residentLevels;
+    x.levels = view->levels;
+    x.flags = view->samplerFlags;
+    x.aniso = aniso;
+    if (IDirect3DBaseTexture9 *const tex = view->texture) {
+        x.rtype = (uint32_t)tex->GetType();
+        x.d3d_levels = tex->GetLevelCount();
+        D3DSURFACE_DESC d{};
+        if (x.rtype == D3DRTYPE_TEXTURE && SUCCEEDED(static_cast<IDirect3DTexture9 *>(tex)->GetLevelDesc(0, &d))) {
+            x.w = d.Width, x.h = d.Height, x.fmt = (uint32_t)d.Format, x.usage = d.Usage;
+        }
+    }
 }
 
 void on_render_state(D3DRENDERSTATETYPE state, DWORD value)

@@ -8,7 +8,9 @@
 //   - the render commands it executes (opcode + first operands);
 //   - its vertex/pixel shader constant uploads (start register, count, first
 //     values);
-//   - its draws: count, render target / depth, depth and blend states.
+//   - its draws: count, render target / depth, depth and blend states;
+//   - its texture binds: the TextureView fields, the device texture and the
+//     anisotropic-filtering decision (docs/texture_filtering.md).
 // GUI records are marked at build time by debug_build_census's hooks
 // (installed for this even with that census off). The 10 s poller prints the
 // capture. Inert unless enabled.
@@ -24,6 +26,7 @@
 #include <cstdint>
 
 #include "game/pg_primitive.hpp"
+#include "game/texture.hpp"
 
 namespace mc2vr::gui_census {
 
@@ -41,6 +44,8 @@ void on_shader_constants(bool pixel, UINT start, const float *data, UINT count);
 // After the view rewrite of the same VS upload: out != in = it was rewritten.
 void on_shader_constants_out(const float *in, const float *out, UINT count);
 void on_render_state(D3DRENDERSTATETYPE state, DWORD value);
+// RenderShell_ApplyViewSamplerStates, per texture bind (aniso 0 = stock filters).
+void on_texture_bind(uint32_t sampler, const game::TextureView *view, uint32_t aniso);
 void on_draw();
 
 // Prints a finished capture (render_dump.cpp poller).
