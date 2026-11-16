@@ -95,11 +95,16 @@ VR makes it continuous and larger:
    - **OPEN, optimization:** the atlas is rendered in **both** eye passes, 1027 draws each (`debug_gpu_census`: 0.37 ms GPU in pass 1, 0.17 ms in pass 2, plus ~0.3 ms CPU each). It is eye-invariant (one fit per frame), so pass 2 could reuse pass 1's. The cost grows with `shadow_resolution`.
    - **Checks:** `shadow: atlas WxH: depth D24S8|DF24|surface` at device creation; `texelScaled=` in the `shaders: window:` line (≈340 at 2048/4096, 0 at 1024); shadows still in place at every setting, sharper at higher ones. Cost: `debug_gpu_census` per-pass times, 1024 against 2048 against 4096.
 
-3. **Filtering** (all 27 single-tap receivers reimplemented with the 9-tap kernel, [shaders.md](shaders.md)):
-   - Give the 1-tap (foliage/billboard) family the 9-tap kernel or better.
-   - Optionally move every receiver to hardware PCF (`D24S8` + LINEAR, with the manual compare removed).
-   - Add a blend band at cascade switches.
+3. **Filtering** ([shaders.md](shaders.md)):
+   - Done: all 27 single-tap (foliage, billboard, decal, water) receivers take the 9-tap kernel (2026-11-14), and every receiver has the blend band (step 2) and the footprint filter (step 4).
+   - Optional, not done: hardware PCF (`D24S8` + LINEAR, with the manual compare removed). It needs every receiver's per-tap compare rewritten.
 
-   All of these need replacement receiver shaders.
+4. **Footprint-scaled filter** (2026-11-16, `shadow.hlsli`, every receiver).
+   - **Problem:** thin shadows (fences, poles, trunks) flicker on surfaces seen at grazing angles, above all roads. There a screen pixel covers many shadow texels, but the game's tent samples only ~2 texels around the pixel centre. Head motion slides that sample across the thin shadow, so it is hit, then missed. Shadow maps can't be mipmapped, so this is the shadow counterpart of texture minification. It isn't caster-side: with the stabilized fit, a static caster rasterizes the same every frame.
+   - **Fix:** the pixel's footprint in the atlas comes from the world position's derivatives through the cascade's rows (continuous across cascade switches, and usable for the band's second lookup without derivatives inside its branch). Up to 2 texels per pixel, the filter is exactly the game's tent. From 2 to 4 texels the 9 taps move to an even spread over the footprint ("N-rooks": one tap per row and per column), each weighted 1/9. A thin shadow then moves the result by about 1/9 instead of all the way. Footprints are capped at 32 texels, and taps are clamped to their cascade's atlas quarter. It adds no taps and no branches, only ALU.
+   - **Checks:** `shader_iface.py --shadow-band` and `shader_equiv.py --shadow lit` pass on all 342 receivers. `shader_equiv.py --derivs zero` (zero footprint, per-texel shadow noise) matched the pre-filter shaders on all 342 with the quarter clamp disabled. The clamp is the only deliberate difference at small footprints. The new constants are resolution-independent, so the `shadow_resolution` rescale needs no change: the clamp inset is a fixed 2⁻¹⁵ rather than half a texel, which would have folded into a constant the rescale doesn't know.
+   - **Not addressed:** casters thinner than a texel that move (wind-animated foliage, swaying antennas), which pick up different texels every frame. Only resolution helps there.
+   - **Live (2026-11-16):** a big improvement to the remaining flicker comfort issues, judged by eye in the headset. A non-HMD run the same day was clean: all receivers substituted, `texelScaled=362` at 2048, no errors.
+   - OPEN: GPU cost (`debug_gpu_census`, main-scene segment). It adds ALU only, no taps.
 
-Live checks first: the atlas format (byte `[0x01175288]+0x5e8`), the live `ShadowBaseDistance` (shell+0x2bc0 = `0x017D16B0`), whether the sun direction changes per frame, and which materials use the 1-tap shaders.
+Of the early live checks, the atlas format (D24S8), the sun direction's behaviour (environment-region blends) and the 1-tap materials are settled above. Still unchecked: the live `ShadowBaseDistance` (shell+0x2bc0 = `0x017D16B0`; the splits above assume the default 10.0).

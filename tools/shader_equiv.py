@@ -44,6 +44,8 @@ Usage: shader_equiv.py <container shader3.bin> [registry.cpp] [generated dir]
            [--shadow lit]       shadow map fully lit or fully shadowed per trial
                                 (for deliberate changes to the cascade lookup,
                                 e.g. the blend band: everything else compared)
+           [--derivs zero]      screen-space derivatives 0 (e.g. the shadow
+                                footprint filter reduces to the game's tent)
            [--perturb neg|def[:K]]  alter OURS in memory to show a difference
                                 is caught: neg = negate src0 of the last
                                 instruction writing oC0; def[:K] = add 0.01 to
@@ -89,6 +91,7 @@ from shader_iface import ROOT, fnv1a, load_generated, modern_entries, parse_ctab
 from shader_disasm import OPS  # noqa: E402
 
 SHADOW_SAMPLER = "globalDirLightShadowMap"
+DERIVS_ZERO = False  # --derivs zero
 NUM_C, NUM_I, NUM_B = 224, 16, 16
 
 # Register types (D3DSHADER_PARAM_REGISTER_TYPE).
@@ -624,8 +627,12 @@ class Machine:
             v = np.exp2(self.scalar(ins, 1) * np.log2(np.abs(self.scalar(ins, 0))))
         elif name in ("dsx", "dsy"):
             # Screen-space derivatives: a fixed affine function of the operand
-            # (each shader takes them of the same values, so any mock works).
-            v = (0.37 * s(0) + 0.1) if name == "dsx" else (-0.23 * s(0) + 0.05)
+            # (each shader takes them of the same values, so any mock works),
+            # or 0 with --derivs zero.
+            if DERIVS_ZERO:
+                v = np.zeros_like(s(0))
+            else:
+                v = (0.37 * s(0) + 0.1) if name == "dsx" else (-0.23 * s(0) + 0.05)
         elif name == "frc":
             a = s(0)
             v = a - np.floor(a)
@@ -862,7 +869,8 @@ def modern_finite(container, registry, gen, opts):
 
 def main():
     argv = sys.argv[1:]
-    opts = {"--trials": "1000", "--seed": "1", "--tol": "1e-4", "--only": None, "--perturb": None, "--shadow": None}
+    opts = {"--trials": "1000", "--seed": "1", "--tol": "1e-4", "--only": None, "--perturb": None, "--shadow": None,
+            "--derivs": None}
     self_test = False
     finite = False
     pos = []
@@ -886,9 +894,11 @@ def main():
         else:
             pos.append(a)
         k += 1
-    if not pos:
+    if not pos or opts["--derivs"] not in (None, "zero"):
         print(__doc__)
         return 2
+    global DERIVS_ZERO
+    DERIVS_ZERO = opts["--derivs"] == "zero"
     container = open(pos[0], "rb").read()
     registry = pos[1] if len(pos) > 1 else os.path.join(ROOT, "src/carrier/hooks/shader_reimpl.cpp")
     gen = pos[2] if len(pos) > 2 else os.path.join(ROOT, "build/win32/generated/shaders")
