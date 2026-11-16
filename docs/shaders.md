@@ -22,6 +22,7 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
     - **Shadow UV side:** for originals that already take 9 shadow taps (the PgDiff families), the random-depth trials add noise per atlas texel, so the tap offsets, bilinear weights and cascade rows are compared too. A tap moved by half a texel in `shadow.hlsli` was caught (2026-11-15).
     - **Blind spots:** for the single-tap originals, the shadow-map UV side (cascade u/v rows, tap offsets, the 9-tap's bilinear weights), constants that never reach the output (the 30000 clamp), and real screen-space derivatives (`dsx`/`dsy` are mocked). Those need checking in game.
     - **Normal-map z:** every original that reads `normalMap` is first corrected in memory (`fix_normal_z`; [Normal maps](#normal-maps)), so only the deliberate fix is excluded; marked `[normal z fixed]`.
+    - **Direct-light clamp:** likewise every PgDiff and PgFastFP original has its clamp of the direct light dropped in memory (`fix_direct_clamp`: the `_sat` on the writes that reach the `materialData[0]` product, found by reaching definitions; [Direct light](#direct-light)), marked `[direct unclamped: N]`. With it disabled, exactly those 287 entries differ.
     - **Options:** `--self` compares each original with itself; `--perturb neg|def[:K]` corrupts ours, to show it gets caught.
     - **Tested (2026-11-13):** a deliberate reflection-weight × 0.9 and a shoreline factor of 0.95 → 0.96 in PgWaterFPDWE were both caught.
     - Run both tools after every shader change. Each takes well under a second. Since the cascade blend band ([shadows.md](shadows.md)), run them as `shader_iface.py --shadow-band` and `shader_equiv.py --shadow lit`. The band is a deliberate difference from every original. Footprint-adaptive PCF needs a third check: `shader_equiv.py --derivs zero` (screen-space derivatives 0, so the filter is the game's tent). It still differs from the originals by the band and the cascade-quarter clamp, so compare its per-shader output with a build before the change rather than expecting 0 differences.
@@ -36,10 +37,10 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
 
 | Original | Ours | Change |
 |---|---|---|
-| **PgFastFP** (vegetation and other cheap meshes), 7 variants (`shader3.bin@0x1d6370`–`@0x1dc250`): `3e76835c`, `1055364c`, `19b8861c`, `2aa895fb`, `7d01c4f5`, `8d347471`, `5fa41029` | `PgFastFP.hlsl` | the game's 9-tap sun-shadow filter instead of one binary tap ([shadows.md](shadows.md)) |
+| **PgFastFP** (vegetation and other cheap meshes), 7 variants (`shader3.bin@0x1d6370`–`@0x1dc250`): `3e76835c`, `1055364c`, `19b8861c`, `2aa895fb`, `7d01c4f5`, `8d347471`, `5fa41029` | `PgFastFP.hlsl` | the game's 9-tap sun-shadow filter instead of one binary tap ([shadows.md](shadows.md)); the direct light unclamped ([Direct light](#direct-light)) |
 | **PgScrubLightFP** (scrub/brush vegetation), 7 variants (`@0x2004c0`–`@0x206340`): `765f3420`, `523d88a3`, `4249bd13`, `788c2fdd`, `59ca705e`, `9de607f6`, `307dcccd` | `PgScrubLightFP.hlsl` | the same |
-| **PgDiffSpecNormAmbOccFP**, **PgDiffSpecNormFP**, **PgDiffSpecMetalNormFP**, 7 variants each (`shader3.bin@0xd9c70`…, `@0xf1bf0`…, `@0xb5270`…) | `PgDiff.hlsl`: one source, features by define (below) | none yet. These already used the game's 9-tap filter. Taken over so the cascade blend band can be added in `shadow.hlsli` ([shadows.md](shadows.md)); the math is identical to the originals, the shadow kernel included |
-| The other 37 PgDiff families, 7 variants each (259 shaders; Diff/Spec/AmbOcc/Norm/Metal/Refl/Emis/Rim/SSS combinations) | `PgDiff.hlsl` | none yet: identical to the originals, 9-tap kernel included (checked with the band off) |
+| **PgDiffSpecNormAmbOccFP**, **PgDiffSpecNormFP**, **PgDiffSpecMetalNormFP**, 7 variants each (`shader3.bin@0xd9c70`…, `@0xf1bf0`…, `@0xb5270`…) | `PgDiff.hlsl`: one source, features by define (below) | the direct light unclamped ([Direct light](#direct-light)). These already used the game's 9-tap filter. Taken over so the cascade blend band can be added in `shadow.hlsli` ([shadows.md](shadows.md)); otherwise the math is identical to the originals, the shadow kernel included |
+| The other 37 PgDiff families, 7 variants each (259 shaders; Diff/Spec/AmbOcc/Norm/Metal/Refl/Emis/Rim/SSS combinations) | `PgDiff.hlsl` | the direct light unclamped; otherwise identical to the originals, 9-tap kernel included (checked with the band off) |
 | **PgTerrainMeshFP** and **1D**–**4D**, 7 variants each (`shader3.bin@0x2439e0`…, `@0x222850`…`@0x23b190`…) | `PgTerrainMesh.hlsl`, `MC2VR_TERRAIN_LAYERS=0..4` | none yet: identical to the originals, 9-tap kernel included (checked with the band off). The colour is `GlobalMap`; with layers, `GlobalMap`·`TEXCOORD0.z` + a signed detail term at `(TEXCOORD4.w, TEXCOORD5.w)` + one `LayerkMap_Diff` per layer (even samplers s2…s8) weighted by `COLOR(k−1).w`. Lit by sun + diffuse local lights + a vertex ambient (`TEXCOORD1`) |
 | **PgDecal2FP** (decals), 7 variants (`@0xa2a0`–`@0x10070`): `deef11a9`, `8360631b`, `e40c452e`, `6751d4d3`, `4552f636`, `15cf77ad`, `e651a6c7` | `PgDecal2FP.hlsl` | the same. No material constants: ambient cube + (sun + local lights), on the raw normal, unsaturated |
 | **PgDiffRefractFP** and **PgDiffRefractNormFP**, all 7 light variants each (one bytecode per family, `@0x4aa40`–`@0x4c4e0` and `@0x4c950`–`@0x4ea50`): `dc91abe9`, `4a771f15` | `PgDiffRefract.hlsl`, Norm by `MC2VR_PGDIFF_REFRACT_NORM` (both shadings) | the normal-map z fix only ([Normal maps](#normal-maps)); PgDiffRefractFP is exactly the original. Not shadow receivers, no local lights: the screen behind (`diffuseMap` at `vPos`) shifted by the normal's world xy · N·V · `materialData[5].y`, tinted by the ambient cube, `materialData[3]` and the sun |
@@ -69,7 +70,7 @@ The game's shaders rewritten as HLSL (`src/carrier/reimpl/shaders/`), compiled a
 - **Variants:** each family comes in 7, built from one source with defines (`src/carrier/CMakeLists.txt`). The generated symbols carry the originals' file names: `PgFastFP`, `PgFastFP_pl`, `_pl_li`, `_pl_sl`, `_pl_sl_li`, `_sl`, `_sl_li`. They are no local lights, or point and/or spot lights in one of two counting schemes:
   - **plain** (`_pl`, `_sl`, `_pl_sl`): the highest set bool picks the count. Points take 8/4/2/1 by `b3`/`b2`/`b1`/`b0`; spots take 4/2/1 by `b6`/`b5`/`b4`.
   - **`_li`** (`MC2VR_LIGHTS_LI=1`): 2 lights always, +2 if `b2` (points) or `b6` (spots), and points +2 more if `b3` is also set.
-  - The two families differ only in their inputs. The distant one doesn't normalize the normal or saturate the direct light; the near one saturates sun plus local lights.
+  - The two families differ only in their inputs. The distant one doesn't normalize the normal or saturate the direct light; the near one's original saturates sun plus local lights (ours doesn't, [Direct light](#direct-light)).
 
 ## Normal maps
 
@@ -81,13 +82,18 @@ Every `normalMap` (x in alpha, y in green) is decoded by `normal_map.hlsli`: z =
 - **The vertex side is sound** (`PgMeshVP`, `PgMeshRefractVP`, `PgSkin1VP`): T and N go through the same 3×3 (object, plus bones), B = (N × T) · `tangent.w`, and nothing is renormalized before the pixel shader's final `nrm`.
 - **Check:** `shader_equiv.py` corrects the originals in memory, so everything except the fix itself is still compared. Before the fix the 112 Norm entries were flagged against the corrected originals; after it, 0 of 343 differ.
 
+## Direct light
+
+The PgDiff and PgFastFP originals saturate the direct light (sun, rim, SSS and the local lights' diffuse) per channel before `materialData[0]`. The sun is authored at 1.1–1.3 and fires at up to ~6, so sun-facing surfaces clipped and local lights on sunlit ones added nothing, while the unclamped terrain beside them was lit. Measured and judged a slip: [reverse_engineering/direct_light_clamp.md](reverse_engineering/direct_light_clamp.md). Ours drop the clamp, in both shadings (since 2026-11-16). Only modern's rim/SSS term (`extra`) is still saturated.
+
 ## Modern shading (optional)
 
-A deliberate look change, selected by conf `shading=classic|modern`. The default has been **`modern`** since 2026-11-16. It covers the PgDiff materials, terrain, vegetation (PgFastFP, PgScrubLightFP), billboard trees and decals: 337 shaders. Water has no modern set. Every such variant is also built with `MC2VR_SHADING_MODERN=1` as `<symbol>_modern`, and `hooks/shader_reimpl.cpp` picks the set at creation; the atlas texel scaling applies to either. Classic is the faithful set, verified against the originals; its one deliberate change, shared with modern, is the normal-map z fix ([Normal maps](#normal-maps)). Shared helpers are in `modern.hlsli`.
+A deliberate look change, selected by conf `shading=classic|modern`. The default has been **`modern`** since 2026-11-16. It covers the PgDiff materials, terrain, vegetation (PgFastFP, PgScrubLightFP), billboard trees and decals: 337 shaders. Water has no modern set. Every such variant is also built with `MC2VR_SHADING_MODERN=1` as `<symbol>_modern`, and `hooks/shader_reimpl.cpp` picks the set at creation; the atlas texel scaling applies to either. Classic is the faithful set, verified against the originals; its deliberate changes, shared with modern, are the normal-map z fix ([Normal maps](#normal-maps)) and the unclamped direct light ([Direct light](#direct-light)). Shared helpers are in `modern.hlsli`.
 
 - **Direct light** (sun and every point/spot light, `lights.hlsli` `local_lights_pbr`):
   - **Specular:** GGX · Smith height-correlated visibility · Schlick Fresnel · N·L · π. The π is because the game's units have no 1/π.
   - **Diffuse:** Burley · (1 − F).
+  - **Unclamped**, as in classic ([Direct light](#direct-light)).
   - **Shadow:** fully applied to the sun's specular, so the classic 25% leak is gone.
 - **Material** from the Blinn-Phong assets:
   - α = clamp(√(2 / (n + 2)), 0.03, 1), with n = `materialData[5].z`.

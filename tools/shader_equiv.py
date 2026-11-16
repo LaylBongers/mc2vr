@@ -39,7 +39,9 @@ Originals reading normalMap are first corrected in memory (fix_normal_z): their
 normal-map z slip, sqrt(|1 - x^2 - 2y|), becomes saturate'd 1 - x^2 - y^2 under
 the sqrt, as ours reconstruct it (reimpl/shaders/normal_map.hlsli). Marked
 "[normal z fixed]"; with --self the check compares the corrected original
-with itself.
+with itself. Likewise the PgDiff and PgFastFP originals' clamp of the direct
+light to 1 is dropped (fix_direct_clamp), marked "[direct unclamped: N]"
+with N the saturating writes stripped.
 Trials run as SIMD lanes (numpy, float64), with per-lane masks for
 if/else/loops/break/predication, as a GPU would.
 
@@ -115,7 +117,7 @@ class EmuError(Exception):
 
 
 class Instr:
-    __slots__ = ("op", "name", "ctrl", "pred", "dst", "srcs", "predsrc", "raw", "index")
+    __slots__ = ("op", "name", "ctrl", "pred", "dst", "srcs", "predsrc", "raw", "index", "pos")
 
 
 def decode(words):
@@ -164,6 +166,7 @@ def decode(words):
             ins.dst = ops[0] if has_dst else None
             ins.srcs = ops[1:] if has_dst else ops
             ins.index = len(prog)
+            ins.pos = i  # the instruction token's word index
             prog.append(ins)
         i += 1 + n
     return prog, defs, dcls, ctab or {}
@@ -799,6 +802,88 @@ def fix_normal_z(words):
     return list(words[:i]) + mul + mad + list(words[i + 5:]), True
 
 
+MATERIAL_DIFFUSE = 93  # materialData[0], c93
+DST_SAT = 1 << 20      # the _sat result modifier
+
+
+def clamps_direct_light(sym):
+    """The families whose originals clamp the direct light to 1 and whose
+    classic ports no longer do (docs/reverse_engineering/direct_light_clamp.md)."""
+    return sym.startswith("PgFastFP") or (sym.startswith("PgDiff") and not sym.startswith("PgDiffRefract"))
+
+
+def reaching_writes(prog, upto, reg):
+    """For each component of temp `reg`, the indices of the instructions whose
+    write of it can reach instruction `upto` (forward over the structured flow:
+    if/else/endif merge both arms, a loop body may run or not; predicated
+    writes don't kill). -1 stands for the value at entry."""
+    state = [frozenset([-1])] * 4
+    stack = []
+    for ins in prog[:upto]:
+        if ins.name in ("if", "ifc"):
+            stack.append(["if", list(state), None])
+        elif ins.name == "else":
+            stack[-1][2] = list(state)
+            state = list(stack[-1][1])
+        elif ins.name == "endif":
+            _, entry, then = stack.pop()
+            other = then if then is not None else entry
+            state = [a | b for a, b in zip(state, other)]
+        elif ins.name in ("rep", "loop"):
+            stack.append(["loop", list(state), None])
+        elif ins.name in ("endrep", "endloop"):
+            _, entry, _ = stack.pop()
+            state = [a | b for a, b in zip(state, entry)]
+        elif ins.dst is not None:
+            dtok = ins.dst[0]
+            if reg_type(dtok) == R_TEMP and dtok & 0x7FF == reg:
+                for c in range(4):
+                    if (dtok >> 16) & (1 << c):
+                        state[c] = state[c] | {ins.index} if ins.pred else frozenset([ins.index])
+    return state
+
+
+def fix_direct_clamp(words):
+    """The PgDiff and PgFastFP originals saturate the direct light (sun, rim,
+    SSS and local diffuse) before it multiplies materialData[0]; ours don't, a
+    deliberate difference in classic. The original is corrected in memory: the
+    _sat is dropped from the writes of the temp components that the single
+    materialData[0] mul/mad reads and that reach it (one per branch arm, e.g.
+    `mov_sat r1.xyz, r1` in both arms of a light-count if/else; `mad_sat
+    r0.yzw, ...` where the compiler swizzled). Every reaching write must
+    saturate, else the clamp is elsewhere and this raises. Returns (words,
+    writes stripped)."""
+    prog = decode(words)[0]
+    users = [ins for ins in prog if ins.op in (OP_MUL, OP_MAD) and not ins.pred and
+             any(src_reg(t) == (R_CONST, MATERIAL_DIFFUSE) for t, _ in ins.srcs[:2])]
+    if len(users) != 1:
+        raise EmuError("direct clamp: expected one materialData[0] mul/mad, found %d" % len(users))
+    user = users[0]
+    temps = [t for t, _ in user.srcs[:2] if src_reg(t)[0] == R_TEMP]
+    if len(temps) != 1:
+        raise EmuError("direct clamp: the materialData[0] product has no single temp factor")
+    reg = temps[0] & 0x7FF
+    # The temp's components the product reads: its swizzle at each written component.
+    wmask, sw = (user.dst[0] >> 16) & 0xF, (temps[0] >> 16) & 0xFF
+    state = reaching_writes(prog, user.index, reg)
+    writers = set()
+    for c in range(4):
+        if wmask & (1 << c):
+            writers |= state[(sw >> (2 * c)) & 3]
+    if -1 in writers:
+        raise EmuError("direct clamp: r%d read before it is written" % reg)
+    out = list(words)
+    for w in sorted(writers):
+        dtok = prog[w].dst[0]
+        if not dtok & DST_SAT:
+            raise EmuError("direct clamp: a reaching write of r%d doesn't saturate" % reg)
+        k = prog[w].pos + 1  # the dst token follows the instruction token
+        if out[k] != dtok:
+            raise EmuError("direct clamp: lost the dst token")
+        out[k] = dtok & ~DST_SAT
+    return out, len(writers)
+
+
 # ---- perturbation (demonstrates that differences are caught) -------------
 def negate_src(tok):
     """Toggle a source operand's negation: none <-> neg, abs <-> absneg."""
@@ -884,6 +969,8 @@ def modern_finite(container, registry, gen, opts):
     for idx, (h, off, sym) in enumerate(entries):
         try:
             orig, _ = fix_normal_z(words_at(container, int(off, 16)))
+            if clamps_direct_light(sym):
+                orig, _ = fix_direct_clamp(orig)
             path = os.path.join(gen, sym + ".h")
             if not os.path.exists(path):
                 raise EmuError("no generated header %s (build first)" % path)
@@ -995,6 +1082,9 @@ def main():
             orig, fixed = fix_normal_z(words_at(container, int(off, 16)))
             if fixed:
                 note += "  [normal z fixed]"
+            if clamps_direct_light(sym):
+                orig, stripped = fix_direct_clamp(orig)
+                note += "  [direct unclamped: %d]" % stripped
             if self_test:
                 ours = list(orig)
             else:

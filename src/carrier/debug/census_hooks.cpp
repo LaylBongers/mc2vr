@@ -10,6 +10,7 @@
 #include "debug/camera_census.hpp"
 #include "debug/gpu_census.hpp"
 #include "debug/gui_census.hpp"
+#include "debug/light_census.hpp"
 #include "debug/material_census.hpp"
 #include "debug/ps_census.hpp"
 #include "hooks/device.hpp"
@@ -35,6 +36,7 @@ HRESULT __stdcall setps_hook(IDirect3DDevice9 *self, IDirect3DPixelShader9 *ps)
 {
     ps_census::on_set_ps(ps);
     material_census::on_set_ps(ps);
+    light_census::on_set_ps(ps);
     return g_setps_hook->stdcall<HRESULT>(self, ps);
 }
 
@@ -45,6 +47,7 @@ HRESULT __stdcall draw_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, 
     ps_census::on_draw();
     gui_census::on_draw();
     material_census::on_draw(self);
+    light_census::on_draw(self);
     return g_draw_hooks[0]->stdcall<HRESULT>(self, a, b, c);
 }
 HRESULT __stdcall drawindexed_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, INT b, UINT c, UINT d, UINT e, UINT f)
@@ -53,6 +56,7 @@ HRESULT __stdcall drawindexed_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, I
     ps_census::on_draw();
     gui_census::on_draw();
     material_census::on_draw(self);
+    light_census::on_draw(self);
     return g_draw_hooks[1]->stdcall<HRESULT>(self, a, b, c, d, e, f);
 }
 HRESULT __stdcall drawup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, const void *c, UINT d)
@@ -61,6 +65,7 @@ HRESULT __stdcall drawup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b
     ps_census::on_draw();
     gui_census::on_draw();
     material_census::on_draw(self);
+    light_census::on_draw(self);
     return g_draw_hooks[2]->stdcall<HRESULT>(self, a, b, c, d);
 }
 HRESULT __stdcall drawindexedup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a, UINT b, UINT c, UINT d,
@@ -70,6 +75,7 @@ HRESULT __stdcall drawindexedup_hook(IDirect3DDevice9 *self, D3DPRIMITIVETYPE a,
     ps_census::on_draw();
     gui_census::on_draw();
     material_census::on_draw(self);
+    light_census::on_draw(self);
     return g_draw_hooks[3]->stdcall<HRESULT>(self, a, b, c, d, e, f, g, h);
 }
 
@@ -93,7 +99,7 @@ HRESULT __stdcall setpsconst_hook(IDirect3DDevice9 *self, UINT start, const floa
 
 void on_device(IDirect3DDevice9 * /*device*/)
 {
-    if (ps_census::enabled() || material_census::enabled()) {
+    if (ps_census::enabled() || material_census::enabled() || light_census::enabled()) {
         if (safetyhook::VmHook *hook = device::hook_method(SLOT_SetPixelShader,
                                                            (void *)&setps_hook)) {
             g_setps_hook = hook;
@@ -111,7 +117,8 @@ void on_device(IDirect3DDevice9 * /*device*/)
         g_setrs_hook = device::hook_method(SLOT_SetRenderState, (void *)&setrs_hook);
         MC2VR_LOG("gui: SetRenderState %s (debug_gui_census)", g_setrs_hook ? "hooked" : "FAILED");
     }
-    if (gpu_census::enabled() || ps_census::enabled() || gui_census::enabled() || material_census::enabled()) {
+    if (gpu_census::enabled() || ps_census::enabled() || gui_census::enabled() || material_census::enabled() ||
+        light_census::enabled()) {
         struct SlotSpec {
             size_t slot;
             void *destination;

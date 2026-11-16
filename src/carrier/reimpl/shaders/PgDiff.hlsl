@@ -189,7 +189,10 @@ float4 main(Input i) : COLOR
 #else
     direct += local_lights(i.worldPos, normal);
 #endif
-    const float3 light = saturate(direct) * materialData[0].rgb + ambient_light(i, normal) * materialData[2].rgb;
+    // Unclamped: the originals saturate the direct light, which caps the sun
+    // (authored above 1) and every fire or lamp on top of it
+    // (docs/reverse_engineering/direct_light_clamp.md).
+    const float3 light = direct * materialData[0].rgb + ambient_light(i, normal) * materialData[2].rgb;
 
     const float4 albedo = tex2D(diffuseMap, uv);
     float3 colour = albedo.rgb * light;

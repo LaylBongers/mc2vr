@@ -2,7 +2,8 @@
 // PgFastFP_sl_li (up to @0x1dc250; docs/shaders.md) — reimplementation. The
 // game's cheap generic material: vegetation and other "fast" meshes. The originals take a single binary
 // shadow tap; these use the game's own 9-tap filter (shadow.hlsli), as its
-// other high-quality receivers do. Everything else, including the interface
+// other high-quality receivers do, and the direct light is not clamped to 1.
+// Everything else, including the interface
 // (inputs, constant registers, samplers), is the originals'. Local lights:
 // lights.hlsli's defines select the variant.
 
@@ -32,7 +33,10 @@ float4 main(Input i) : COLOR
     const float3 sun = sun_visibility(i.worldPos, i.uvDepthFade.z, i.uvDepthFade.w) * globalLightData[1].rgb;
     const float3 normal = normalize(i.normal);
     const float ndl = max(dot(normal, -globalLightData[0].xyz), 0);
-    const float3 direct = saturate(sun * ndl + local_lights(i.worldPos, normal));
+    // Unclamped: the originals saturate this, which caps the sun (authored
+    // above 1) and every fire or lamp on top of it
+    // (docs/reverse_engineering/direct_light_clamp.md).
+    const float3 direct = sun * ndl + local_lights(i.worldPos, normal);
     const float3 light = direct * materialData[0].rgb + materialData[2].rgb * i.ambient;
     const float3 colour = albedo.rgb * light * i.extinction + i.inscatter;
     return float4(min(max(colour, 1e-5), 30000), albedo.a * materialData[5].w);
