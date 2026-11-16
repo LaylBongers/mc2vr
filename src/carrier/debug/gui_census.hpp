@@ -16,8 +16,12 @@
 // capture. Inert unless enabled.
 //
 // debug_gui_census=clouds: the same per-record view, but of the records the
-// clouds pass emits (emitter inside PgClouds_EmitCloudRender1 /
-// PgClouds_EmitCloudRender2), in both eye passes of two consecutive frames.
+// clouds pass and the sky emitter emit (emitter inside PgClouds_EmitCloudGen..
+// PgClouds_EmitCloudRender2 or Sky_EmitRecords), plus up to 24 other records
+// drawn inside the sky's window (marked BETWEEN), in both eye passes of two
+// consecutive frames. Per record also the sort fields, the SetRenderTarget
+// count and the device viewport (incl. MinZ/MaxZ) at record start and first
+// draw (docs/reverse_engineering/sky_clouds.md).
 #pragma once
 
 #include <windows.h>

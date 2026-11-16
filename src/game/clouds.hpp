@@ -82,8 +82,6 @@ using g_PgCloudRenderFP2 = Global<EffectPass, 0x01284550u>;     // PgClouds_Emit
 // ---- globals --------------------------------------------------------------------------
 // -1.0 in .data (c9.y = it / (b^2 - a^2)).
 using g_CloudsNegOne = Global<float, 0x00dfcb5cu>;
-// Cloud render 2's materialIdx: a counter, incremented per emission.
-using g_CloudRender2MaterialCounter = Global<uint16_t, 0x01169770u>;
 
 // ---- callees --------------------------------------------------------------------------
 // Clamps the object's parameters (+0x50..+0x88) to their ranges. EAX = object.

@@ -11,6 +11,7 @@
 #include "game/clouds.hpp"
 #include "game/render_cmd.hpp"
 #include "game/render_shell.hpp"
+#include "game/sky.hpp"
 #include "hooks/entry.hpp"
 #include "log.hpp"
 #include "game/view_context.hpp"
@@ -23,6 +24,7 @@
 #include "reimpl/render/sampler_states.hpp"
 #include "reimpl/render/setup_viewports.hpp"
 #include "reimpl/render/shadow_surfaces.hpp"
+#include "reimpl/render/sky_emit.hpp"
 #include "reimpl/render/submit_to_gpu.hpp"
 
 namespace mc2vr::hooks {
@@ -48,6 +50,7 @@ const std::array kReplacements = {
     replace<game::PgLtiBloom_EmitPasses, &reimpl::PgLtiBloom_EmitPasses>(0x00750b77u),
     replace<game::PgClouds_EmitCloudRender1, &reimpl::PgClouds_EmitCloudRender1>(0x0047e8b1u),
     replace<game::PgClouds_EmitCloudRender2, &reimpl::PgClouds_EmitCloudRender2>(0x0047f089u),
+    replace<game::Sky_EmitRecords, &reimpl::Sky_EmitRecords>(0x00480164u),
     replace<game::PgLtiShadow_CreateSurfaces, &reimpl::PgLtiShadow_CreateSurfaces>(0x00756388u),
     replace<game::RenderShell_ApplyViewSamplerStates, &reimpl::RenderShell_ApplyViewSamplerStates>(0x007512fbu),
 };

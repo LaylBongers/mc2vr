@@ -14,6 +14,7 @@
 #include "game/clouds.hpp"
 #include "game/render_shell.hpp"
 #include "game/view_context.hpp"
+#include "reimpl/render/scratch_stream.hpp"
 #include "vr/view_rewrite.hpp"
 
 namespace mc2vr::reimpl {
@@ -52,59 +53,17 @@ T &at(uint8_t *base, uintptr_t off)
 // A 4-byte copy (the originals' fld/fstp and movq copies).
 void copy4(void *dst, const void *src) { std::memcpy(dst, src, 4); }
 
-// One record's command stream in the scratch command buffer.
-class Stream {
-public:
-    Stream() : base_(g_ScratchCmdBase::get()), start_(g_ScratchCmdNext::get()), n_(start_) {}
+using Stream = ScratchStream;
 
-    void op(uint32_t v) { base_[n_++] = v; }
-    void ptr(const void *p) { op((uint32_t)(uintptr_t)p); }
-    void f(float v) { op(std::bit_cast<uint32_t>(v)); }
-    void viewport(int32_t x, int32_t y, int32_t w, int32_t h)
-    {
-        op(8);
-        op((uint32_t)x);
-        op((uint32_t)y);
-        op((uint32_t)w);
-        op((uint32_t)h);
-        f(0.0f);
-        f(kOne);
+// ops 2/3 from the 10 cQuad params, one vec4 each from `data` (count clamped
+// to 1; params with no register or no count skipped).
+void upload_quads(Stream &s, uint32_t opcode, const ShaderConstParam (&params)[kCloudsConstCount], const float *data)
+{
+    for (uint32_t i = 0; i < kCloudsConstCount; i++, data += 4) {
+        if (params[i].start_reg == 0xffffffffu) continue;
+        s.upload(opcode, params[i], data, 1);
     }
-    // ops 2/3 from the 10 cQuad params, one vec4 each from `data` (count
-    // clamped to 1; params with no register or no count skipped).
-    void constants(uint32_t opcode, const ShaderConstParam (&params)[kCloudsConstCount], const float *data)
-    {
-        for (uint32_t i = 0; i < kCloudsConstCount; i++, data += 4) {
-            const ShaderConstParam &p = params[i];
-            if (p.start_reg == 0xffffffffu || p.count == 0) continue;
-            op(opcode);
-            op(p.start_reg);
-            ptr(data);
-            op((int32_t)p.count < 1 ? p.count : 1u);
-        }
-    }
-    // op 2: the sky matrix (count clamped to 4; no register check).
-    void sky_matrix(const ShaderConstParam &p, const float *m)
-    {
-        if (p.count == 0) return;
-        op(2);
-        op(p.start_reg);
-        ptr(m);
-        op((int32_t)p.count < 4 ? p.count : 4u);
-    }
-    // End of stream: publishes the used dwords, returns the stream.
-    uint32_t *end()
-    {
-        op(0);
-        g_ScratchCmdNext::set(n_);
-        return base_ + start_;
-    }
-    uint32_t *base() const { return base_; }
-
-private:
-    uint32_t *base_;
-    uint32_t start_, n_;
-};
+}
 
 ViewContext *current_view()
 {
@@ -253,9 +212,9 @@ void PgClouds_EmitCloudRender1(uint8_t *obj, const float *camera)
     // ---- the cloud render 1 record 0x47e4e1-0x47e7dc ----
     sc.viewId = (uint16_t)(sc.viewId + 1);
     Stream s;
-    s.constants(2, tech.cQuad, block);
-    s.sky_matrix(tech.viewProjMtx, sky);
-    s.constants(3, g_PgCloudRenderFP1::ptr()->cQuad, consts);
+    upload_quads(s, 2, tech.cQuad, block);
+    s.upload(2, tech.viewProjMtx, sky, 4);  // the sky matrix (no register check)
+    upload_quads(s, 3, g_PgCloudRenderFP1::ptr()->cQuad, consts);
     int32_t x, y, w, h;
     if (ctx->vpUnscaled == 0) {
         const float scale = at<float>(g_RenderShellPtrB::get(), kShellRenderScale);
@@ -271,9 +230,7 @@ void PgClouds_EmitCloudRender1(uint8_t *obj, const float *camera)
     }
     uint8_t *const sky_params = at<uint8_t *>(g_GlobalCamCtx::get(), kGlobalCamSky);
     if (sky_params[0] == 0) {
-        s.op(6);  // the half-size clouds target, no depth
-        s.ptr(at<void *>(obj, kCloudsOutRT));
-        s.ptr(nullptr);
+        s.target(at<void *>(obj, kCloudsOutRT), nullptr);  // the half-size clouds target, no depth
         s.viewport(x / 2, y / 2, w / 2, h / 2);
         s.op(15);  // clear
         s.op(0);
@@ -290,9 +247,7 @@ void PgClouds_EmitCloudRender1(uint8_t *obj, const float *camera)
     sc.envIdx = 0;
     uint8_t *const front = reinterpret_cast<uint8_t *>(g_RenderShellPtr::get());
     Stream r;
-    r.op(6);
-    r.ptr(at<void *>(front, kRenderShellRT0Surface));
-    r.ptr(at<void *>(front, kRenderShellDepthSurface));
+    r.target(at<void *>(front, kRenderShellRT0Surface), at<void *>(front, kRenderShellDepthSurface));
     sc.viewId = (uint16_t)(sc.viewId + 1);
     r.viewport(x, y, w, h);
     sc.cmdStream = r.end();
@@ -304,7 +259,11 @@ void PgClouds_EmitCloudRender1(uint8_t *obj, const float *camera)
     build_census::set_emitter_override(0);
 }
 
-void PgClouds_EmitCloudRender2(uint8_t *obj, const float *camera)
+namespace {
+
+// Cloud render 2 (0x47e8c0-0x47f088); `window` = the sky's depth window to
+// draw in (Fix, docs/clouds.md), null = as the original (inherited state).
+void emit_render2(uint8_t *obj, const float *camera, const SkyDepthWindow *window)
 {
     PgClouds_ClampParams(obj);
     ViewContext *const ctx = current_view();
@@ -313,16 +272,31 @@ void PgClouds_EmitCloudRender2(uint8_t *obj, const float *camera)
 
     // ---- the cloud render 2 record 0x47eece-0x47f073 ----
     Stream s;
-    s.constants(2, tech.cQuad, consts + kConstBlockBytes / 4);
-    s.sky_matrix(tech.viewProjMtx, consts + kSkyOffset / 4);
+    if (window != nullptr) {
+        s.viewport(window->x, window->y, window->w, window->h, window->z, window->z);
+    }
+    upload_quads(s, 2, tech.cQuad, consts + kConstBlockBytes / 4);
+    s.upload(2, tech.viewProjMtx, consts + kSkyOffset / 4, 4);  // the sky matrix (no register check)
     uint32_t *const stream = s.end();
     bind_technique(obj, tech, stream, kCloudsMaterialRender2);
-    const uint16_t material = (uint16_t)(g_CloudRender2MaterialCounter::get() + 1);
-    g_CloudRender2MaterialCounter::set(material);
+    const uint16_t seq = (uint16_t)(g_PrimSortSequence::get() + 1);
+    g_PrimSortSequence::set(seq);
     build_census::set_emitter_override(kRetRender2Record);
-    PgPrimitiveScratchRecord_Submit(0xfe0, 0, 4, 0x800, 0, 0x801, 0, material);
+    PgPrimitiveScratchRecord_Submit(0xfe0, 0, 4, 0x800, 0, 0x801, 0, seq);
     build_census::set_emitter_override(0);
     g_ScratchPrimitive::ptr()->cmdStream = nullptr;
+}
+
+} // namespace
+
+void PgClouds_EmitCloudRender2(uint8_t *obj, const float *camera)
+{
+    emit_render2(obj, camera, nullptr);
+}
+
+void PgClouds_EmitCloudRender2InWindow(uint8_t *obj, const float *camera, const SkyDepthWindow &window)
+{
+    emit_render2(obj, camera, &window);
 }
 
 } // namespace mc2vr::reimpl

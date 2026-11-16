@@ -204,6 +204,13 @@
 // RenderShell_EmitScreenQuad, so it is found one caller up.
 #define MC2_CLOUDS_EMIT_BEGIN ((uint32_t)0x0047db80u)
 #define MC2_CLOUDS_EMIT_END ((uint32_t)0x0047f088u)
+// The sky emitter FUN_0047f890 (..0x00480163): a fixed-depth viewport record
+// (MinZ = MaxZ), the sky dome, the sun, cloud render 2 (through the clouds
+// object's slot 2), then the viewport-restore record (its last Submit,
+// return address 0x0048014c).
+#define MC2_SKY_EMIT_BEGIN ((uint32_t)0x0047f890u)
+#define MC2_SKY_EMIT_END ((uint32_t)0x00480163u)
+#define MC2_SKY_EMIT_RESTORE_RET ((uint32_t)0x0048014cu)
 
 // The builder's view frustum struct at ctx+0x38 (Frustum_Build output, 0x218 bytes):
 // +0x00 near, +0x04 far, +0x0c 8 world-space corners (vec3): near-plane corners

@@ -26,6 +26,9 @@ key and its default).
 
 - Rendering fixes: working MSAA (`msaa`), anisotropic filtering (`anisotropic_filtering`),
   correct normal maps.
+- Steady cloud layer: in the original game, distant mountains pop in and out of the clouds
+  whenever water comes into or leaves view. The clouds now always hide the same hazed-out distant
+  terrain.
 - Improved sun shadows: stable cascades, filtering on every surface, smooth cascade transitions,
   footprint-adaptive PCF (stable thin shadows at grazing angles).
 - Higher shadow resolution (`shadow_resolution`, 2048 by default; the game's is 1024).

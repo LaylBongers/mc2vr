@@ -81,6 +81,15 @@ using g_PrimitiveSortKeys = GlobalArray<PrimSortEntry, 0x01153700u, kPrimitivesP
 // Write side: double-buffer index (ping-pong 0/1) and records written this frame.
 using g_PrimBufferIndex = Global<uint32_t, 0x00ff364cu>;
 using g_PrimWriteCount = Global<uint32_t, 0x00ff36f0u>;
+// Per-record instance matrices (the record's envIdx selects one; the read
+// side is g_EnvTable40): write side entry (g_PrimBufferIndex * 0x1400 + idx),
+// 16 floats each; g_InstanceMatrixCount = the next free index this frame.
+constexpr uintptr_t g_PerViewInstanceMatrices = 0x018c61e0u;
+constexpr uint32_t kInstanceMatricesPerBuffer = 0x1400;
+using g_InstanceMatrixCount = Global<uint16_t, 0x00ff36ccu>;
+// A sequence some emitters (the sky, cloud render 2, ViewObject_DrawSubmeshes)
+// increment and pass as Submit's last argument (record +0x3e).
+using g_PrimSortSequence = Global<uint16_t, 0x01169770u>;
 
 // ---- what a record refers to ---------------------------------------------------
 // Partial layouts: only what PgPrimitive_SubmitToGPU reads. rNNN = unknown.

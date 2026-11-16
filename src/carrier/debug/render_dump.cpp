@@ -35,6 +35,7 @@
 #include "vr/occlusion_queries.hpp"
 #include "debug/ps_census.hpp"
 #include "debug/wait_census.hpp"
+#include "reimpl/render/sky_emit.hpp"
 #include "reimpl/render/fit_shadow_cascades.hpp"
 #include "hooks/shader_reimpl.hpp"
 
@@ -241,6 +242,7 @@ void report_window()
     camera_table::report_window();
     cull_frustum::report_window();
     reimpl::shadow_fit_report_window();
+    reimpl::sky_report_window();
     hooks::shader_reimpl::report_window();
     cull_probe::report_window();
     first_person::report_window();

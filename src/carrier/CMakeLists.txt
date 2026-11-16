@@ -29,6 +29,7 @@ add_library(mc2vr_carrier SHARED
     reimpl/render/bloom_emit_passes.cpp
     reimpl/render/build_camera_constants.cpp
     reimpl/render/clouds_emit.cpp
+    reimpl/render/sky_emit.cpp
     reimpl/render/end_sub_view.cpp
     reimpl/render/fit_shadow_cascades.cpp
     reimpl/render/render_cmd.cpp

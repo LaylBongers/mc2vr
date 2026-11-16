@@ -19,6 +19,7 @@
 #include "game/bloom.hpp"
 #include "game/render_shell.hpp"
 #include "game/view_context.hpp"
+#include "reimpl/render/scratch_stream.hpp"
 
 namespace mc2vr::reimpl {
 
@@ -45,55 +46,7 @@ T &at(uint8_t *base, uintptr_t off)
     return *reinterpret_cast<T *>(base + off);
 }
 
-// One record's command stream in the scratch command buffer.
-class Stream {
-public:
-    Stream() : base_(g_ScratchCmdBase::get()), start_(g_ScratchCmdNext::get()), n_(start_) {}
-
-    void op(uint32_t v) { base_[n_++] = v; }
-    void ptr(const void *p) { op((uint32_t)(uintptr_t)p); }
-    void f(float v) { op(std::bit_cast<uint32_t>(v)); }
-
-    // op 6: RT0 (and depth; null = none).
-    void target(void *color, void *depth)
-    {
-        op(6);
-        ptr(color);
-        ptr(depth);
-    }
-    // op 8: the viewport, z 0..1.
-    void viewport(int32_t x, int32_t y, int32_t w, int32_t h)
-    {
-        op(8);
-        op((uint32_t)x);
-        op((uint32_t)y);
-        op((uint32_t)w);
-        op((uint32_t)h);
-        f(0.0f);
-        f(kOne);
-    }
-    // op 3: one vec4 (count clamped to 1; nothing when the shader lacks it).
-    void ps_constant(const ShaderConstParam *p, const float *data)
-    {
-        if (p->count == 0) return;
-        const int32_t c = (int32_t)p->count;
-        op(3);
-        op(p->start_reg);
-        ptr(data);
-        op((uint32_t)(c < 1 ? c : 1));
-    }
-    // End of stream: publishes the used dwords, returns the stream.
-    uint32_t *end()
-    {
-        op(0);
-        g_ScratchCmdNext::set(n_);
-        return base_ + start_;
-    }
-
-private:
-    uint32_t *base_;
-    uint32_t start_, n_;
-};
+using Stream = ScratchStream;
 
 // vec4 constants from the scratch constant buffer.
 float *alloc_constants(uint32_t vec4s)
@@ -163,13 +116,13 @@ void PgLtiBloom_EmitPasses(uint8_t *bloom)
             {
                 Stream s;
                 s.target(surface(bloom, kBloomBlurRT + level * 4), nullptr);
-                s.ps_constant(g_BlurPassA_BlurScale::ptr(), c);
+                s.upload(3, *g_BlurPassA_BlurScale::ptr(), c, 1);
                 emit(s.end(), w, h, (uintptr_t)g_PostFxQuadTechnique::ptr(), mats + kBloomBlurAMat);
             }
             {
                 Stream s;
                 s.target(surface(bloom, kBloomDownsampleRT + level * 4), nullptr);
-                s.ps_constant(g_BlurPassB_BlurScale::ptr(), c);
+                s.upload(3, *g_BlurPassB_BlurScale::ptr(), c, 1);
                 emit(s.end(), w, h, (uintptr_t)g_PostFxQuadTechnique::ptr(), mats + kBloomBlurBMat);
             }
         }
@@ -201,7 +154,7 @@ void PgLtiBloom_EmitPasses(uint8_t *bloom)
         Stream s;
         s.target(surface(bloom, kBloomLumRT + k * 4), nullptr);
         s.viewport(0, 0, size, size);
-        s.ps_constant(g_LumPass_TexSize::ptr(), c);
+        s.upload(3, *g_LumPass_TexSize::ptr(), c, 1);
         emit(s.end(), size, size, (uintptr_t)g_PostFxQuadTechnique::ptr(), bloom + kBloomLumMat + k * kBloomMatStride);
         size >>= 2;
     }
@@ -212,7 +165,7 @@ void PgLtiBloom_EmitPasses(uint8_t *bloom)
         Stream s;
         s.target(surface(bloom, kBloomLum1RT), nullptr);
         s.viewport(0, 0, size, size);
-        s.ps_constant(g_LumFinalPass_TexSize::ptr(), c);
+        s.upload(3, *g_LumFinalPass_TexSize::ptr(), c, 1);
         emit(s.end(), size, size, (uintptr_t)g_PostFxQuadTechnique::ptr(), bloom + kBloomLum1Mat);
     }
 
@@ -237,8 +190,8 @@ void PgLtiBloom_EmitPasses(uint8_t *bloom)
         s.ptr(surface(bloom, kBloomAdaptPrevRT));
         s.target(surface(bloom, kBloomAdaptRT), nullptr);
         s.viewport(0, 0, size, size);
-        s.ps_constant(g_AdaptiveLum_AdaptiveParams::ptr(), rate);
-        s.ps_constant(g_AdaptiveLum_MinmaxAdaptiveParams::ptr(), params);
+        s.upload(3, *g_AdaptiveLum_AdaptiveParams::ptr(), rate, 1);
+        s.upload(3, *g_AdaptiveLum_MinmaxAdaptiveParams::ptr(), params, 1);
         emit(s.end(), size, size, (uintptr_t)g_PostFxQuadTechnique::ptr(), bloom + kBloomAdaptMat);
     }
 
@@ -314,14 +267,14 @@ void PgLtiBloom_EmitPasses(uint8_t *bloom)
     float *const motion = alloc_constants(4);
     std::memset(motion, 0, 4 * 16);
     s.viewport(vx, vy, vw, vh);
-    s.ps_constant(g_CompositeImageParams::ptr(), image);
-    s.ps_constant(g_CompositeFilterParams::ptr(), filter);
-    s.ps_constant(g_CompositeProjectParams::ptr(), project);
-    s.ps_constant(g_CompositeDofParams::ptr(), dof);
-    s.ps_constant(g_CompositeMotionBlurX::ptr(), motion);
-    s.ps_constant(g_CompositeMotionBlurY::ptr(), motion + 4);
-    s.ps_constant(g_CompositeMotionBlurW::ptr(), motion + 8);
-    s.ps_constant(g_CompositeMotionBlurScale::ptr(), motion + 12);
+    s.upload(3, *g_CompositeImageParams::ptr(), image, 1);
+    s.upload(3, *g_CompositeFilterParams::ptr(), filter, 1);
+    s.upload(3, *g_CompositeProjectParams::ptr(), project, 1);
+    s.upload(3, *g_CompositeDofParams::ptr(), dof, 1);
+    s.upload(3, *g_CompositeMotionBlurX::ptr(), motion, 1);
+    s.upload(3, *g_CompositeMotionBlurY::ptr(), motion + 4, 1);
+    s.upload(3, *g_CompositeMotionBlurW::ptr(), motion + 8, 1);
+    s.upload(3, *g_CompositeMotionBlurScale::ptr(), motion + 12, 1);
     emit(s.end(), vw, vh, (uintptr_t)g_PostFxCompositeTechnique::ptr(), bloom + kBloomCompositeMat);
     PgPrimitive &scratch = *g_ScratchPrimitive::ptr();
     scratch.viewId = (uint16_t)(scratch.viewId + 1);

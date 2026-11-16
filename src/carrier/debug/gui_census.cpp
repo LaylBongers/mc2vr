@@ -42,12 +42,24 @@ bool in_clouds_emitters(uint32_t ret)
     return ret >= MC2_CLOUDS_EMIT_BEGIN && ret < MC2_CLOUDS_EMIT_END;
 }
 
-// A clouds record: Submitted from the emitters, or (the generation's quad,
-// RenderShell_EmitScreenQuad) one caller up.
+bool in_sky_emitter(uint32_t ret)
+{
+    return ret >= MC2_SKY_EMIT_BEGIN && ret < MC2_SKY_EMIT_END;
+}
+
+// A clouds record: Submitted from the emitters (the clouds' or the sky's), or
+// (the generation's quad, RenderShell_EmitScreenQuad) one caller up.
 bool is_clouds_record(uint32_t emitter, const uint32_t above[3])
 {
-    return in_clouds_emitters(emitter) || in_clouds_emitters(above[0]);
+    return in_clouds_emitters(emitter) || in_clouds_emitters(above[0]) || in_sky_emitter(emitter);
 }
+
+// Clouds mode: from the first sky record to the sky's viewport restore, the
+// other records drawn in between are logged too (marked BETWEEN), at most
+// kMaxBetween per pass.
+constexpr uint32_t kMaxBetween = 24;
+bool g_sky_window = false;
+uint32_t g_between = 0;
 
 struct Op {
     uint32_t d[5];  // opcode + first operands
@@ -85,6 +97,11 @@ struct Record {
     uint32_t rt_w, rt_h, rt_fmt;  // RT0's desc, when it is not a named surface
     uint8_t zen_mask, zwr_mask, blend_mask;
     uint16_t zfunc_mask;
+    bool between;                 // clouds mode: not a clouds/sky record, drawn inside the sky's window
+    uint32_t sort34, sort3e;      // the record's sort fields (+0x34, +0x3e)
+    D3DVIEWPORT9 vp_start, vp_draw;  // the device viewport at record start and at its first draw
+    bool vp_start_ok, vp_draw_ok;
+    uint32_t rt_binds;            // SetRenderTarget calls during the record (each resets the viewport)
     Tex tex[kMaxTex];
     uint32_t tex_count;
 };
@@ -240,6 +257,14 @@ void print_capture()
         MC2VR_LOG("gui:     emitter %08x <- %08x <- %08x <- %08x | stream %p%s", r.emitter, r.emitter_above[0],
                   r.emitter_above[1], r.emitter_above[2], r.stream,
                   r.stream_was_last ? " (== last executed: skipped)" : "");
+        if (g_clouds) {
+            const D3DVIEWPORT9 &s = r.vp_start, &d = r.vp_draw;
+            MC2VR_LOG("gui:     %ssort34=%u sort3e=%u rtBinds=%u | viewport start %s%lu,%lu %lux%lu z[%.7g, %.7g] | "
+                      "first draw %s%lu,%lu %lux%lu z[%.7g, %.7g]",
+                      r.between ? "BETWEEN " : "", r.sort34, r.sort3e, r.rt_binds, r.vp_start_ok ? "" : "(n/a) ",
+                      s.X, s.Y, s.Width, s.Height, (double)s.MinZ, (double)s.MaxZ, r.vp_draw_ok ? "" : "(n/a) ", d.X,
+                      d.Y, d.Width, d.Height, (double)d.MinZ, (double)d.MaxZ);
+        }
         MC2VR_LOG("gui:     ops %s", line);
         if (r.stretches != 0) {
             char s1[24], s2[24];
@@ -302,6 +327,8 @@ void on_pass(uint32_t pass)
             }
         } else if (g_capturing) {
             g_rank = 0;  // ranks per pass
+            g_sky_window = false;
+            g_between = 0;
             if (pass == 0 && --g_frames_left == 0) {
                 g_capturing = false;
                 g_cur = nullptr;
@@ -331,13 +358,25 @@ void on_record(uint16_t index, const game::PgPrimitive *rec)
     if (rank < g_from_rank) return;
     uint32_t above[3];
     const uint32_t emitter = build_census::record_emitter(game::g_PrimitiveBase::get(), index, above);
-    if (g_clouds && !is_clouds_record(emitter, above)) return;
+    bool between = false;
+    if (g_clouds) {
+        const bool ours = is_clouds_record(emitter, above);
+        if (in_sky_emitter(emitter)) g_sky_window = emitter != MC2_SKY_EMIT_RESTORE_RET;
+        between = !ours && g_sky_window;
+        if (!ours && !(between && g_between++ < kMaxBetween)) return;
+    }
     if (g_record_count >= kMaxRecords) {
         g_dropped++;
         return;
     }
     Record &r = g_records[g_record_count++];
     std::memset(&r, 0, sizeof r);
+    r.between = between;
+    r.sort34 = rec->r34;
+    r.sort3e = rec->r3e;
+    if (IDirect3DDevice9 *const dev = render_outputs::device()) {
+        r.vp_start_ok = SUCCEEDED(dev->GetViewport(&r.vp_start));
+    }
     r.rank = rank;
     r.pass = g_pass;
     r.frame = hooks::frame_count();
@@ -388,6 +427,7 @@ void on_stretch_rect(IDirect3DSurface9 *src, IDirect3DSurface9 *dst)
 void on_set_render_target(DWORD index, IDirect3DSurface9 *surface)
 {
     if (g_capturing && index == 0) g_rt0 = surface;
+    if (g_cur != nullptr) g_cur->rt_binds++;
 }
 
 void on_set_depth(IDirect3DSurface9 *surface)
@@ -468,6 +508,9 @@ void on_draw()
     if (r.draws++ == 0) {
         r.rt0 = g_rt0;
         r.ds = g_ds;
+        if (IDirect3DDevice9 *const dev = render_outputs::device()) {
+            r.vp_draw_ok = SUCCEEDED(dev->GetViewport(&r.vp_draw));
+        }
         char unused[24];
         D3DSURFACE_DESC d = {};
         if (g_rt0 != nullptr && name_of(g_rt0, unused, sizeof unused) == unused &&

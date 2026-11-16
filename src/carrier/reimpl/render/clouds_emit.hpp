@@ -22,15 +22,22 @@
 //     view's viewport; skipped when the sky params' flag is set), and a second,
 //     technique-less record re-binding main + scene depth and the full viewport;
 //   - EmitCloudRender2: one record (VS c0..c9 and the sky matrix) drawn into
-//     whatever is bound (main, scene depth).
+//     whatever is bound (main, scene depth); called from the sky emitter,
+//     inside its depth window.
 //
 // Calls (original): PgClouds_ClampParams, Matrix_Inverse4x4 x2,
 // D3DXMatrixMultiply, RenderShell vtable slot 17, thunk_FUN_02537cb0,
 // PgPrimitiveScratchRecord_Submit (x2 / x1).
 // Writes directly: the scratch constant and command buffers and their next
-// counters, the scratch record's fields, cloud render 2's material counter.
+// counters, the scratch record's fields, g_PrimSortSequence (render 2).
 // Deviations: the fld/fstp float copies (Matrix_Copy, transposes) are plain
 // copies (bit-identical except that x87 would quiet a signaling NaN).
+// Fix (docs/clouds.md): cloud render 2 has a second entry for the sky
+// emitter's reimplementation, PgClouds_EmitCloudRender2InWindow, whose record
+// starts with the sky's depth window (op 8). The original inherits the window
+// from the sky's first record, which the sort can separate from it
+// (docs/reverse_engineering/sky_clouds.md). Through the original's entry it
+// emits exactly the original record.
 //
 // VR behavior (docs/view_rewrite.md "Clouds"): each sky matrix is
 // registered with the per-eye channel (view_rewrite::on_sky_matrix_built)
@@ -40,9 +47,14 @@
 
 #include <cstdint>
 
+#include "reimpl/render/sky_emit.hpp"
+
 namespace mc2vr::reimpl {
 
 void PgClouds_EmitCloudRender1(uint8_t *clouds, const float *camera);
 void PgClouds_EmitCloudRender2(uint8_t *clouds, const float *camera);
+// Called by Sky_EmitRecords (reimpl/render/sky_emit.hpp): the record draws in
+// the sky's depth window.
+void PgClouds_EmitCloudRender2InWindow(uint8_t *clouds, const float *camera, const SkyDepthWindow &window);
 
 } // namespace mc2vr::reimpl
